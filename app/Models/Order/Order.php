@@ -1,10 +1,12 @@
 <?php
 
-namespace App\Models;
+namespace App\Models\Order;
 
-use Illuminate\Database\Eloquent\Model;
+use App\Models\BaseModel;
+use App\Models\Order\Trait\Attribute\OrderAttribute;
+use App\Models\Order\Trait\Relationship\OrderRelationship;
 
-class Order extends Model
+class Order extends BaseModel
 {
-    //
+    use OrderAttribute, OrderRelationship;
 }
