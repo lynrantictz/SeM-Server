@@ -1,10 +1,12 @@
 <?php
 
-namespace App\Models;
+namespace App\Models\Menu;
 
-use Illuminate\Database\Eloquent\Model;
+use App\Models\BaseModel;
+use App\Models\Menu\Trait\Attribute\CategoryAttribute;
+use App\Models\Menu\Trait\Relationship\CategoryRelationship;
 
-class Category extends Model
+class Category extends BaseModel
 {
-    //
+    use CategoryAttribute, CategoryRelationship;
 }

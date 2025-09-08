@@ -1,10 +1,12 @@
 <?php
 
-namespace App\Models;
+namespace App\Models\Menu;
 
-use Illuminate\Database\Eloquent\Model;
+use App\Models\BaseModel;
+use App\Models\Menu\Trait\Attribute\ItemPriceAttribute;
+use App\Models\Menu\Trait\Relationship\ItemPriceRelationship;
 
-class ItemPrice extends Model
+class ItemPrice extends BaseModel
 {
-    //
+    use ItemPriceAttribute, ItemPriceRelationship;
 }

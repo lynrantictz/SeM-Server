@@ -1,10 +1,12 @@
 <?php
 
-namespace App\Models;
+namespace App\Models\Business;
 
-use Illuminate\Database\Eloquent\Model;
+use App\Models\BaseModel;
+use App\Models\Business\Trait\Attribute\VendorAttribute;
+use App\Models\Business\Trait\Relationship\VendorRelationship;
 
-class Vendor extends Model
+class Vendor extends BaseModel
 {
-    //
+    use VendorAttribute, VendorRelationship;
 }

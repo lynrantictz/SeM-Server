@@ -1,10 +1,13 @@
 <?php
 
-namespace App\Models;
+namespace App\Models\Customer;
 
-use Illuminate\Database\Eloquent\Model;
 
-class Customer extends Model
+use App\Models\BaseModel;
+use App\Models\Customer\Trait\Attribute\CustomerAttribute;
+use App\Models\Customer\Trait\Relationship\CustomerRelationship;
+
+class Customer extends BaseModel
 {
-    //
+    use CustomerAttribute, CustomerRelationship;
 }
