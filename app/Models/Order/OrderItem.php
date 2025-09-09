@@ -6,7 +6,7 @@ use App\Models\BaseModel;
 use App\Models\Order\Trait\Attribute\OrderItemAttribute;
 use App\Models\Order\Trait\Relationship\OrderItemRelationship;
 
-class OrderItems extends BaseModel
+class OrderItem extends BaseModel
 {
     use OrderItemAttribute, OrderItemRelationship;
 }

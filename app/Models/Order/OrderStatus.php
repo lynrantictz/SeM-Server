@@ -2,11 +2,11 @@
 
 namespace App\Models\Order;
 
-use App\Models\BaseModel;
 use App\Models\Order\Trait\Attribute\OrderStatusAttribute;
 use App\Models\Order\Trait\Relationship\OrderStatusRelationship;
+use Illuminate\Database\Eloquent\Model;
 
-class OrderStatus extends BaseModel
+class OrderStatus extends Model
 {
     use OrderStatusAttribute, OrderStatusRelationship;
 }
