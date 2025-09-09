@@ -17,6 +17,7 @@ return new class extends Migration
             $table->string('name');
             $table->text('description');
             $table->decimal('price', 10, 2);
+            $table->string('currency');
             $table->decimal('offer_price', 10, 2)->nullable();
             $table->boolean('is_active')->default(true);
             $table->uuid('uuid')->unique();
