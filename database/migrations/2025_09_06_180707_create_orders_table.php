@@ -14,10 +14,14 @@ return new class extends Migration
         Schema::create('orders', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('business_id');
+            $table->unsignedBigInteger('user_id')->nullable();
+            $table->morphs('orderable');
             $table->unsignedBigInteger('customer_id')->nullable();
             $table->string('order_status_id')->default(1);
             $table->unsignedBigInteger('payment_method_id')->nullable();
             $table->unsignedBigInteger('payment_status_id')->nullable();
+            $table->unsignedBigInteger('approver_id')->nullable();
+            $table->timestamp('approved_at')->nullable();
             $table->decimal('total_amount', 15, 2);
             $table->decimal('paid_amount', 15, 2)->nullable();
             $table->decimal('due_amount', 15, 2)->nullable();
