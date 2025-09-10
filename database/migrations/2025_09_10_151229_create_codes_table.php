@@ -11,12 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('sections', function (Blueprint $table) {
+        Schema::create('codes', function (Blueprint $table) {
             $table->id();
-            $table->unsignedBigInteger('business_id');
-            $table->unsignedBigInteger('user_id');
-            $table->string('name');
-            $table->text('description')->unique();
+            $table->string('code', 8)->unique();
+            $table->morphs('codable');
             $table->boolean('is_active')->default(true);
             $table->uuid('uuid')->unique();
             $table->timestamps();
@@ -28,6 +26,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('sections');
+        Schema::dropIfExists('codes');
     }
 };

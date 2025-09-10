@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
             $table->unsignedBigInteger('business_id');
             $table->unsignedBigInteger('user_id')->nullable();
-            $table->morphs('orderable');
+            $table->unsignedBigInteger('code_id')->nullable();
             $table->unsignedBigInteger('customer_id')->nullable();
             $table->string('order_status_id')->default(1);
             $table->unsignedBigInteger('payment_method_id')->nullable();
