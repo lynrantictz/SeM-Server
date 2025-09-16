@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Menu;
 
 use App\Http\Controllers\Api\BaseController;
 use App\Http\Controllers\Controller;
+use App\Models\Section\Code;
 use App\Repositories\Menu\CategoryRepository;
 use Illuminate\Http\Request;
 
@@ -14,6 +15,22 @@ class CategoryController extends BaseController
     public function __construct(CategoryRepository $categories)
     {
         $this->categories = $categories;
+    }
+
+    public function getMenu($code)
+    {
+        //check if code is valid
+        $code = Code::query()->where('code', $code)->first();
+        // if not valid return error
+        if(!$code){
+            return $this->sendError('Invalid code', [], HTTP_NOT_FOUND);
+        }
+        $data['business'] = $code->codable;
+        $data['categories'] = $code->codable->categories;
+        // if code is active
+        // if valid return menu
+
+        return $this->sendResponse($data, 'Menu retrieved successfully', HTTP_OK);
     }
 
     /**
