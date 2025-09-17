@@ -19,9 +19,9 @@ trait BusinessRelationship
         return $this->belongsTo(District::class);
     }
 
-    public function businessType()
+    public function type()
     {
-        return $this->belongsTo(BusinessType::class);
+        return $this->belongsTo(BusinessType::class, 'business_type_id', 'id');
     }
 
     public function categories()

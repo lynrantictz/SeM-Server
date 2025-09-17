@@ -25,7 +25,15 @@ class CategoryController extends BaseController
         if(!$code){
             return $this->sendError('Invalid code', [], HTTP_NOT_FOUND);
         }
-        $data['business'] = $code->codable;
+        $data['business'] = $code->codable->business
+            ->with([
+                'type',
+                'vendor',
+                'district',
+                'district.city',
+                'district.city.country'
+            ])
+            ->first();
         $data['categories'] = $code->codable->categories;
         // if code is active
         // if valid return menu
