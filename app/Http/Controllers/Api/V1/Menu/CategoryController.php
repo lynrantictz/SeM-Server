@@ -25,18 +25,21 @@ class CategoryController extends BaseController
         if(!$code){
             return $this->sendError('Invalid code', [], HTTP_NOT_FOUND);
         }
-        $data['business'] = $code->codable->business
-            ->with([
-                'type',
-                'vendor',
-                'district',
-                'district.city',
-                'district.city.country'
-            ])
-            ->first();
-        $data['categories'] = $code->codable->categories;
-        // if code is active
-        // if valid return menu
+        $data['code'] = $code->codable->with([
+                'business',
+                'business.type',
+                'business.vendor',
+                'business.district',
+                'business.district.city',
+                'business.district.city.country'
+            ])->first();
+        $data['menu'] = $code->codable->business->categories()->with([
+            'items' => function($query){
+                $query->where('is_active', true);
+            },
+        ])
+            ->where('is_active', true)
+            ->get();
 
         return $this->sendResponse($data, 'Menu retrieved successfully', HTTP_OK);
     }
