@@ -16,7 +16,7 @@ class CodeGenerator
     public function generate(int $length = 8): string
     {
         // Generate a random alphanumeric code
-        $code = Str::upper(Str::random($length));
+        $code = Str::random($length);
 
         // Check if the code already exists
         if ($this->codeExists($code)) {

@@ -24,6 +24,7 @@ class SectionAndSubsectionAndCodesSeerder extends Seeder
 
                 'sub' => [
                     [
+                        'business_id' => 1,
                         'name' => 'Millenium Cafe',
                         'description' => 'Subsection for Millenium Cafe items',
                         'user_id' => 1,
@@ -38,16 +39,19 @@ class SectionAndSubsectionAndCodesSeerder extends Seeder
 
                 'sub' => [
                     [
+                        'business_id' => 1,
                         'name' => '1020',
                         'description' => 'Deluxe Room',
                         'user_id' => 1,
                     ],
                     [
+                        'business_id' => 1,
                         'name' => '1021',
                         'description' => 'Standard Room',
                         'user_id' => 1,
                     ],
                     [
+                        'business_id' => 1,
                         'name' => '1022',
                         'description' => 'Suite Room',
                         'user_id' => 1,

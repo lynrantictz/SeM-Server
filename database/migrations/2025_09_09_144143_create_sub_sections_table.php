@@ -14,6 +14,7 @@ return new class extends Migration
         Schema::create('sub_sections', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('section_id');
+            $table->unsignedBigInteger('business_id');
             $table->unsignedBigInteger('user_id');
             $table->string('name');
             $table->text('description')->unique();
