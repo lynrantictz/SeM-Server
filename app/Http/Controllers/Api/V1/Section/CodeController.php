@@ -3,10 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Section;
 
 use App\Http\Controllers\Api\BaseController;
-use App\Http\Controllers\Controller;
 use App\Models\Section\Code;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\URL;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 
 class CodeController extends BaseController
