@@ -8,6 +8,6 @@ use Illuminate\Support\Facades\Route;
 
 
 Route::group(['prefix' => 'menu'], function () {
-    Route::get('{code}', [CategoryController::class, 'getMenu']);
+    Route::get('', [CategoryController::class, 'getMenu']);
 });
 

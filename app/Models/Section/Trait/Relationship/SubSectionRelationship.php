@@ -2,6 +2,7 @@
 
 namespace App\Models\Section\Trait\Relationship;
 
+use App\Models\Business\Business;
 use App\Models\Section\Code;
 use App\Models\Section\Section;
 
@@ -16,4 +17,10 @@ trait SubSectionRelationship
     {
         return $this->morphOne(Code::class, 'codable');
     }
+
+    public function business()
+    {
+        return $this->belongsTo(Business::class);
+    }
+
 }

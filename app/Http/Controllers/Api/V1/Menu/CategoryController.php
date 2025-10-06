@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Section\Code;
 use App\Repositories\Menu\CategoryRepository;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class CategoryController extends BaseController
 {
@@ -17,29 +18,40 @@ class CategoryController extends BaseController
         $this->categories = $categories;
     }
 
-    public function getMenu($code)
+    public function getMenu(Request $request)
     {
+        $codeParam = $request->query('c');
         //check if code is valid
-        $code = Code::query()->where('code', $code)->first();
+        $code = Code::query()->where('code', $codeParam)->first();
         // if not valid return error
         if(!$code){
             return $this->sendError('Invalid code', [], HTTP_NOT_FOUND);
         }
-        $data['code'] = $code->codable->with([
-                'business',
-                'business.type',
-                'business.vendor',
-                'business.district',
-                'business.district.city',
-                'business.district.city.country'
-            ])->first();
-        $data['menu'] = $code->codable->business->categories()->with([
+
+        $relationships = [
+            'business',
+            'business.type',
+            'business.vendor',
+            'business.district',
+            'business.district.city',
+            'business.district.city.country'
+        ];
+
+        if (Schema::hasColumn($code->codable->getTable(), 'section_id')) {
+            array_unshift($relationships, 'section');
+        }
+        
+        $codable = $code->codable->load($relationships);
+        $menu = $code->codable->business->categories()->with([
             'items' => function($query){
                 $query->where('is_active', true);
             },
         ])
             ->where('is_active', true)
             ->get();
+
+        $data['code'] = $codable;
+        $data['menu'] = $menu;
 
         return $this->sendResponse($data, 'Menu retrieved successfully', HTTP_OK);
     }
