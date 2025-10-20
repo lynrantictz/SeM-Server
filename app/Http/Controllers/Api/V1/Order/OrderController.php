@@ -4,7 +4,10 @@ namespace App\Http\Controllers\Api\V1\Order;
 
 use App\Http\Controllers\Api\BaseController;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Order\OrderRequest;
+use App\Models\Section\Code;
 use App\Repositories\Order\OrderRepository;
+use Illuminate\Container\Attributes\Log;
 use Illuminate\Http\Request;
 
 class OrderController extends BaseController
@@ -35,9 +38,26 @@ class OrderController extends BaseController
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request)
+    public function store(OrderRequest $request)
     {
-        //
+        // check if code exist
+        // $code = Code::query()->find($request->input('code'));
+        // if(!$code){
+        //     return $this->sendError('code not found',[], HTTP_NOT_FOUND);
+        // }
+        // // check if code is active
+        // if(!$code->is_active){
+        //     return $this->sendError('code is disabled. contact a hotel/restaurant',[], HTTP_NOT_FOUND);
+        // }
+        // // check if business is active
+        // if(!$code->codable->business->is_active){
+        //     return $this->sendError('Business is disabled. contact a hotel/restaurant',[], HTTP_NOT_FOUND);
+        // }
+
+        // $order = $this->orders->store($code, $request->except('code'));
+        // $data['order'] = $order;
+        Log::info($request->all());
+        return $this->sendResponse($data, 'Order Placed successfully', HTTP_OK);
     }
 
     /**
