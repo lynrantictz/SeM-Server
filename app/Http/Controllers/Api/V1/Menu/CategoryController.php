@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Section\Code;
 use App\Repositories\Menu\CategoryRepository;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
 class CategoryController extends BaseController
@@ -48,6 +49,7 @@ class CategoryController extends BaseController
             },
         ])
             ->where('is_active', true)
+            ->orderBy('categories.name', 'ASC')
             ->get();
 
         $data['code'] = $codable;
