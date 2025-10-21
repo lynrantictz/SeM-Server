@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
             $table->unsignedBigInteger('item_id');
             $table->decimal('price', 15, 2);
-            $table->decimal('offer_price', 15, 2)->nullable();
+            $table->decimal('discount_price', 15, 2)->nullable();
             $table->timestamps();
         });
     }

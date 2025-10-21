@@ -18,7 +18,7 @@ return new class extends Migration
             $table->text('description');
             $table->decimal('price', 10, 2);
             $table->string('currency');
-            $table->decimal('offer_price', 10, 2)->nullable();
+            $table->decimal('discount_price', 10, 2)->nullable();
             $table->boolean('is_active')->default(true);
             $table->uuid('uuid')->unique();
             $table->timestamps();

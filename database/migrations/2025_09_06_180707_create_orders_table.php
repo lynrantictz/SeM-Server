@@ -22,9 +22,10 @@ return new class extends Migration
             $table->unsignedBigInteger('payment_status_id')->nullable();
             $table->unsignedBigInteger('approver_id')->nullable();
             $table->timestamp('approved_at')->nullable();
-            $table->decimal('total_amount', 15, 2);
+            $table->decimal('total_amount', 15, 2)->nullable();
             $table->decimal('paid_amount', 15, 2)->nullable();
             $table->decimal('due_amount', 15, 2)->nullable();
+            $table->decimal('tax_amount', 15, 2)->default(0);
             $table->uuid('uuid')->unique();
             $table->timestamps();
         });
