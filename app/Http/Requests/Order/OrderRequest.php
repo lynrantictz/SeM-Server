@@ -21,16 +21,16 @@ class OrderRequest extends FormRequest
      */
     public function rules(): array
     {
-            switch($this->method()){
-                case "POST":
-                    return [
-                        'code' => 'required|string|code,codes.code',
-                        'items' => 'required|array',
-                        'phone' => 'required'
-                    ];
-                    break;
-            }
+        switch ($this->method()) {
+            case "POST":
+                return [
+                    // 'code' => 'required|string|code,codes.code',
+                    // 'items' => 'required|array',
+                    // 'phone' => 'required'
+                ];
+                break;
+        }
 
-            return [];
+        return [];
     }
 }

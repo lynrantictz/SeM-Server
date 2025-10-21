@@ -20,6 +20,7 @@ return new class extends Migration
             $table->string('name');
             $table->string('location');
             $table->string('google_location')->nullable();
+            $table->boolean('is_active')->default(false);
             $table->uuid('uuid')->unique();
             $table->timestamps();
         });
