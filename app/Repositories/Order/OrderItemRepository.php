@@ -19,8 +19,8 @@ class OrderItemRepository extends BaseRepository
             'item_id' => $itemResults->id,
             'quantity' => $item['quantity'],
             'unit_price' => $itemResults->price,
-            'discount_price' => $itemResults->discount_price, //this should be percentage
-            'final_price' => '',
+            'discount' => $itemResults->discount, //this should be percentage
+            'final_price' => $itemResults->final_price,
             'comment' => $item['comment']
         ];
     }

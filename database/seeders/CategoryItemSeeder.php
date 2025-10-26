@@ -115,17 +115,32 @@ class CategoryItemSeeder extends Seeder
             ],
         ];
 
+
         foreach ($menuData as $menu) {
+            // Create category
             $category = Category::query()->create([
                 'name' => $menu['section'],
-                'business_id' => 1
+                'business_id' => 1,
             ]);
+
+            // Loop through items in that section
             foreach ($menu['items'] as $item) {
+                // Random discount between 20–80
+                $discount = rand(20, 80);
+
+                // Calculate final price
+                $final_price = ($discount > 0)
+                    ? round($item['price'] - ($item['price'] * ($discount / 100)))
+                    : $item['price'];
+
+                // Create item with discount and final price
                 $category->items()->create([
                     'name' => $item['name'],
                     'price' => $item['price'],
                     'currency' => $item['currency'],
                     'description' => $item['description'],
+                    'discount' => $discount,
+                    'final_price' => $final_price,
                 ]);
             }
         }
