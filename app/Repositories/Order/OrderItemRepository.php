@@ -21,11 +21,12 @@ class OrderItemRepository extends BaseRepository
             'unit_price' => $itemResults->price,
             'discount' => $itemResults->discount, //this should be percentage
             'final_price' => $itemResults->final_price,
+            'total_amount' => $itemResults->final_price * $item['quantity'],
             'comment' => $item['comment']
         ];
     }
 
-    public function store(Order $order, $items): array
+    public function store(Order $order, $items)
     {
         return DB::transaction(function () use ($order, $items) {
             foreach ($items as $item) {

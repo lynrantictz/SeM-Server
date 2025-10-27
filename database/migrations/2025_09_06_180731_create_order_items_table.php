@@ -19,6 +19,8 @@ return new class extends Migration
             $table->decimal('unit_price', 15, 2);
             $table->decimal('discount', 10, 2)->nullable(0);
             $table->decimal('final_price', 15, 2);
+            $table->decimal('total_amount', 15, 2);
+            $table->uuid('uuid');
             $table->timestamps();
         });
     }

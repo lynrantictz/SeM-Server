@@ -8,5 +8,5 @@ use Illuminate\Support\Facades\Route;
 //})->middleware('auth:sanctum');
 
 Route::prefix('v1')->group(function () {
-    includeRouteFiles(__DIR__.'/api/');
+    includeRouteFiles(__DIR__ . '/api/');
 });

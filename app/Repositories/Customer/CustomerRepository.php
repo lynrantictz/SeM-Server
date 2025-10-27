@@ -5,6 +5,7 @@ namespace App\Repositories\Customer;
 use App\Models\Customer\Customer;
 use App\Repositories\BaseRepository;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CustomerRepository extends BaseRepository
 {
@@ -24,8 +25,9 @@ class CustomerRepository extends BaseRepository
     {
         $customer = $this->query()->wherePhone($phone)->first();
         if (!$customer) {
-            $this->store($phone);
+            $customer = $this->store($phone);
         }
+        Log::info($customer);
         return $customer;
     }
 

@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\Business\Business;
 use App\Models\Business\Vendor;
+use App\Services\OrderPrefixService;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
@@ -15,23 +16,6 @@ class VendorBusinessSeeder extends Seeder
      */
     public function run(): void
     {
-        /**
-         * country_id
-        tin
-        name
-        email
-        email_verified_at
-        phone
-        address
-         *
-         *
-         * district_id
-        business_type_id
-        tin
-        name
-        location
-        google_location
-         */
         $vendors = [
             [
                 'country_id' => 1,
@@ -62,7 +46,10 @@ class VendorBusinessSeeder extends Seeder
 
             $vendor->businesses()->firstOrCreate(
                 ['name' => $businessData['name'], 'vendor_id' => $vendor->id],
-                $businessData
+                array_merge($businessData, [
+                    'order_prefix' => (new OrderPrefixService())->generate($businessData['name']),
+                    'current_order_number' => 0,
+                ])
             );
         }
     }

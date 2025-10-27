@@ -4,6 +4,7 @@ namespace App\Models\Order\Trait\Relationship;
 
 use App\Models\Business\Business;
 use App\Models\Customer\Customer;
+use App\Models\Order\OrderItem;
 use App\Models\Order\OrderStatus;
 use App\Models\Payment\PaymentMethod;
 use App\Models\Payment\PaymentStatus;
@@ -35,5 +36,8 @@ trait OrderRelationship
         return $this->belongsTo(PaymentStatus::class, 'payment_status_id');
     }
 
-
+    public function items()
+    {
+        return $this->hasMany(OrderItem::class, 'order_id', 'id');
+    }
 }

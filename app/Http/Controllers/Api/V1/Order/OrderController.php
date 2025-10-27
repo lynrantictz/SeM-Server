@@ -40,26 +40,19 @@ class OrderController extends BaseController
      */
     public function store(OrderRequest $request)
     {
-
         //check if code exist
         $code = Code::query()->whereCode($request->input('code'))->first();
         if (!$code) {
             return $this->sendError('code not found', [], HTTP_NOT_FOUND);
         }
-
         // check if code is active
         if (!$code->is_active) {
             return $this->sendError('code is disabled. contact a hotel/restaurant', [], HTTP_NOT_FOUND);
         }
-
-        Log::info($code->codable);
-
-        Log::info($code->codable->business);
         // check if business is active
         if (!$code->codable->business->is_active) {
             return $this->sendError('Business is disabled. contact a hotel/restaurant', [], HTTP_NOT_FOUND);
         }
-
         $order = $this->orders->store($code, $request->except('code'));
         $data['order'] = $order;
         return $this->sendResponse($data, 'Order Placed successfully', HTTP_OK);
