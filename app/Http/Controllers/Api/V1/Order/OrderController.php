@@ -5,10 +5,13 @@ namespace App\Http\Controllers\Api\V1\Order;
 use App\Http\Controllers\Api\BaseController;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Order\OrderRequest;
+use App\Models\Order\Order;
 use App\Models\Section\Code;
 use App\Repositories\Order\OrderRepository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+
+use function Illuminate\Log\log;
 
 class OrderController extends BaseController
 {
@@ -61,9 +64,25 @@ class OrderController extends BaseController
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show(string $number)
     {
-        //
+        $order = Order::query()->whereNumber($number)->first();
+        Log::info($order);
+        if (!$order) {
+            return $this->sendError('Order not found', [], HTTP_NOT_FOUND);
+        }
+        $relationship = [
+            'customer',
+            'business',
+            'status',
+            'paymentMethod',
+            'paymentStatus',
+            'items',
+            'items.item'
+        ];
+        $data['order'] = $order->load($relationship);
+        Log::info($data['order']);
+        return $this->sendResponse($data, 'Order Retrieved successfully', HTTP_OK);
     }
 
     /**
