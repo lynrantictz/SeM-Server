@@ -67,13 +67,16 @@ class OrderController extends BaseController
     public function show(string $number)
     {
         $order = Order::query()->whereNumber($number)->first();
-        Log::info($order);
         if (!$order) {
             return $this->sendError('Order not found', [], HTTP_NOT_FOUND);
         }
         $relationship = [
             'customer',
             'business',
+            'business.contacts',
+            'business.district',
+            'business.district.city',
+            'business.district.city.country',
             'status',
             'paymentMethod',
             'paymentStatus',
@@ -81,7 +84,6 @@ class OrderController extends BaseController
             'items.item'
         ];
         $data['order'] = $order->load($relationship);
-        Log::info($data['order']);
         return $this->sendResponse($data, 'Order Retrieved successfully', HTTP_OK);
     }
 
