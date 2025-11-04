@@ -24,10 +24,11 @@ return new class extends Migration
             $table->unsignedBigInteger('tax_id')->nullable();
             $table->timestamp('approved_at')->nullable();
             $table->string('number')->unique();
-            $table->decimal('paid_amount', 15, 2)->nullable();
-            $table->decimal('due_amount', 15, 2)->nullable();
+            $table->decimal('total_items_amount', 15, 2)->nullable();
             $table->decimal('tax_amount', 15, 2)->default(0);
             $table->decimal('total_amount', 15, 2)->nullable();
+            $table->decimal('paid_amount', 15, 2)->nullable();
+            $table->decimal('due_amount', 15, 2)->nullable();
             $table->uuid('uuid')->unique();
             $table->timestamps();
         });

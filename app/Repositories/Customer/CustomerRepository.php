@@ -27,7 +27,6 @@ class CustomerRepository extends BaseRepository
         if (!$customer) {
             $customer = $this->store($phone);
         }
-        Log::info($customer);
         return $customer;
     }
 
