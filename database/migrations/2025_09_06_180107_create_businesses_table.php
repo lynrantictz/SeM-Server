@@ -23,6 +23,7 @@ return new class extends Migration
             $table->string('order_prefix')->unique();
             $table->unsignedBigInteger('current_order_number')->default(0);
             $table->boolean('is_active')->default(false);
+            $table->boolean('tax_allowed')->default(false);
             $table->uuid('uuid')->unique();
             $table->timestamps();
         });

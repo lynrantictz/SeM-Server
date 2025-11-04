@@ -6,12 +6,15 @@ use App\Models\Order\Order;
 use App\Models\Section\Code;
 use App\Repositories\BaseRepository;
 use App\Repositories\Customer\CustomerRepository;
+use App\Services\TaxCalculatorService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class OrderRepository extends BaseRepository
 {
     const MODEL = Order::class;
+
+    use TaxCalculatorService;
 
     /**
      * Inputs for storing order
@@ -54,10 +57,17 @@ class OrderRepository extends BaseRepository
             ));
             // create order items
             (new OrderItemRepository())->store($order, $inputs['items']);
-            // update total amount and generate order number
-            $order->update([
-                'total_amount' => $order->items()->sum('total_amount')
-            ]);
+            //calculate total amount
+            $order_total_amount = $order->items()->sum('total_amount');
+            $taxCalculator = $this->calculateTax($business->district->city->country, $order_total_amount);
+            /**
+             * update tax details and amount
+             * tax_id
+             * tax_amount
+             * total_amount
+             */
+            $order->update($taxCalculator);
+
             return $order;
         });
     }

@@ -5,6 +5,7 @@ namespace App\Models\Location\Traits\Relationship;
 use App\Models\Business\Vendor;
 use App\Models\Location\City;
 use App\Models\Location\District;
+use App\Models\Location\Tax;
 
 trait CountryRelationship
 {
@@ -21,5 +22,10 @@ trait CountryRelationship
     public function vendors()
     {
         return $this->hasMany(Vendor::class);
+    }
+
+    public function taxes()
+    {
+        return $this->hasMany(Tax::class);
     }
 }
