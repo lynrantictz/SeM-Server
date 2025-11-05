@@ -67,7 +67,17 @@ class OrderRepository extends BaseRepository
              * total_amount
              */
             $order->update($taxCalculator);
+            $random_code = rand(1000, 9999);
+            $verification_inputs = [
+                'phone' => $order->customer->phone,
+                'verification_code' => bcrypt($random_code)
+            ];
+            // Generate for verification
+            $order->customerVerification()->create($verification_inputs);
 
+            //Send verification code to WhatsApp
+            // $random_code
+            Log::info($random_code);
             return $order;
         });
     }

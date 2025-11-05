@@ -29,6 +29,7 @@ return new class extends Migration
             $table->decimal('total_amount', 15, 2)->nullable();
             $table->decimal('paid_amount', 15, 2)->nullable();
             $table->decimal('due_amount', 15, 2)->nullable();
+            $table->dateTime('phone_verified_at')->nullable();
             $table->uuid('uuid')->unique();
             $table->timestamps();
         });

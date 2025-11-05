@@ -4,6 +4,7 @@ namespace App\Models\Order\Trait\Relationship;
 
 use App\Models\Business\Business;
 use App\Models\Customer\Customer;
+use App\Models\Order\OrderCustomerVerification;
 use App\Models\Order\OrderItem;
 use App\Models\Order\OrderStatus;
 use App\Models\Payment\PaymentMethod;
@@ -39,5 +40,10 @@ trait OrderRelationship
     public function items()
     {
         return $this->hasMany(OrderItem::class, 'order_id', 'id');
+    }
+
+    public function customerVerification()
+    {
+        return $this->hasOne(OrderCustomerVerification::class, 'order_id', 'id');
     }
 }
