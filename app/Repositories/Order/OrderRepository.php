@@ -93,4 +93,9 @@ class OrderRepository extends BaseRepository
             return $order;
         });
     }
+
+    public function resendPhoneVerificationCode(Order $order)
+    {
+        return DB::transaction(function () use ($order) {});
+    }
 }

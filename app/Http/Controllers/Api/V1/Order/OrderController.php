@@ -2,11 +2,10 @@
 
 namespace App\Http\Controllers\Api\V1\Order;
 
+use App\Http\Controllers\Api\V1\Order\Trait\PhoneVerificationTrait;
 use App\Http\Controllers\Api\BaseController;
-use App\Http\Controllers\Controller;
 use App\Http\Requests\Order\OrderRequest;
 use App\Http\Requests\Order\PhoneVerifyRequest;
-use App\Http\Requests\OrderPhoneVerifyRequest;
 use App\Models\Order\Order;
 use App\Models\Section\Code;
 use App\Repositories\Order\OrderRepository;
@@ -14,11 +13,11 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 
-use function Illuminate\Log\log;
-
 class OrderController extends BaseController
 {
     protected OrderRepository $orders;
+
+    use PhoneVerificationTrait;
 
     public function __construct(OrderRepository $orders)
     {
@@ -92,20 +91,10 @@ class OrderController extends BaseController
 
     public function verifyPhone(PhoneVerifyRequest $request, Order $order)
     {
-        Log::info($order);
-        Log::info($request->all());
-        // check if order is available
-        if (!$order) {
-            return $this->sendError('Order not found', [], HTTP_NOT_FOUND);
-        }
-        // check if order is verified
-        if ($order->phone_verified_at) {
-            return $this->sendError('Order not found', [], HTTP_NO_CONTENT);
-        }
-        // check if order otp match
-        $customer_verification = $order->customerVerification()->first();
+        // check if order is available and phone is verified
+        $this->verifyPhoneAndOrder($order);
 
-        Log::info($customer_verification);
+        $customer_verification = $order->customerVerification()->first();
 
         if (!Hash::check($request->input('otp'), $customer_verification->verification_code)) {
             return $this->sendError('otp did not match', [], HTTP_BAD_REQUEST);
@@ -115,6 +104,8 @@ class OrderController extends BaseController
 
         return $this->sendResponse($data, 'Phone verified successfully', HTTP_OK);
     }
+
+    public function resendPhoneVerificationCode(Order $order) {}
 
     /**
      * Show the form for editing the specified resource.

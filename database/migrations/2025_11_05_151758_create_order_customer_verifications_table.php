@@ -16,6 +16,7 @@ return new class extends Migration
             $table->unsignedBigInteger('order_id');
             $table->string('phone');
             $table->string('verification_code');
+            $table->dateTime('expires_at');
             $table->timestamps();
         });
     }
