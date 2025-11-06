@@ -81,4 +81,14 @@ class OrderRepository extends BaseRepository
             return $order;
         });
     }
+
+    public function verifyPhone(Order $order)
+    {
+        return DB::transaction(function () use ($order) {
+            $order->update([
+                'phone_verified_at' => now()
+            ]);
+            return $order;
+        });
+    }
 }

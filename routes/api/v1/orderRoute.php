@@ -10,4 +10,5 @@ use Illuminate\Support\Facades\Route;
 Route::group(['prefix' => 'orders'], function () {
    Route::post('', [OrderController::class, 'store']);
    Route::get('/{number}', [OrderController::class, 'show']);
+   Route::post('{order}/verify-phone', [OrderController::class, 'verifyPhone']);
 });

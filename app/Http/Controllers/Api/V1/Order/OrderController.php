@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\V1\Order;
 use App\Http\Controllers\Api\BaseController;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Order\OrderRequest;
+use App\Http\Requests\Order\PhoneVerifyRequest;
+use App\Http\Requests\OrderPhoneVerifyRequest;
 use App\Models\Order\Order;
 use App\Models\Section\Code;
 use App\Repositories\Order\OrderRepository;
@@ -85,6 +87,28 @@ class OrderController extends BaseController
         ];
         $data['order'] = $order->load($relationship);
         return $this->sendResponse($data, 'Order Retrieved successfully', HTTP_OK);
+    }
+
+    public function verifyPhone(PhoneVerifyRequest $request, Order $order)
+    {
+        // check if order is available
+        if (!$order) {
+            return $this->sendError('Order not found', [], HTTP_NOT_FOUND);
+        }
+        // check if order is verified
+        if ($order->phone_verified_at) {
+            return $this->sendError('Order not found', [], HTTP_NO_CONTENT);
+        }
+        // check if order code match
+        $match_code = $order->verifyPhone()->where('verification_code', bcrypt($request->input('otp')))->first();
+
+        if (!$match_code) {
+            return $this->sendError('otp did not match', [], HTTP_NOT_FOUND);
+        }
+
+        $data['order'] = $this->orders->verifyPhone($order);
+
+        return $this->sendResponse($data, 'Phone verified successfully', HTTP_OK);
     }
 
     /**
