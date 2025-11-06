@@ -22,7 +22,7 @@ class PhoneVerifyRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'otp' => 'required|number|max:4|min:4'
+            'otp' => 'required|numeric|digits:4'
         ];
     }
 }

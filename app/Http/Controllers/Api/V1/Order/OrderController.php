@@ -11,6 +11,7 @@ use App\Models\Order\Order;
 use App\Models\Section\Code;
 use App\Repositories\Order\OrderRepository;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 
 use function Illuminate\Log\log;
@@ -91,6 +92,8 @@ class OrderController extends BaseController
 
     public function verifyPhone(PhoneVerifyRequest $request, Order $order)
     {
+        Log::info($order);
+        Log::info($request->all());
         // check if order is available
         if (!$order) {
             return $this->sendError('Order not found', [], HTTP_NOT_FOUND);
@@ -99,11 +102,13 @@ class OrderController extends BaseController
         if ($order->phone_verified_at) {
             return $this->sendError('Order not found', [], HTTP_NO_CONTENT);
         }
-        // check if order code match
-        $match_code = $order->verifyPhone()->where('verification_code', bcrypt($request->input('otp')))->first();
+        // check if order otp match
+        $customer_verification = $order->customerVerification()->first();
 
-        if (!$match_code) {
-            return $this->sendError('otp did not match', [], HTTP_NOT_FOUND);
+        Log::info($customer_verification);
+
+        if (!Hash::check($request->input('otp'), $customer_verification->verification_code)) {
+            return $this->sendError('otp did not match', [], HTTP_BAD_REQUEST);
         }
 
         $data['order'] = $this->orders->verifyPhone($order);

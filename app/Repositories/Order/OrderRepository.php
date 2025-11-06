@@ -8,6 +8,7 @@ use App\Repositories\BaseRepository;
 use App\Repositories\Customer\CustomerRepository;
 use App\Services\TaxCalculatorService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 
 class OrderRepository extends BaseRepository
@@ -68,9 +69,10 @@ class OrderRepository extends BaseRepository
              */
             $order->update($taxCalculator);
             $random_code = rand(1000, 9999);
+            $hashed_random_code = Hash::make($random_code);
             $verification_inputs = [
                 'phone' => $order->customer->phone,
-                'verification_code' => bcrypt($random_code)
+                'verification_code' => $hashed_random_code
             ];
             // Generate for verification
             $order->customerVerification()->create($verification_inputs);
