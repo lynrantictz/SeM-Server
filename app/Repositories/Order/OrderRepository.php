@@ -94,8 +94,24 @@ class OrderRepository extends BaseRepository
         });
     }
 
+    /**
+     * Resend Phone Verification Code
+     * Order $order
+     */
     public function resendPhoneVerificationCode(Order $order)
     {
-        return DB::transaction(function () use ($order) {});
+        return DB::transaction(function () use ($order) {
+            $random_code = rand(1000, 9999);
+            $hashed_random_code = Hash::make($random_code);
+            Log::info($random_code);
+            $verification_inputs = [
+                'phone' => $order->customer->phone,
+                'verification_code' => $hashed_random_code
+            ];
+            $order->customerVerification()->updateOrCreate([
+                'phone' => $verification_inputs['phone']
+            ], $verification_inputs);
+            return $order;
+        });
     }
 }

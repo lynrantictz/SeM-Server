@@ -105,7 +105,13 @@ class OrderController extends BaseController
         return $this->sendResponse($data, 'Phone verified successfully', HTTP_OK);
     }
 
-    public function resendPhoneVerificationCode(Order $order) {}
+    public function resendPhoneVerificationCode(Order $order)
+    {
+        // check if order is available and phone is verified
+        $this->verifyPhoneAndOrder($order);
+        $data['order'] = $this->orders->resendPhoneVerificationCode($order);
+        return $this->sendResponse($data, 'Verification code send successfully, Please Check your WhatsApp Inbox.', HTTP_OK);
+    }
 
     /**
      * Show the form for editing the specified resource.

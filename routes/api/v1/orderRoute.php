@@ -11,4 +11,5 @@ Route::group(['prefix' => 'orders'], function () {
    Route::post('', [OrderController::class, 'store']);
    Route::get('{number}', [OrderController::class, 'show']);
    Route::put('{order}/verify-phone', [OrderController::class, 'verifyPhone']);
+   Route::post('{order}/resend-phone-verification-code', [OrderController::class, 'resendPhoneVerificationCode']);
 });
