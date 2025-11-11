@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Order;
 
 use App\Http\Controllers\Api\V1\Order\Trait\PhoneVerificationTrait;
 use App\Http\Controllers\Api\BaseController;
+use App\Http\Requests\Order\ChangePhoneNumberRequest;
 use App\Http\Requests\Order\OrderRequest;
 use App\Http\Requests\Order\PhoneVerifyRequest;
 use App\Models\Order\Order;
@@ -83,7 +84,8 @@ class OrderController extends BaseController
             'paymentMethod',
             'paymentStatus',
             'items',
-            'items.item'
+            'items.item',
+            'customerVerification'
         ];
         $data['order'] = $order->load($relationship);
         return $this->sendResponse($data, 'Order Retrieved successfully', HTTP_OK);
@@ -116,9 +118,15 @@ class OrderController extends BaseController
     /**
      * Show the form for editing the specified resource.
      */
-    public function edit(string $id)
+    public function changePhone(ChangePhoneNumberRequest $request, Order $order)
     {
-        //
+        // check if order is available
+        if (!$order) {
+            return $this->sendError('Order not found', [], HTTP_NOT_FOUND);
+        }
+
+        $data['order'] = $this->orders->changePhone($order, $request->only('phone'));
+        return $this->sendResponse($data, 'Phone number changed successfully', HTTP_OK);
     }
 
     /**

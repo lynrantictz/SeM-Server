@@ -68,18 +68,8 @@ class OrderRepository extends BaseRepository
              * total_amount
              */
             $order->update($taxCalculator);
-            $random_code = rand(1000, 9999);
-            $hashed_random_code = Hash::make($random_code);
-            $verification_inputs = [
-                'phone' => $order->customer->phone,
-                'verification_code' => $hashed_random_code
-            ];
-            // Generate for verification
-            $order->customerVerification()->create($verification_inputs);
 
-            //Send verification code to WhatsApp
-            // $random_code
-            Log::info($random_code);
+            (new OrderCustomerVerificationRepository())->storeOrUpdatePhone($order);
             return $order;
         });
     }
@@ -111,6 +101,18 @@ class OrderRepository extends BaseRepository
             $order->customerVerification()->updateOrCreate([
                 'phone' => $verification_inputs['phone']
             ], $verification_inputs);
+            return $order;
+        });
+    }
+
+    /**
+     * Change Phone Number
+     */
+    public function changePhone(Order $order, $input)
+    {
+        return DB::transaction(function () use ($order, $input) {
+            $phone = trim($input['phone']);
+            (new OrderCustomerVerificationRepository())->storeOrUpdatePhone($order, $phone);
             return $order;
         });
     }
