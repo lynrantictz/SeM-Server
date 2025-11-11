@@ -23,7 +23,7 @@ class OrderCustomerVerificationRepository
         // Generate for verification
         return DB::transaction(function () use ($order, $verification_inputs, $random_code) {
             $order->customerVerification()->updateOrCreate(
-                ['phone' => $verification_inputs['phone']],
+                ['order_id' => $order->id],
                 $verification_inputs
             );
             Log::info($random_code);
