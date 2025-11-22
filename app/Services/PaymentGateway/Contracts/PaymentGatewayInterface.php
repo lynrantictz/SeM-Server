@@ -4,7 +4,7 @@ namespace App\Services\PaymentGateway\Contracts;
 
 interface PaymentGatewayInterface
 {
-    public function initiatePayment(array $data): array;
+    public function mnoCheckout(array $data): array;
 
     public function verifyPayment(string $transactionId): array;
 

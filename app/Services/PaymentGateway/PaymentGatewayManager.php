@@ -19,15 +19,24 @@ class PaymentGatewayManager
 
 // in controller
 
-// public function pay()
+// use App\Services\PaymentGateway\DTOs\MnoCheckoutData;
+// use App\Services\PaymentGateway\PaymentGatewayManager;
+
+// public function checkout()
 // {
-//     $data = new PaymentRequestData(
-//         reference: 'ORDER_12345',
-//         amount: 20000,
-//         phone: '255678000000'
+//     $dto = new MnoCheckoutData(
+//         accountNumber: '255713000000',
+//         amount: 2000,
+//         currency: 'TZS',
+//         externalId: 'INV-001',
+//         provider: 'Airtel',
+//         additionalProperties: [
+//             'order_id' => 123,
+//             'customer_name' => 'HAMIS JUMA'
+//         ]
 //     );
 
 //     $gateway = app(PaymentGatewayManager::class)->gateway('azampay');
 
-//     return $gateway->initiatePayment($data);
+//     return $gateway->mnoCheckout($dto);
 // }
