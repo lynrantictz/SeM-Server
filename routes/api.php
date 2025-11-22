@@ -8,8 +8,8 @@ use Illuminate\Support\Facades\Route;
 //    return $request->user();
 //})->middleware('auth:sanctum');
 
-Route::prefix('v1')->group(function () {
-    Route::post('/azam-pay/webhook', [PaymentWebhookController::class, 'handle']);
+Route::post('/payments/azampay/callback', [PaymentWebhookController::class, 'handle']);
 
+Route::prefix('v1')->group(function () {
     includeRouteFiles(__DIR__ . '/api/');
 });

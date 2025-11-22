@@ -18,6 +18,12 @@ return new class extends Migration
             $table->string('transaction_id')->nullable(); // AzamPay ID
             $table->string('account_number');
             $table->string('provider');
+            $table->string('client_id')->nullable();
+            $table->string('operator')->nullable();
+            $table->string('mno_reference')->nullable();
+            $table->string('utility_ref')->nullable();
+            $table->string('message')->nullable();
+            $table->string('msisdn')->nullable();
             $table->decimal('amount', 15, 2);
             $table->string('currency', 10)->default('TZS');
 

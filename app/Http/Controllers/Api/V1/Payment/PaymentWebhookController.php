@@ -7,6 +7,7 @@ use App\Jobs\Payment\ProcessPaymentWebhook;
 use App\Repositories\Payment\PaymentGatewayRepository;
 use App\Repositories\PaymentTransactionRepository;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class PaymentWebhookController extends Controller
 {
@@ -20,8 +21,14 @@ class PaymentWebhookController extends Controller
 
     public function handle(Request $request)
     {
+        Log::info('AzamPay Callback Received', $request->all());
         $data = $request->all();
-        ProcessPaymentWebhook::dispatch($data);
-        return response()->json(['status' => 'ok']);
+        $transaction = $this->paymentTransactions->findByTransactionId($data['transid']);
+        if (!$transaction) {
+            Log::warning('Callback ignored — transaction not found', ['transid' => $data['transid']]);
+            return response()->json(['status' => 'ignored'], 404);
+        }
+        ProcessPaymentWebhook::dispatch($transaction, $data);
+        return response()->json(['status' => 'ok'], 200);
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Jobs\Payment;
 
+use App\Models\Payment\PaymentTransaction;
 use App\Repositories\PaymentTransactionRepository;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -12,13 +13,15 @@ class ProcessPaymentWebhook implements ShouldQueue
     use Queueable;
 
     public array $payload;
+    public PaymentTransaction $paymentTransaction;
 
     /**
      * Create a new job instance.
      */
-    public function __construct(array $payload)
+    public function __construct(PaymentTransaction $paymentTransaction, array $payload)
     {
         $this->payload = $payload;
+        $this->paymentTransaction = $paymentTransaction;
     }
 
     /**
@@ -26,19 +29,24 @@ class ProcessPaymentWebhook implements ShouldQueue
      */
     public function handle(): void
     {
-        $repo = new PaymentTransactionRepository();
 
-        $transaction = $repo->findByTransactionId($this->payload['transactionId']);
+        DB::transaction(function () {
+            $this->paymentTransaction->update([
+                'operator'       => $this->payload['operator'],
+                'client_id'      => $this->payload['clientId'],
+                'mno_reference'  => $this->payload['mnoreference'],
+                'utility_ref'    => $this->payload['utilityref'],
+                'msisdn'         => $this->payload['msisdn'],
+                'message'        => $this->payload['message'],
+                'response_payload' => $this->payload,
+            ]);
 
-        if (!$transaction) {
-            return;
-        }
-        DB::transaction(function () use ($repo, $transaction) {
-            if ($this->payload['success'] === true) {
-                $repo->updateStatus($transaction->id, 'SUCCESS');
-            } else {
-                $repo->updateStatus($transaction->id, 'FAILED');
-            }
+            // Map AzamPay status → local status
+            $status = strtolower($data['transactionstatus']) === 'success'
+                ? 'SUCCESS'
+                : 'FAILED';
+
+            $repo->updateStatus($transaction->id, $status);
         });
     }
 }
