@@ -62,8 +62,8 @@ class AzamPayService implements PaymentGatewayInterface
         $json = $response->json();
 
         // Update transaction
-        $transactionRepo->updateAzamPayId($transaction->id, $json['transactionId'] ?? null);
-        $transactionRepo->updateStatus($transaction->id, $json['success'] ? 'PROCESSING' : 'FAILED');
+        $transactionRepo->updateAzamPayId($transaction, $json['transactionId'] ?? null);
+        $transactionRepo->updateStatus($transaction, $json['success'] ? 'PROCESSING' : 'FAILED');
 
         return $json;
     }
