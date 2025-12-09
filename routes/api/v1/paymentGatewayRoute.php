@@ -5,5 +5,5 @@ use Illuminate\Support\Facades\Route;
 
 
 Route::group(['prefix' => 'payment-gateways'], function () {
-    Route::get('{order}/checkout', [PaymentGatewayController::class, 'checkout']);
+    Route::post('{order}/checkout', [PaymentGatewayController::class, 'checkout']);
 });

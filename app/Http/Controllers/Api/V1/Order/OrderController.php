@@ -144,4 +144,11 @@ class OrderController extends BaseController
     {
         //
     }
+
+    public function rating(Request $request, Order $order)
+    {
+        $this->orders->rating($order, $request->all());
+        $data['order'] = $order;
+        return $this->sendResponse($data, 'Thanks for your review, It will help us improve', HTTP_OK);
+    }
 }

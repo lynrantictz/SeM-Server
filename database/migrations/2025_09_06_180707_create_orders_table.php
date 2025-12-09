@@ -30,6 +30,8 @@ return new class extends Migration
             $table->decimal('paid_amount', 15, 2)->nullable();
             $table->decimal('due_amount', 15, 2)->nullable();
             $table->dateTime('phone_verified_at')->nullable();
+            $table->integer('rate')->nullable();
+            $table->longText('comment')->nullable();
             $table->uuid('uuid')->unique();
             $table->timestamps();
         });

@@ -26,20 +26,22 @@ class PaymentGatewayController extends BaseController
      */
     public function checkout(Request $request, Order $order)
     {
-        $dto = new MnoCheckoutData(
-            accountNumber: $request['phone'],
-            amount: $order->total_amount,
-            currency: 'TZS',
-            externalId: $order->number,
-            provider: $request['provider'],
-            additionalProperties: [
-                'order_id' => $order->id,
-                'business_id' => $order->business->id,
-                'business_name' => $order->business->name,
-            ]
-        );
+        // $dto = new MnoCheckoutData(
+        //     accountNumber: $request['phone'],
+        //     amount: $order->total_amount,
+        //     currency: 'TZS',
+        //     externalId: $order->number,
+        //     provider: $request['provider'],
+        //     additionalProperties: [
+        //         'order_id' => $order->id,
+        //         'business_id' => $order->business->id,
+        //         'business_name' => $order->business->name,
+        //     ]
+        // );
 
-        $gateWay = $this->paymentGatewayManager->gateway('azampay');
-        return $gateWay->mnoCheckout($dto);
+        // $gateWay = $this->paymentGatewayManager->gateway('azampay');
+        // return $gateWay->mnoCheckout($dto);
+        $data['order'] = $order;
+        return $this->sendResponse($data, 'Payment Completed', HTTP_OK);
     }
 }

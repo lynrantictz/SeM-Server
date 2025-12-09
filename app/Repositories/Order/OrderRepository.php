@@ -116,4 +116,11 @@ class OrderRepository extends BaseRepository
             return $order;
         });
     }
+
+    public function rating(Order $order, $inputs)
+    {
+        return DB::transaction(function () use ($order, $inputs) {
+            return $order->update($inputs);
+        });
+    }
 }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Menu;
 
 use App\Http\Controllers\Api\BaseController;
 use App\Http\Controllers\Controller;
+use App\Models\Order\Order;
 use App\Models\Section\Code;
 use App\Repositories\Menu\CategoryRepository;
 use Illuminate\Http\Request;
@@ -25,7 +26,7 @@ class CategoryController extends BaseController
         //check if code is valid
         $code = Code::query()->where('code', $codeParam)->first();
         // if not valid return error
-        if(!$code){
+        if (!$code) {
             return $this->sendError('Invalid code', [], HTTP_NOT_FOUND);
         }
 
@@ -41,10 +42,10 @@ class CategoryController extends BaseController
         if (Schema::hasColumn($code->codable->getTable(), 'section_id')) {
             array_unshift($relationships, 'section');
         }
-        
+
         $codable = $code->codable->load($relationships);
         $menu = $code->codable->business->categories()->with([
-            'items' => function($query){
+            'items' => function ($query) {
                 $query->where('is_active', true);
             },
         ])
