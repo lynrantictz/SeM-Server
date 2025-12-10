@@ -7,6 +7,7 @@ use App\Models\Customer\Customer;
 use App\Models\Order\OrderCustomerVerification;
 use App\Models\Order\OrderItem;
 use App\Models\Order\OrderStatus;
+use App\Models\Payment\Payment;
 use App\Models\Payment\PaymentMethod;
 use App\Models\Payment\PaymentStatus;
 
@@ -45,5 +46,10 @@ trait OrderRelationship
     public function customerVerification()
     {
         return $this->hasOne(OrderCustomerVerification::class, 'order_id', 'id');
+    }
+
+    public function payment()
+    {
+        return $this->hasOne(Payment::class, 'order_id', 'id');
     }
 }

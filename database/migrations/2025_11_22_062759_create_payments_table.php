@@ -11,7 +11,7 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('payment_transactions', function (Blueprint $table) {
+        Schema::create('payments', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('order_id');
             $table->string('external_id');      // your reference
@@ -36,6 +36,7 @@ return new class extends Migration
 
             $table->json('request_payload')->nullable();
             $table->json('response_payload')->nullable();
+            $table->uuid('uuid');
             $table->timestamps();
         });
     }
@@ -45,6 +46,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('payment_transactions');
+        Schema::dropIfExists('payments');
     }
 };

@@ -85,7 +85,8 @@ class OrderController extends BaseController
             'paymentStatus',
             'items',
             'items.item',
-            'customerVerification'
+            'customerVerification',
+            'payment',
         ];
         $data['order'] = $order->load($relationship);
         return $this->sendResponse($data, 'Order Retrieved successfully', HTTP_OK);

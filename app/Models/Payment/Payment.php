@@ -2,9 +2,9 @@
 
 namespace App\Models\Payment;
 
-use Illuminate\Database\Eloquent\Model;
+use App\Models\BaseModel;
 
-class PaymentTransaction extends Model
+class Payment extends BaseModel
 {
     protected $fillable = [
         'order_id',
