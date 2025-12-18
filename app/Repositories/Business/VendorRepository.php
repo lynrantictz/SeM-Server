@@ -27,7 +27,7 @@ class VendorRepository extends BaseRepository
         ];
         return DB::transaction(function () use ($inputs, $userInputs) {
             $user = (new UserRepository())->store($userInputs);
-            return $user->vendor()->create($inputs);
+            return $user->vendor()->create($inputs->except(['password']));
         });
     }
 }
