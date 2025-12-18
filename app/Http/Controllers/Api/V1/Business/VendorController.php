@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Business;
 
 use App\Http\Controllers\Api\BaseController;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Busines\VendorStoreRequest;
 use App\Repositories\Business\VendorRepository;
 use Illuminate\Http\Request;
 
@@ -35,9 +36,9 @@ class VendorController extends BaseController
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request)
+    public function store(VendorStoreRequest $request)
     {
-        //
+        $this->vendors->store($request->all());
     }
 
     /**

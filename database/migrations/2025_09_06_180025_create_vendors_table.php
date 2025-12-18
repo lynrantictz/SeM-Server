@@ -13,11 +13,11 @@ return new class extends Migration
     {
         Schema::create('vendors', function (Blueprint $table) {
             $table->id();
+            $table->string('user_id');
             $table->unsignedBigInteger('country_id');
             $table->string('tin')->nullable();
             $table->string('name');
             $table->string('email')->unique();
-            $table->timestamp('email_verified_at')->nullable();
             $table->string('phone')->nullable();
             $table->string('address')->nullable();
             $table->uuid('uuid')->unique();
