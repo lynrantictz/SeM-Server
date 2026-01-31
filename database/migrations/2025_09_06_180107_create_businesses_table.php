@@ -21,6 +21,7 @@ return new class extends Migration
             $table->string('location');
             $table->string('google_location')->nullable();
             $table->string('order_prefix')->unique();
+            $table->string('code_prefix')->unique();
             $table->unsignedBigInteger('current_order_number')->default(0);
             $table->boolean('is_active')->default(false);
             $table->boolean('tax_allowed')->default(false);

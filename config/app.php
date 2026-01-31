@@ -53,6 +53,7 @@ return [
     */
 
     'url' => env('APP_URL', 'http://localhost'),
+    'business_url' => env('BUSINESS_URL', ''),
 
     /*
     |--------------------------------------------------------------------------
@@ -83,6 +84,9 @@ return [
     'fallback_locale' => env('APP_FALLBACK_LOCALE', 'en'),
 
     'faker_locale' => env('APP_FAKER_LOCALE', 'en_US'),
+
+    // Supported locales for the application (used by SetLocale middleware)
+    'supported_locales' => ['sw', 'en', 'fr', 'zh'],
 
     /*
     |--------------------------------------------------------------------------

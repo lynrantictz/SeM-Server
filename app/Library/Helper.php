@@ -30,3 +30,10 @@ if (!defined('HTTP_FORBIDDEN')) define('HTTP_FORBIDDEN', 403);
 if (!defined('HTTP_NOT_FOUND')) define('HTTP_NOT_FOUND', 404);
 if (!defined('HTTP_UNPROCESSABLE_ENTITY')) define('HTTP_UNPROCESSABLE_ENTITY', 422);
 if (!defined('HTTP_INTERNAL_SERVER_ERROR')) define('HTTP_INTERNAL_SERVER_ERROR', 500);
+
+if (!function_exists('business_id')) {
+    function business_id(): int
+    {
+        return app('business_id');
+    }
+}
