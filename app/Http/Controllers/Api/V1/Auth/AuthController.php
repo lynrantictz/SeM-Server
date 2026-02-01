@@ -3,13 +3,17 @@
 namespace App\Http\Controllers\Api\V1\Auth;
 
 use App\Http\Controllers\Api\BaseController;
+use App\Http\Requests\Api\V1\Auth\UserVendorRegisterRequest;
 use App\Models\Auth\EmailVerification;
 use App\Repositories\Auth\UserRepository;
 use Illuminate\Http\Request;
 
 class AuthController extends BaseController
 {
-    protected UserRepository $users;
+
+    public function __construct(
+        public UserRepository $users
+    ) {}
 
     public function verifyEmail(Request $request)
     {
@@ -50,4 +54,9 @@ class AuthController extends BaseController
         ]);
     }
 
+    public function registerUserVendor(UserVendorRegisterRequest $request)
+    {
+        $data['user'] = $this->users->registerUserVendor($request->all());
+        return $this->sendResponse($data, 'User registered successfully.', HTTP_CREATED);
+    }
 }

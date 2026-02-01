@@ -38,7 +38,7 @@ Accept: application/json
 
 ### Register Vendor Request
 # @name registerVendor
-POST {{server}}/vendors/register
+POST {{server}}/vendors
 Content-Type: application/json
 Accept: application/json
 

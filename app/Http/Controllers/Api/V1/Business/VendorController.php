@@ -39,7 +39,7 @@ class VendorController extends BaseController
     public function store(VendorStoreRequest $request)
     {
         $data['vendor'] = $this->vendors->store($request->all());
-        return $this->sendResponse($data, 'Vendor created successfully.');
+        return $this->sendResponse($data, 'Vendor created successfully.', HTTP_CREATED);
     }
 
     /**
