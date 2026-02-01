@@ -2,7 +2,7 @@
 
 namespace App\Repositories\Auth;
 
-use App\Models\User;
+use App\Models\Auth\User;
 use App\Repositories\BaseRepository;
 use Illuminate\Support\Facades\DB;
 

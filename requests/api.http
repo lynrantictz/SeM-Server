@@ -31,3 +31,20 @@ POST {{server}}/logout
 Authorization: Bearer {{login.response.body.$.data.token}}
 Content-Type: application/json
 Accept: application/json
+
+######################################################
+### Vendor Registration Requests
+######################################################
+
+### Register Vendor Request
+# @name registerVendor
+POST {{server}}/vendors/register
+Content-Type: application/json
+Accept: application/json
+
+{
+    "name": "Vendor ABC",
+    "email": "johndoe@example.com",
+    "phone": "+1234567890",
+    "password": "securepassword"
+}

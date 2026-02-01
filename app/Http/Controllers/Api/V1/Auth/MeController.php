@@ -23,16 +23,18 @@ class MeController extends BaseController
                 'code'  => $user->code,
                 'title' => $user->businessUser->title,
                 'role' => $user->businessUser->business_role,
-                // 'type'  => $user->user_type,
+                'uuid'  => $user->uuid,
             ],
             'business' => $user->businesses->map(fn($business) => [
                 'id'         => $business->id,
                 'name'       => $business->name,
                 'tin'       => $business->tin,
                 'is_active' => (bool) $business->pivot->is_primary,
+                'uuid'       => $business->uuid,
                 'vendor' => [
                     'id'   => $business->vendor->id,
                     'name' => $business->vendor->name,
+                    'uuid' => $business->vendor->uuid,
                 ],
 
             ])->values(),
