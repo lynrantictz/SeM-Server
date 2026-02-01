@@ -17,6 +17,13 @@ class SetBusinessContext
     {
         $user = $request->user();
 
+        // check if user has no business then a user will be a owner which owns different vendors
+
+        // if user has no business, skip business context
+        if ($user && $user->businessUser()->count() === 0) {
+            return $next($request);
+        }
+
         //Must be authenticated
         abort_unless($user, Response::HTTP_UNAUTHORIZED, 'unauthenticated');
 

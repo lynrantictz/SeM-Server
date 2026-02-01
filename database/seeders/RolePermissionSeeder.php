@@ -96,7 +96,7 @@ class RolePermissionSeeder extends Seeder
         ];
 
         foreach ($permissions as $permission) {
-            Permission::firstOrCreate(['name' => $permission]);
+            Permission::firstOrCreate(['name' => $permission, 'guard_name' => 'api']);
         }
 
         /*
@@ -105,11 +105,11 @@ class RolePermissionSeeder extends Seeder
         |--------------------------------------------------------------------------
         */
 
-        // $superAdmin    = Role::firstOrCreate(['name' => 'super-admin']);
-        $owner   = Role::firstOrCreate(['name' => 'owner']);
-        $manager = Role::firstOrCreate(['name' => 'manager']);
-        $counterClerk     = Role::firstOrCreate(['name' => 'counter-clerk']);
-        $waiter        = Role::firstOrCreate(['name' => 'waiter']);
+        // $superAdmin    = Role::firstOrCreate(['name' => 'super-admin', 'guard_name' => 'api']);
+        $owner   = Role::firstOrCreate(['name' => 'owner', 'guard_name' => 'api']);
+        $manager = Role::firstOrCreate(['name' => 'manager', 'guard_name' => 'api']);
+        $counterClerk     = Role::firstOrCreate(['name' => 'counter-clerk', 'guard_name' => 'api']);
+        $waiter        = Role::firstOrCreate(['name' => 'waiter', 'guard_name' => 'api']);
 
         /*
         |--------------------------------------------------------------------------
@@ -144,6 +144,32 @@ class RolePermissionSeeder extends Seeder
             'business-user.delete',
             'business-users.list',
             'business-user.assign',
+
+            'section.create',
+            'section.edit',
+            'section.view',
+            'section.delete',
+            'sections.list',
+
+            'sub-section.create',
+            'sub-section.edit',
+            'sub-section.view',
+            'sub-section.delete',
+            'sub-sections.list',
+
+            'menu.create',
+            'menu.edit',
+            'menu.view',
+            'menu.delete',
+            'menus.list',
+            'menu.activate',
+
+            'menu-item.create',
+            'menu-item.edit',
+            'menu-item.view',
+            'menu-item.delete',
+            'menu-items.list',
+            'menu-item.activate',
         ]);
 
         // Manager

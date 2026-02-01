@@ -2,8 +2,9 @@
 
 @server = http://localhost:8000/api/v1
 
+@email = "hamis@lynrantic.co.tz"
 @code = "SSH001"
-@password = "SSH001"
+@password = "SecureP@ss2025"
 
 ######################################################
 ### Authentication Requests
@@ -16,7 +17,7 @@ Content-Type: application/json
 Accept: application/json
 
 {
-  "code": {{code}},
+  "email": {{email}},
   "password": {{password}}
 }
 
@@ -33,18 +34,19 @@ Content-Type: application/json
 Accept: application/json
 
 ######################################################
-### Vendor Registration Requests
+### Register User Vendor Requests
 ######################################################
 
 ### Register Vendor Request
 # @name registerVendor
-POST {{server}}/vendors
+POST {{server}}/users/vendors/register
 Content-Type: application/json
 Accept: application/json
 
 {
-    "name": "Vendor ABC",
-    "email": "johndoe@example.com",
-    "phone": "+1234567890",
-    "password": "securepassword"
+    "name": "Hamis Hamis",
+    "email": "hamis@lynrantic.co.tz",
+    "country_code": "255",
+    "phone": "0758483019",
+    "password": "SecureP@ss2025"
 }

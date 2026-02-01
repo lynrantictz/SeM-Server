@@ -42,6 +42,13 @@ class LoginController extends BaseController
             );
         }
 
+        if (!$user->email_verified_at) {
+            return $this->sendError(
+                'Email Not verified.',
+                ['account' => ['Your email has not been verified.']]
+            );
+        }
+
         if (!$user->is_active) {
             return $this->sendError(
                 'Account disabled.',
