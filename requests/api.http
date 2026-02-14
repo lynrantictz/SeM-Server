@@ -21,6 +21,17 @@ Accept: application/json
   "password": {{password}}
 }
 
+### Login Request
+# @name login
+POST {{server}}/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "code": {{code}},
+  "password": {{password}}
+}
+
 ### me
 GET {{server}}/me
 Authorization: Bearer {{login.response.body.$.data.token}}
@@ -34,7 +45,7 @@ Content-Type: application/json
 Accept: application/json
 
 ######################################################
-### Register User Vendor Requests
+### Register User Vendor Requests Public Routes
 ######################################################
 
 ### Register Vendor Request
@@ -49,4 +60,30 @@ Accept: application/json
     "country_code": "255",
     "phone": "0758483019",
     "password": "SecureP@ss2025"
+}
+
+### Verify Email Request
+# @name verifyEmail
+POST {{server}}/verify-email?token=IIAkS5f73u4pCKjhXeWTvybUoRGlNQfkhmYpdLptSbKSfJfD4axHlY1eYf0RKmlY 
+Content-Type: application/json
+Accept: application/json
+
+
+######################################################
+### Vendor Registration Requests (Protected Routes)
+######################################################
+
+### @name registerVendorProtected
+POST {{server}}/vendors
+Authorization: Bearer {{login.response.body.$.data.token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+    "country_id": 1,
+    "tin": "123456789",
+    "name": "The Aga Khan Fund for Economic Development SA (AKFED SA)",
+    "email": "daressalaam@serenahotels.com",
+    "phone": "222112416",
+    "address": "Ohio Street P.O BOX 791 Dar es Salaam, Tanzania"
 }

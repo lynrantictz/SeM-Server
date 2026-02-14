@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1\Auth;
 
+use App\Enums\User\UserType;
 use App\Http\Controllers\Api\BaseController;
 use App\Models\Auth\User;
 use Illuminate\Http\Request;
@@ -42,7 +43,7 @@ class LoginController extends BaseController
             );
         }
 
-        if (!$user->email_verified_at) {
+        if (!$user->email_verified_at && $user->type === UserType::VENDOR->value) {
             return $this->sendError(
                 'Email Not verified.',
                 ['account' => ['Your email has not been verified.']]

@@ -56,6 +56,8 @@ class User extends Authenticatable
         'password',
         'phone',
         'is_active',
+        'type',
+        'email_verified_at',
     ];
 
     protected $guarded = ['uuid'];

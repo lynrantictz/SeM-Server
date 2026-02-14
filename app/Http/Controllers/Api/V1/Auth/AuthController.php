@@ -7,6 +7,7 @@ use App\Http\Requests\Api\V1\Auth\UserVendorRegisterRequest;
 use App\Models\Auth\EmailVerification;
 use App\Repositories\Auth\UserRepository;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class AuthController extends BaseController
 {
@@ -26,6 +27,8 @@ class AuthController extends BaseController
             hash('sha256', $request->token)
         )->first();
 
+        Log::info('Email verification attempt', ['token' => $request->token, 'record' => $record]);
+
         if (! $record) {
             return response()->json([
                 'verified' => false,
@@ -44,19 +47,23 @@ class AuthController extends BaseController
 
         $user->update([
             'email_verified_at' => now(),
+            'is_active' => true,
         ]);
 
-        // One-time use
+        // One-time use token, delete after verification
         $record->delete();
 
-        return response()->json([
-            'verified' => true
-        ]);
+        // Optional: send welcome email or other post-verification actions
+        $token = $user->createToken('api')->plainTextToken;
+
+        return $this->sendResponse([
+            'token' => $token,
+        ], 'Email verified successfully.');
     }
 
-    public function registerUserVendor(UserVendorRegisterRequest $request)
-    {
-        $data['user'] = $this->users->registerUserVendor($request->all());
-        return $this->sendResponse($data, 'User registered successfully.', HTTP_CREATED);
-    }
+    // public function registerUserVendor(UserVendorRegisterRequest $request)
+    // {
+    //     $data['user'] = $this->users->registerUserVendor($request->all());
+    //     return $this->sendResponse($data, 'User registered successfully.', HTTP_CREATED);
+    // }
 }

@@ -19,6 +19,7 @@ return new class extends Migration
             $table->string('phone')->nullable();
             $table->string('code')->nullable();
             $table->string('password');
+            $table->string('type');
             $table->boolean('is_active')->default(true);
             $table->uuid('uuid');
             $table->rememberToken();

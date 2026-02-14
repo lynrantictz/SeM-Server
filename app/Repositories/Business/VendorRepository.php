@@ -19,15 +19,12 @@ class VendorRepository extends BaseRepository
      */
     public function store($inputs): Vendor
     {
-        $userInputs = [
-            'email' => $inputs['email'],
-            'phone' => $inputs['phone'],
-            'name' => $inputs['name'],
-            'password' => $inputs['password'],
-        ];
-        return DB::transaction(function () use ($inputs, $userInputs) {
-            $user = (new UserRepository())->store($userInputs);
-            return $user->vendor()->create($inputs->except(['password']));
+        return DB::transaction(function () use ($inputs) {
+            $vendor = auth()->user()->vendors()->create($inputs);
+            auth()->user()->vendors()->updateExistingPivot($vendor->id, [
+                'is_primary' => true
+            ]);
+            return $vendor;
         });
     }
 }

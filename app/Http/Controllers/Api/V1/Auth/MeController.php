@@ -32,16 +32,16 @@ class MeController extends BaseController
                 'phone' => $user->phone,
                 'code'  => $user->code,
                 'uuid'  => $user->uuid,
-            ],
-            'roles' => $user->roles
-                ->pluck('name')
-                ->unique()
-                ->values(),
+                'roles' => $user->roles
+                    ->pluck('name')
+                    ->unique()
+                    ->values(),
 
-            'permissions' => $user->roles
-                ->flatMap(fn($role) => $role->permissions->pluck('name'))
-                ->unique()
-                ->values(),
+                'permissions' => $user->roles
+                    ->flatMap(fn($role) => $role->permissions->pluck('name'))
+                    ->unique()
+                    ->values(),
+            ],
         ];
         return $this->sendResponse($data, 'Welcome back boss!');
     }

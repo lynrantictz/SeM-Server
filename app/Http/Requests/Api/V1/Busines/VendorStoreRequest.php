@@ -22,10 +22,13 @@ class VendorStoreRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'email' => 'required|string|email|max:255|unique:users,email',
-            'password' => 'required|alpha_num|min:6',
+            'country_id' => 'required',
+            'tin' => 'required|unique:vendors,tin',
             'name' => 'required',
-            'phone' => 'required|unique:users,phone',
+            'email' => 'required|string|email|max:255|unique:users,email',
+            'name' => 'required',
+            'phone' => 'required|unique:vendors,phone',
+            'address' => 'required',
         ];
     }
 }

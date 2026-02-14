@@ -11,10 +11,11 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('vendor_users', function (Blueprint $table) {
+        Schema::create('vendor_user', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('vendor_id');
             $table->unsignedBigInteger('user_id');
+            $table->boolean('is_primary')->default(false);
             $table->timestamps();
         });
     }
@@ -24,6 +25,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('vendor_users');
+        Schema::dropIfExists('vendor_user');
     }
 };
