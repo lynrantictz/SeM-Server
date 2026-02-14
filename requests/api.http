@@ -73,8 +73,34 @@ Accept: application/json
 ### Vendor Registration Requests (Protected Routes)
 ######################################################
 
+### @name listVendors
+GET {{server}}/vendors
+Authorization: Bearer {{login.response.body.$.data.token}}
+Accept: application/json
+
+
 ### @name registerVendorProtected
 POST {{server}}/vendors
+Authorization: Bearer {{login.response.body.$.data.token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+    "country_id": 1,
+    "tin": "123456789",
+    "name": "The Aga Khan Fund for Economic Development SA (AKFED SA)",
+    "email": "daressalaam@serenahotels.com",
+    "phone": "222112416",
+    "address": "Ohio Street P.O BOX 791 Dar es Salaam, Tanzania"
+}
+
+### @name showVendorProtected
+GET {{server}}/vendors/07f2e905-7988-4d19-8930-67080ea4576a
+Authorization: Bearer {{login.response.body.$.data.token}}
+Accept: application/json
+
+### @name updateVendorProtected
+PUT {{server}}/vendors/07f2e905-7988-4d19-8930-67080ea4576a
 Authorization: Bearer {{login.response.body.$.data.token}}
 Content-Type: application/json
 Accept: application/json

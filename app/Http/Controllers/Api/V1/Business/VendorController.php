@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api\V1\Business;
 use App\Http\Controllers\Api\BaseController;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Busines\VendorStoreRequest;
+use App\Models\Business\Vendor;
 use App\Repositories\Business\VendorRepository;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class VendorController extends BaseController
 {
@@ -22,7 +24,8 @@ class VendorController extends BaseController
      */
     public function index()
     {
-        //
+        $data['vendors'] = $this->vendors->getAllAccess()->paginate(10);
+        return $this->sendResponse($data, 'Vendor Lists');
     }
 
     /**
@@ -45,25 +48,20 @@ class VendorController extends BaseController
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show(Vendor $vendor)
     {
-        //
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
+        $data['vendor'] = $vendor->load('country', 'businesses');
+        return $this->sendResponse($data, 'Vendor retrieved successfully.', HTTP_OK);
     }
 
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, string $id)
+    public function update(VendorStoreRequest $request, Vendor $vendor)
     {
-        //
+        $this->vendors->update($vendor, $request->all());
+        $data['vendor'] = $vendor->load('country', 'businesses');
+        return $this->sendResponse($data, 'Vendor updated successfully.', HTTP_OK);
     }
 
     /**

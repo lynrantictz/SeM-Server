@@ -10,7 +10,7 @@ trait VendorRelationship
 {
     public function businesses()
     {
-        return $this->hasMany(Business::class, );
+        return $this->hasMany(Business::class);
     }
 
     public function country()
