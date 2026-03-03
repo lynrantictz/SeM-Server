@@ -2,6 +2,7 @@
 
 namespace App\Observers;
 
+use App\Enums\User\UserType;
 use App\Models\Auth\EmailVerification;
 use App\Models\Auth\User;
 use App\Notifications\VerifyEmailApi;
@@ -18,19 +19,27 @@ class UserObserver implements ShouldHandleEventsAfterCommit
     public function created(User $user): void
     {
         DB::transaction(function () use ($user) {
+
             $token = Str::random(64);
+            switch($user->type){
+                case UserType::OWNER->value:
+                    EmailVerification::create([
+                        'user_id' => $user->id,
+                        'token' => hash('sha256', $token),
+                        'expires_at' => now()->addMinutes(60),
+                    ]);
 
-            EmailVerification::create([
-                'user_id' => $user->id,
-                'token' => hash('sha256', $token),
-                'expires_at' => now()->addMinutes(60),
-            ]);
+                    $verificationUrl = config('app.business_url') . '/verify-email?token=' . $token;
 
-            $verificationUrl = config('app.business_url') . '/verify-email?token=' . $token;
+                    Log::info($verificationUrl);
 
-            Log::info($verificationUrl);
+                    $user->notify(new VerifyEmailApi($verificationUrl));
+                    break;
+                default:
+                    break;
+            }
 
-            $user->notify(new VerifyEmailApi($verificationUrl));
+
         });
     }
 

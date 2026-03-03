@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1\Busines;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class VendorStoreRequest extends FormRequest
 {
@@ -36,13 +37,31 @@ class VendorStoreRequest extends FormRequest
             case "PUT":
                 return [
                     'country_id' => 'sometimes',
-                    'tin' => 'sometimes|unique:vendors,tin' . $this->vendor->tin,
+
+                    'tin' => [
+                        'sometimes',
+                        Rule::unique('vendors', 'tin')->ignore($this->vendor->id),
+                    ],
+
                     'name' => 'sometimes',
-                    'email' => 'sometimes|string|email|max:255|unique:users,email' . $this->vendor->email,
-                    'name' => 'sometimes',
-                    'phone' => 'sometimes|unique:vendors,phone' . $this->vendor->phone,
+
+                    'email' => [
+                        'sometimes',
+                        'string',
+                        'email',
+                        'max:255',
+                        Rule::unique('users', 'email')->ignore($this->vendor->user_id),
+                    ],
+
+                    'phone' => [
+                        'sometimes',
+                        Rule::unique('vendors', 'phone')->ignore($this->vendor->id),
+                    ],
+
                     'address' => 'sometimes',
                 ];
         }
+
+        return [];
     }
 }

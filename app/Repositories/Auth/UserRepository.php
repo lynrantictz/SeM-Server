@@ -21,11 +21,11 @@ class UserRepository extends BaseRepository
         });
     }
 
-    public function registerVendorUser(array $inputs)
+    public function registerOwnerUser(array $inputs)
     {
         return DB::transaction(function () use ($inputs) {
             $inputs['is_active'] = false;
-            $inputs['type'] = UserType::VENDOR->value;
+            $inputs['type'] = UserType::OWNER->value;
             $user = $this->query()->create($inputs);
             // assign owner role
             $user->assignRole('owner');

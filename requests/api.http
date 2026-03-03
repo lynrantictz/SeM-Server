@@ -22,7 +22,7 @@ Accept: application/json
 }
 
 ### Login Request
-# @name login
+# @name loginWithCode
 POST {{server}}/login
 Content-Type: application/json
 Accept: application/json
@@ -50,7 +50,7 @@ Accept: application/json
 
 ### Register Vendor Request
 # @name registerVendor
-POST {{server}}/users/vendors/register
+POST {{server}}/users/owners
 Content-Type: application/json
 Accept: application/json
 
@@ -64,7 +64,7 @@ Accept: application/json
 
 ### Verify Email Request
 # @name verifyEmail
-POST {{server}}/verify-email?token=IIAkS5f73u4pCKjhXeWTvybUoRGlNQfkhmYpdLptSbKSfJfD4axHlY1eYf0RKmlY 
+POST {{server}}/verify-email?token=LPy7MUzgmB0jwVP7wIphIvR77IUdkolh5kl9cObJRmq1FeCSG5zJq5NPDzgVOiwi
 Content-Type: application/json
 Accept: application/json
 
@@ -95,12 +95,12 @@ Accept: application/json
 }
 
 ### @name showVendorProtected
-GET {{server}}/vendors/07f2e905-7988-4d19-8930-67080ea4576a
+GET {{server}}/vendors/53f69164-3078-44bb-8e8d-3c462cd3a072
 Authorization: Bearer {{login.response.body.$.data.token}}
 Accept: application/json
 
 ### @name updateVendorProtected
-PUT {{server}}/vendors/07f2e905-7988-4d19-8930-67080ea4576a
+PUT {{server}}/vendors/53f69164-3078-44bb-8e8d-3c462cd3a072
 Authorization: Bearer {{login.response.body.$.data.token}}
 Content-Type: application/json
 Accept: application/json
