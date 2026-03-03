@@ -45,11 +45,11 @@ Content-Type: application/json
 Accept: application/json
 
 ######################################################
-### Register User Vendor Requests Public Routes
+### Register User Owner Requests Public Routes
 ######################################################
 
-### Register Vendor Request
-# @name registerVendor
+### Register Owner Request
+# @name registerOwner
 POST {{server}}/users/owners
 Content-Type: application/json
 Accept: application/json
@@ -107,9 +107,18 @@ Accept: application/json
 
 {
     "country_id": 1,
-    "tin": "123456789",
+    "tin": "1234567890",
     "name": "The Aga Khan Fund for Economic Development SA (AKFED SA)",
     "email": "daressalaam@serenahotels.com",
     "phone": "222112416",
     "address": "Ohio Street P.O BOX 791 Dar es Salaam, Tanzania"
 }
+
+######################################################
+### Business Requests (Protected Routes)
+######################################################
+
+### @name listBusinesses
+GET {{server}}/businesses
+Authorization: Bearer {{login.response.body.$.data.token}}
+Accept: application/json

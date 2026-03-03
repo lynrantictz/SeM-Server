@@ -4,6 +4,9 @@ namespace App\Http\Controllers\Api\V1\Business;
 
 use App\Http\Controllers\Api\BaseController;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Business\BusinessRequest;
+use App\Models\Business\Business;
+use App\Models\Business\Vendor;
 use App\Repositories\Business\BusinessRepository;
 use Illuminate\Http\Request;
 
@@ -35,9 +38,14 @@ class BusinessController extends BaseController
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request)
+    public function store(BusinessRequest $request, Vendor $vendor)
     {
-        //
+        $data['business'] = $this->businesses->store($vendor, $request->all());
+        return $this->sendResponse(
+            $data,
+            'Business created successfully.',
+            201
+        );
     }
 
     /**
@@ -59,9 +67,14 @@ class BusinessController extends BaseController
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, string $id)
+    public function update(BusinessRequest $request, Business $business)
     {
-        //
+        $this->businesses->update($business, $request->all());
+        $data['business'] = $business->fresh()->load('contacts');
+        return $this->sendResponse(
+            $data,
+            'Business updated successfully.',
+        );
     }
 
     /**
