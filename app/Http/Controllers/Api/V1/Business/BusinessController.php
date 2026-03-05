@@ -9,6 +9,7 @@ use App\Models\Business\Business;
 use App\Models\Business\Vendor;
 use App\Repositories\Business\BusinessRepository;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class BusinessController extends BaseController
 {
@@ -22,17 +23,18 @@ class BusinessController extends BaseController
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(Request $request)
     {
-        //
-    }
-
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
+        $perPage = (int) $request->input('per_page', 10);
+        $sort = $request->input('sort', 'created_at');
+        $direction = $request->input('direction', 'desc');
+        $query = $this->businesses->getQuery($request->all());
+        $query->orderBy($sort, $direction);
+        $data['businesses'] = $query->paginate($perPage);
+        return $this->sendResponse(
+            $data,
+            'Businesses retrieved successfully.'
+        );
     }
 
     /**

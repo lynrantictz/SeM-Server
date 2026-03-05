@@ -1,5 +1,7 @@
 <?php
 
+use App\Enums\User\UserType;
+
 if (!function_exists('includeRouteFiles')) {
     /**
      * Include all PHP files in a directory.
@@ -35,5 +37,35 @@ if (!function_exists('business_id')) {
     function business_id(): int
     {
         return app('business_id');
+    }
+}
+
+if (!function_exists('is_owner')) {
+    function is_owner(): string
+    {
+        if(auth()->user()->type != UserType::OWNER->value){
+            return false;
+        }
+        return true;
+    }
+}
+
+if (!function_exists('is_vendor')) {
+    function is_vendor(): string
+    {
+        if(auth()->user()->type != UserType::VENDOR->value){
+            return false;
+        }
+        return true;
+    }
+}
+
+if (!function_exists('is_business')) {
+    function is_business(): string
+    {
+        if(auth()->user()->type != UserType::BUSINESS->value){
+            return false;
+        }
+        return true;
     }
 }
