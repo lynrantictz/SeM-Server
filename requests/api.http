@@ -119,6 +119,18 @@ Accept: application/json
 ######################################################
 
 ### @name listBusinesses
-GET {{server}}/businesses
+GET {{server}}/businesses?search=serena
 Authorization: Bearer {{login.response.body.$.data.token}}
 Accept: application/json
+
+### @name storeBusiness
+POST {{server}}/businesses
+Authorization: Bearer {{login.response.body.$.data.token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+    "vendor_id": "",
+    "name": "Serena Hotel Business",
+    "description": "Serena Hotel Business Description"
+}

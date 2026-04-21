@@ -36,7 +36,7 @@ class RegisterVendorUser extends FormRequest
             ],
             //country code must be found in countries table
             // check country codes table if exists
-            'country_code' => ['required', 'string', 'max:5'],
+            'countryCode' => ['required', 'string', 'max:5'],
             'phone' => ['required', 'string', 'max:20', 'unique:users,phone'],
 
         ];

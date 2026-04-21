@@ -4,6 +4,7 @@ namespace App\Repositories\Auth;
 
 use App\Enums\User\UserType;
 use App\Models\Auth\User;
+use App\Models\Location\Country;
 use App\Repositories\BaseRepository;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -35,5 +36,15 @@ class UserRepository extends BaseRepository
             $user->givePermissionTo($role->permissions);
             return $user;
         });
+    }
+
+    public function checkOwnerUserEmail(string $email): bool
+    {
+        return $this->query()->where('email', $email)->exists();
+    }
+
+    public function checkOwnerUserPhone(string $phone): bool
+    {
+        return $this->query()->where('phone', $phone)->exists();
     }
 }

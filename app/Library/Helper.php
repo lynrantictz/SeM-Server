@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\User\UserType;
+use App\Models\Location\Country;
 
 if (!function_exists('includeRouteFiles')) {
     /**
@@ -67,5 +68,32 @@ if (!function_exists('is_business')) {
             return false;
         }
         return true;
+    }
+}
+
+if (!function_exists('setPhoneFormat')) {
+    function setPhoneFormat($code, $value)
+    {
+        $countryCode = Country::query()->where('iso2', $code)->first();
+
+        if (!$value) {
+            return false;
+        }
+
+        // Remove spaces and +
+        $phone = str_replace([' ', '+'], '', $value);
+
+        // If already starts with 255, keep it
+        if (substr($phone, 0, 3) === $countryCode->phone_code) {
+            return $phone;
+        }
+
+        // If starts with 0, remove it
+        if (substr($phone, 0, 1) === '0') {
+            $phone = substr($phone, 1);
+        }
+
+        // Add 255
+        return $countryCode->phone_code . $phone;
     }
 }
