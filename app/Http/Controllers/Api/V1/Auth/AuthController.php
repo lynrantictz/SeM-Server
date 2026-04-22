@@ -29,18 +29,16 @@ class AuthController extends BaseController
 
         Log::info('Email verification attempt', ['token' => $request->token, 'record' => $record]);
 
-        if (! $record) {
-            return response()->json([
-                'verified' => false,
-                'message' => 'Invalid token'
-            ], 400);
+        if (!$record) {
+            return $this->sendError('Invalid token');
         }
 
         if ($record->expires_at->isPast()) {
-            return response()->json([
-                'verified' => false,
-                'message' => 'Token expired'
-            ], 400);
+            return $this->sendError('Token has expired');
+//            return response()->json([
+//                'verified' => false,
+//                'message' => 'Token expired'
+//            ], 400);
         }
 
         $user = $record->user;
@@ -54,11 +52,9 @@ class AuthController extends BaseController
         $record->delete();
 
         // Optional: send welcome email or other post-verification actions
-        $token = $user->createToken('api')->plainTextToken;
+//        $token = $user->createToken('api')->plainTextToken;
 
-        return $this->sendResponse([
-            'token' => $token,
-        ], 'Email verified successfully.');
+        return $this->sendResponse([], 'Email verified successfully.');
     }
 
     // public function registerUserVendor(UserVendorRegisterRequest $request)

@@ -40,11 +40,11 @@ class UserRepository extends BaseRepository
 
     public function checkOwnerUserEmail(string $email): bool
     {
-        return $this->query()->where('email', $email)->exists();
+        return $this->query()->where('email', $email)->doesntExist();
     }
 
     public function checkOwnerUserPhone(string $phone): bool
     {
-        return $this->query()->where('phone', $phone)->exists();
+        return $this->query()->where('phone', $phone)->doesntExist();
     }
 }

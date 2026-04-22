@@ -15,6 +15,6 @@ Route::get('locale', function () {
     ]);
 });
 
-Route::post('/verify-email', [AuthController::class, 'verifyEmail']);
+Route::get('/verify-email', [AuthController::class, 'verifyEmail']);
 
 Route::post('/payments/azampay/callback', [PaymentWebhookController::class, 'handle']);
