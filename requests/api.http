@@ -2,9 +2,11 @@
 
 @server = http://localhost:8000/api/v1
 
-@email = "hamis@lynrantic.co.tz"
+#@email = "hamis@lynrantic.co.tz"
+@email = "lenana@gmail.com"
 @code = "SSH001"
-@password = "SecureP@ss2025"
+#@password = "SecureP@ss2025"
+@password = "Lenana@123"
 
 ######################################################
 ### Authentication Requests
@@ -34,7 +36,7 @@ Accept: application/json
 
 ### me
 GET {{server}}/me
-Authorization: Bearer {{login.response.body.$.data.token}}
+Authorization: Bearer 30|hFSrOvZF9IC2vcVaAW7eA4x2MY6ZkokLymfImsu8c21cd582
 Content-Type: application/json
 Accept: application/json
 

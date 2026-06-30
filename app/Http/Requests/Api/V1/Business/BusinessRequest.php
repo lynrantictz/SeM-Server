@@ -31,7 +31,7 @@ class BusinessRequest extends FormRequest
                     'location' => 'required',
                     'tax_allowed' => 'required',
                     'contacts' => 'required',
-                    'contacts.*.contact' => 'required|unique:contacts,contact',
+                    'contacts.*.contact' => 'required|unique:business_contacts,contact',
                 ];
         }
     }

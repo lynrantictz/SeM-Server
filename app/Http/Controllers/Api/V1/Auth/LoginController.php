@@ -17,7 +17,7 @@ class LoginController extends BaseController
     {
         $request->validate([
             'email'    => ['nullable', 'email'],
-            'code'    => ['nullable', 'string'],
+//            'code'    => ['nullable', 'string'],
             'password' => ['required', 'string'],
         ]);
 
@@ -33,7 +33,7 @@ class LoginController extends BaseController
             fn($q) => $q->where('email', $request->email)
         )->when(
             $request->code,
-            fn($q) => $q->where('code', $request->code)
+            fn($q) => $q->where('email', $request->code)
         )->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {

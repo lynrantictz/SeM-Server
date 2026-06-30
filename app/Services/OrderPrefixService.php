@@ -7,47 +7,67 @@ use App\Models\Business\Business;
 class OrderPrefixService
 {
     /**
-     * Generate a unique order prefix from business name
+     * Generate a unique order prefix from a business name.
      *
-     * @param string $businessName
-     * @param int $length Number of letters to use (default 3)
-     * @return string
+     * Strategy:
+     *  1. Take the first letter of each word → up to 4 chars (min 3).
+     *  2. If too short, pad with more letters from the first word.
+     *  3. If the candidate already exists, try numeric suffixes (e.g. LHT2, LHT3…).
+     *
+     * @param  string  $businessName
+     * @return string  3–4 uppercase chars, guaranteed unique in businesses table
      */
-    public function generate(string $businessName, int $length = 3): string
+    public function generate(string $businessName): string
     {
-        $words = preg_split("/\s+/", $businessName);
-        $prefix = '';
+        $base = $this->buildBase($businessName);
 
-        // Take first letters of words
-        foreach ($words as $word) {
-            $prefix .= strtoupper(substr($word, 0, 1));
+        // Try the base first, then base+N until unique
+        $candidate = $base;
+        $n = 2;
+
+        while (Business::where('order_prefix', $candidate)->exists()) {
+            // Append numeric suffix; if base is already 4 chars, replace last char with digit
+            $suffix  = (string) $n;
+            $trimmed = substr($base, 0, max(2, 4 - strlen($suffix)));
+            $candidate = $trimmed . $suffix;
+            $n++;
+
+            // Safety valve: if we somehow loop forever, add timestamp fragment
+            if ($n > 999) {
+                $candidate = strtoupper(substr(uniqid(), -4));
+                if (!Business::where('order_prefix', $candidate)->exists()) {
+                    break;
+                }
+            }
         }
 
-        // Ensure prefix is at least $length letters
-        $prefix = substr($prefix, 0, $length);
-
-        // If already exists, try adding next letters from words
-        $uniquePrefix = $prefix;
-        $counter = 1;
-
-        while (Business::where('order_prefix', $uniquePrefix)->exists()) {
-            $uniquePrefix = $this->extendPrefix($words, $counter, $length);
-            $counter++;
-        }
-
-        return $uniquePrefix;
+        return $candidate;
     }
 
     /**
-     * Extend prefix by taking next letters from words
+     * Build the initial 3-4 char base from the business name.
      */
-    protected function extendPrefix(array $words, int $step, int $length)
+    protected function buildBase(string $businessName): string
     {
-        $prefix = '';
-        foreach ($words as $word) {
-            $prefix .= strtoupper(substr($word, 0, $step + 1)); // take more letters
+        // Sanitise: letters only, split into words
+        $words = preg_split('/\s+/', trim($businessName));
+        $words = array_filter($words, fn($w) => strlen($w) > 0);
+        $words = array_values($words);
+
+        // Step 1: initials of each word, max 4 chars
+        $initials = implode('', array_map(fn($w) => strtoupper($w[0]), $words));
+        $base = substr($initials, 0, 4);
+
+        // Step 2: if less than 3 chars, pad from letters of the first word
+        if (strlen($base) < 3 && count($words) > 0) {
+            $first = strtoupper(preg_replace('/[^A-Z]/i', '', $words[0]));
+            $base  = substr($first . $base, 0, max(3, strlen($base)));
+            $base  = substr($base, 0, 4);
         }
 
-        return substr($prefix, 0, $length);
+        // Ensure at least 3 uppercase chars
+        $base = str_pad(strtoupper($base), 3, 'X');
+
+        return $base;
     }
 }

@@ -8,4 +8,6 @@ use Illuminate\Database\Eloquent\Model;
 class BusinessContacts extends Model
 {
     use BusinessContactRelationship;
+
+    protected $fillable = ['business_id', 'contact', 'is_active'];
 }
