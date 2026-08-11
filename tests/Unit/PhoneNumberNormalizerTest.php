@@ -4,7 +4,7 @@ use App\Exceptions\InvalidPhoneNumberException;
 use App\Models\Location\Country;
 use App\Services\PhoneNumberNormalizer;
 
-uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+uses(Tests\TestCase::class, Illuminate\Foundation\Testing\RefreshDatabase::class);
 
 beforeEach(function () {
     Country::query()->create(['name' => 'Tanzania', 'iso2' => 'TZ', 'iso3' => 'TZA', 'currency' => 'TZS', 'phone_code' => '255', 'flag' => 'flags/tz.jpg']);
