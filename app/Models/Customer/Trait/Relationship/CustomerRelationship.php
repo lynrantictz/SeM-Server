@@ -2,7 +2,7 @@
 
 namespace App\Models\Customer\Trait\Relationship;
 
-use App\Models\Order;
+use App\Models\Order\Order;
 
 trait CustomerRelationship
 {

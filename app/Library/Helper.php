@@ -76,24 +76,20 @@ if (!function_exists('setPhoneFormat')) {
     {
         $countryCode = Country::query()->where('iso2', $code)->first();
 
-        if (!$value) {
+        if (!$value || !$countryCode) {
             return false;
         }
 
-        // Remove spaces and +
-        $phone = str_replace([' ', '+'], '', $value);
+        $phone = str_replace([' ', '+'], '', (string) $value);
 
-        // If already starts with 255, keep it
-        if (substr($phone, 0, 3) === $countryCode->phone_code) {
+        if (substr($phone, 0, strlen($countryCode->phone_code)) === $countryCode->phone_code) {
             return $phone;
         }
 
-        // If starts with 0, remove it
         if (substr($phone, 0, 1) === '0') {
             $phone = substr($phone, 1);
         }
 
-        // Add 255
         return $countryCode->phone_code . $phone;
     }
 }

@@ -9,7 +9,6 @@ use App\Repositories\Customer\CustomerRepository;
 use App\Services\TaxCalculatorService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Log;
 
 class OrderRepository extends BaseRepository
 {
@@ -23,7 +22,8 @@ class OrderRepository extends BaseRepository
     public function inputManipulator(Code $code, $inputs): array
     {
         $business = $code->codable->business;
-        $customer = (new CustomerRepository())->getCustomerByPhone($inputs['phone']);
+        $country = $business->district?->city?->country?->iso2;
+        $customer = (new CustomerRepository())->getCustomerByPhone($inputs['phone'], $country);
         return [
             'business_id' => $business->id,
             'user_id' => null, //TODO:: update later when a registered user is making order
@@ -92,15 +92,14 @@ class OrderRepository extends BaseRepository
     {
         return DB::transaction(function () use ($order) {
             $phone = $order->customerVerification->phone;
-            $random_code = rand(1000, 9999);
-            $hashed_random_code = Hash::make($random_code);
-            $verification_inputs = [
-                'verification_code' => $hashed_random_code
+            $randomCode = random_int(1000, 9999);
+            $verificationInputs = [
+                'verification_code' => Hash::make($randomCode),
+                'expires_at' => now()->addMinutes(10),
             ];
-            $order->customerVerification()->update($verification_inputs);
+            $order->customerVerification()->update($verificationInputs);
 
-            // send to whatsapp
-            Log::info($random_code);
+            // The code is delivered by the configured messaging integration.
             return $order;
         });
     }
@@ -111,9 +110,13 @@ class OrderRepository extends BaseRepository
     public function changePhone(Order $order, $input)
     {
         return DB::transaction(function () use ($order, $input) {
-            $phone = trim($input['phone']);
-            (new OrderCustomerVerificationRepository())->storeOrUpdatePhone($order, $phone);
-            return $order;
+            $country = $order->business?->district?->city?->country?->iso2;
+            $customer = (new CustomerRepository())->getCustomerByPhone($input['phone'], $country);
+
+            $order->forceFill(['customer_id' => $customer->id])->save();
+            (new OrderCustomerVerificationRepository())->storeOrUpdatePhone($order, $input['phone'], $country);
+
+            return $order->refresh();
         });
     }
 

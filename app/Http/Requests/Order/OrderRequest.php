@@ -24,9 +24,15 @@ class OrderRequest extends FormRequest
         switch ($this->method()) {
             case "POST":
                 return [
-                    // 'code' => 'required|string|code,codes.code',
-                    // 'items' => 'required|array',
-                    // 'phone' => 'required'
+                    // Code and item validation is handled by the existing order flow.
+                    'phone' => [
+                        'required',
+                        function (string $attribute, mixed $value, \Closure $fail): void {
+                            if (!is_string($value) && !is_int($value)) {
+                                $fail('The phone field must be a string or integer.');
+                            }
+                        },
+                    ],
                 ];
                 break;
         }
