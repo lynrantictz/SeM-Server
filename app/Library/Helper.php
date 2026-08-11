@@ -1,8 +1,7 @@
 <?php
 
 use App\Enums\User\UserType;
-use App\Exceptions\InvalidPhoneNumberException;
-use App\Services\PhoneNumberNormalizer;
+use App\Models\Location\Country;
 
 if (!function_exists('includeRouteFiles')) {
     /**
@@ -75,10 +74,22 @@ if (!function_exists('is_business')) {
 if (!function_exists('setPhoneFormat')) {
     function setPhoneFormat($code, $value)
     {
-        try {
-            return (new PhoneNumberNormalizer())->normalize($value, $code);
-        } catch (InvalidPhoneNumberException) {
+        $countryCode = Country::query()->where('iso2', $code)->first();
+
+        if (!$value || !$countryCode) {
             return false;
         }
+
+        $phone = str_replace([' ', '+'], '', (string) $value);
+
+        if (substr($phone, 0, strlen($countryCode->phone_code)) === $countryCode->phone_code) {
+            return $phone;
+        }
+
+        if (substr($phone, 0, 1) === '0') {
+            $phone = substr($phone, 1);
+        }
+
+        return $countryCode->phone_code . $phone;
     }
 }

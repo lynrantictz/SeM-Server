@@ -25,7 +25,7 @@ class OrderRequest extends FormRequest
             case "POST":
                 return [
                     // Code and item validation is handled by the existing order flow.
-                    'phone' => ['required', 'string', 'max:30'],
+                    'phone' => ['required'],
                 ];
                 break;
         }
