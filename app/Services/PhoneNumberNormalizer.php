@@ -8,8 +8,8 @@ use App\Models\Location\Country;
 /**
  * Converts supported phone input to the canonical digits-only E.164 representation.
  *
- * Tanzanian local numbers remain supported by treating them as TZ when no
- * country is given.
+ * National input requires country context; legacy Tanzanian local numbers
+ * remain supported when TZ is supplied.
  */
 final class PhoneNumberNormalizer
 {
@@ -44,20 +44,26 @@ final class PhoneNumberNormalizer
 
         $countryCode = $country === null ? null : $this->countryCode($country);
 
+        if (!$hasPlus && strlen($digits) === 9 && $countryCode === self::DEFAULT_COUNTRY_CODE) {
+            return $this->asE164(self::DEFAULT_COUNTRY_CODE . $digits);
+        }
+
         if (str_starts_with($digits, '0')) {
-            return $this->asE164(($countryCode ?? self::DEFAULT_COUNTRY_CODE) . substr($digits, 1));
+            if ($countryCode === null) {
+                throw new InvalidPhoneNumberException('A country is required for this phone number.');
+            }
+
+            return $this->asE164($countryCode . substr($digits, 1));
+        }
+
+        if (!$hasPlus && $countryCode === null && strlen($digits) === 9) {
+            throw new InvalidPhoneNumberException('A country is required for this phone number.');
         }
 
         // Non-national digits are international input. Resolve their calling
         // code before considering any supplied country.
         if ($this->hasSupportedCallingCode($digits)) {
             return $this->asE164($digits);
-        }
-
-        // A nine-digit number without a trunk prefix is a legacy Tanzanian
-        // input. Keep it compatible with the previous helper behavior.
-        if (!$hasPlus && ($countryCode === null || $countryCode === self::DEFAULT_COUNTRY_CODE) && strlen($digits) === 9) {
-            return $this->asE164(self::DEFAULT_COUNTRY_CODE . $digits);
         }
 
         throw new InvalidPhoneNumberException('The phone number country code is invalid.');

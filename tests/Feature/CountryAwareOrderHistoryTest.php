@@ -25,7 +25,7 @@ it('keeps Tanzanian local and international lookup compatible', function () {
     $customer = Customer::query()->create(['phone' => '0758483019']);
     historyOrderFor($customer, 'TZ-000001');
 
-    $localResponse = $this->getJson('/api/v1/phone/0758483019/verify');
+    $localResponse = $this->getJson('/api/v1/phone/0758483019/verify?country=TZ');
     $internationalResponse = $this->getJson('/api/v1/phone/255758483019/verify');
 
     $localResponse->assertOk()

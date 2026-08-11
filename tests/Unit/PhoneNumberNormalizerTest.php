@@ -16,7 +16,7 @@ beforeEach(function () {
 it('normalizes Tanzanian local and international input to one canonical value', function () {
     $normalizer = new PhoneNumberNormalizer();
 
-    expect($normalizer->normalize('0758 483 019'))->toBe('255758483019')
+    expect($normalizer->normalize('0758 483 019', 'TZ'))->toBe('255758483019')
         ->and($normalizer->normalize('+255758483019'))->toBe('255758483019')
         ->and($normalizer->normalize('255758483019', 'TZ'))->toBe('255758483019')
         ->and($normalizer->normalize('758483019', 'TZ'))->toBe('255758483019');
@@ -37,6 +37,11 @@ it('preserves numeric phone request compatibility while rejecting complex values
     expect(Validator::make(['phone' => 758483019], $rules)->passes())->toBeTrue()
         ->and(Validator::make(['phone' => ['758483019']], $rules)->fails())->toBeTrue();
 });
+
+it('requires country context for national input', function (string $phone) {
+    expect(fn () => (new PhoneNumberNormalizer())->normalize($phone))
+        ->toThrow(InvalidPhoneNumberException::class);
+})->with(['0758483019', '758483019']);
 
 it('includes legacy nine-digit Tanzanian values in lookup candidates', function () {
     expect((new PhoneNumberNormalizer())->legacyLookupValues('255758483019'))

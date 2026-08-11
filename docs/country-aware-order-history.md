@@ -28,17 +28,19 @@ accepted for compatibility:
 +255758483019
 ```
 
-The existing Tanzanian local form is also accepted and interpreted as TZ:
+The existing Tanzanian local form remains accepted with explicit TZ
+context:
 
 ```text
-0758483019 -> 255758483019
+0758483019?country=TZ -> 255758483019
 ```
 
 A number from another country must carry its country calling code. For
 example, `254758483019` (or `+254758483019`) is a different customer from the
-Tanzanian number above, even though the national digits match. If a future
-Client sends a national number instead, it may pass `?country=TZ` (the legacy
-`countryCode` query name is also accepted); canonical E.164 is preferred.
+Tanzanian number above, even though the national digits match. An unprefixed
+nine-digit number is ambiguous and must pass `?country=TZ` (the legacy
+`countryCode` query name is also accepted). Other national numbers likewise
+require country context; canonical E.164 is preferred.
 
 ### Responses
 

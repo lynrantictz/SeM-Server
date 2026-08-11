@@ -150,7 +150,7 @@ class OrderController extends BaseController
      * Return order history for a canonical phone number.
      *
      * The path is retained for the Client contract: GET /phone/{phone}/verify.
-     * A country or countryCode query parameter is optional for national input;
+     * A country or countryCode query parameter is required for national input;
      * canonical E.164 input does not need either parameter.
      */
     public function getOrdersByPhone(Request $request, string $phone)
