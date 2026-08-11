@@ -111,8 +111,12 @@ class OrderRepository extends BaseRepository
     {
         return DB::transaction(function () use ($order, $input) {
             $country = $order->business?->district?->city?->country?->iso2;
+            $customer = (new CustomerRepository())->getCustomerByPhone($input['phone'], $country);
+
+            $order->forceFill(['customer_id' => $customer->id])->save();
             (new OrderCustomerVerificationRepository())->storeOrUpdatePhone($order, $input['phone'], $country);
-            return $order;
+
+            return $order->refresh();
         });
     }
 

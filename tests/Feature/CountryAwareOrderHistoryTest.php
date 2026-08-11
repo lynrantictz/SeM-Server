@@ -4,6 +4,7 @@ use App\Models\Customer\Customer;
 use App\Models\Order\Order;
 use App\Repositories\Customer\CustomerRepository;
 use App\Repositories\Order\OrderCustomerVerificationRepository;
+use App\Repositories\Order\OrderRepository;
 
 function historyOrderFor(Customer $customer, string $number): Order
 {
@@ -54,6 +55,22 @@ it('stores canonical phones for customers and order verification records', funct
 
     expect($customer->fresh()->phone)->toBe('+255758483019')
         ->and($order->fresh()->customerVerification->phone)->toBe('+255758483019');
+});
+
+it('reassigns only the changed order to the new canonical customer', function () {
+    $oldCustomer = (new CustomerRepository())->getCustomerByPhone('0758483019');
+    $order = historyOrderFor($oldCustomer, 'TZ-000004');
+    $otherOrder = historyOrderFor($oldCustomer, 'TZ-000005');
+
+    (new OrderRepository())->changePhone($order, ['phone' => '+254758483019']);
+
+    $newCustomer = (new CustomerRepository())->findCustomerByPhone('+254758483019');
+
+    expect($newCustomer)->not->toBeNull()
+        ->and($order->fresh()->customer_id)->toBe($newCustomer->id)
+        ->and($otherOrder->fresh()->customer_id)->toBe($oldCustomer->id)
+        ->and($oldCustomer->fresh()->orders()->pluck('id')->all())->toBe([$otherOrder->id])
+        ->and($order->fresh()->customerVerification->phone)->toBe('+254758483019');
 });
 
 it('returns a validation error for invalid history phone input', function () {
