@@ -95,8 +95,12 @@ final class PhoneNumberNormalizer
 
     private function countryCode(?string $country): string
     {
-        if ($country === null || trim($country) === '') {
+        if ($country === null) {
             return self::DEFAULT_COUNTRY_CODE;
+        }
+
+        if (trim($country) === '') {
+            throw new InvalidPhoneNumberException('The country code is invalid.');
         }
 
         $country = trim($country);

@@ -102,6 +102,12 @@ it('rejects an unsupported numeric country code', function () {
         ->toThrow(\App\Exceptions\InvalidPhoneNumberException::class);
 });
 
+it('rejects an explicitly empty country for national history input', function () {
+    $this->getJson('/api/v1/phone/0758483019/verify?country=')
+        ->assertUnprocessable()
+        ->assertJsonPath('success', false);
+});
+
 it('returns a validation error for invalid history phone input', function () {
     $this->getJson('/api/v1/phone/not-a-phone/verify')
         ->assertUnprocessable()
