@@ -77,11 +77,16 @@ class CustomerRepository extends BaseRepository
         $normalizer = new PhoneNumberNormalizer();
         $legacyValues = $normalizer->legacyLookupValues($canonical);
 
+        $canonicalCustomer = $this->query()
+            ->where('phone_e164', $canonical)
+            ->first();
+
+        if ($canonicalCustomer) {
+            return $canonicalCustomer;
+        }
+
         return $this->query()
-            ->where(function ($query) use ($canonical, $legacyValues) {
-                $query->where('phone_e164', $canonical)
-                    ->orWhereIn('phone', $legacyValues);
-            })
+            ->whereIn('phone', $legacyValues)
             ->first();
     }
 

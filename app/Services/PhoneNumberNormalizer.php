@@ -128,6 +128,16 @@ final class PhoneNumberNormalizer
             throw new InvalidPhoneNumberException('The phone number must contain 8 to 15 international digits.');
         }
 
-        return '+' . $digits;
+        $supportedCodes = Country::query()->pluck('phone_code')
+            ->map(fn ($code) => (string) $code)
+            ->sortByDesc(fn ($code) => strlen((string) $code));
+
+        foreach ($supportedCodes as $code) {
+            if (str_starts_with($digits, $code)) {
+                return '+' . $digits;
+            }
+        }
+
+        throw new InvalidPhoneNumberException('The phone number country code is invalid.');
     }
 }

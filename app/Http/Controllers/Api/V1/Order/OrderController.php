@@ -155,11 +155,15 @@ class OrderController extends BaseController
      */
     public function getOrdersByPhone(Request $request, string $phone)
     {
+        $country = $request->query('country');
+        $countryCode = $request->query('countryCode');
+
+        if (is_array($country) || is_array($countryCode)) {
+            return $this->sendError('The country code is invalid.', [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         try {
-            $customer = $this->customers->findCustomerByPhone(
-                $phone,
-                $request->query('country') ?? $request->query('countryCode')
-            );
+            $customer = $this->customers->findCustomerByPhone($phone, $country ?? $countryCode);
         } catch (InvalidPhoneNumberException $exception) {
             return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
         }
