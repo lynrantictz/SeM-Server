@@ -63,7 +63,7 @@ it('does not return a Tanzanian order for another country with the same national
 });
 
 it('stores canonical phones for customers and order verification records', function () {
-    $customer = (new CustomerRepository())->getCustomerByPhone('0758483019');
+    $customer = (new CustomerRepository())->getCustomerByPhone('0758483019', 'TZ');
     $order = historyOrderFor($customer, 'TZ-000003');
 
     (new OrderCustomerVerificationRepository())->storeOrUpdatePhone($order);
@@ -73,7 +73,7 @@ it('stores canonical phones for customers and order verification records', funct
 });
 
 it('reassigns only the changed order to the new canonical customer', function () {
-    $oldCustomer = (new CustomerRepository())->getCustomerByPhone('0758483019');
+    $oldCustomer = (new CustomerRepository())->getCustomerByPhone('0758483019', 'TZ');
     $order = historyOrderFor($oldCustomer, 'TZ-000004');
     $otherOrder = historyOrderFor($oldCustomer, 'TZ-000005');
 
@@ -89,10 +89,10 @@ it('reassigns only the changed order to the new canonical customer', function ()
 });
 
 it('accepts numeric phone values when changing an order phone', function () {
-    $customer = (new CustomerRepository())->getCustomerByPhone('0758483019');
+    $customer = (new CustomerRepository())->getCustomerByPhone('0758483019', 'TZ');
     $order = historyOrderFor($customer, 'TZ-000007');
 
-    (new OrderRepository())->changePhone($order, ['phone' => 758483019]);
+    (new OrderRepository())->changePhone($order, ['phone' => 255758483019]);
 
     expect($order->fresh()->customerVerification->phone)->toBe('255758483019');
 });

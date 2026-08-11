@@ -28,7 +28,7 @@ it('keeps a second country distinct when national digits match', function () {
     expect($normalizer->normalize('+254758483019'))
         ->toBe('254758483019')
         ->and($normalizer->normalize('254758483019', 'TZ'))->toBe('254758483019')
-        ->not->toBe($normalizer->normalize('0758483019'));
+        ->not->toBe($normalizer->normalize('0758483019', 'TZ'));
 });
 
 it('preserves numeric phone request compatibility while rejecting complex values', function () {
