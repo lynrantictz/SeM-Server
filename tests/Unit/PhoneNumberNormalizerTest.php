@@ -1,8 +1,10 @@
 <?php
 
 use App\Exceptions\InvalidPhoneNumberException;
+use App\Http\Requests\Order\ChangePhoneNumberRequest;
 use App\Models\Location\Country;
 use App\Services\PhoneNumberNormalizer;
+use Illuminate\Support\Facades\Validator;
 
 uses(Tests\TestCase::class, Illuminate\Foundation\Testing\RefreshDatabase::class);
 
@@ -16,7 +18,8 @@ it('normalizes Tanzanian local and international input to one canonical value', 
 
     expect($normalizer->normalize('0758 483 019'))->toBe('255758483019')
         ->and($normalizer->normalize('+255758483019'))->toBe('255758483019')
-        ->and($normalizer->normalize('255758483019', 'TZ'))->toBe('255758483019');
+        ->and($normalizer->normalize('255758483019', 'TZ'))->toBe('255758483019')
+        ->and($normalizer->normalize('758483019', 'TZ'))->toBe('255758483019');
 });
 
 it('keeps a second country distinct when national digits match', function () {
@@ -26,6 +29,13 @@ it('keeps a second country distinct when national digits match', function () {
         ->toBe('254758483019')
         ->and($normalizer->normalize('254758483019', 'TZ'))->toBe('254758483019')
         ->not->toBe($normalizer->normalize('0758483019'));
+});
+
+it('preserves numeric phone request compatibility while rejecting complex values', function () {
+    $rules = (new ChangePhoneNumberRequest())->rules();
+
+    expect(Validator::make(['phone' => 758483019], $rules)->passes())->toBeTrue()
+        ->and(Validator::make(['phone' => ['758483019']], $rules)->fails())->toBeTrue();
 });
 
 it('includes legacy nine-digit Tanzanian values in lookup candidates', function () {

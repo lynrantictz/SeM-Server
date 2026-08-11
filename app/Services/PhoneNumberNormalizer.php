@@ -56,7 +56,7 @@ final class PhoneNumberNormalizer
 
         // A nine-digit number without a trunk prefix is a legacy Tanzanian
         // input. Keep it compatible with the previous helper behavior.
-        if (!$hasPlus && $countryCode === null && strlen($digits) === 9) {
+        if (!$hasPlus && ($countryCode === null || $countryCode === self::DEFAULT_COUNTRY_CODE) && strlen($digits) === 9) {
             return $this->asE164(self::DEFAULT_COUNTRY_CODE . $digits);
         }
 

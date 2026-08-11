@@ -24,10 +24,14 @@ class ChangePhoneNumberRequest extends FormRequest
         return [
             'phone' => [
                 'required',
-                'max:30',
                 function (string $attribute, mixed $value, \Closure $fail): void {
                     if (!is_string($value) && !is_int($value)) {
                         $fail('The phone field must be a string or integer.');
+                        return;
+                    }
+
+                    if (is_string($value) && strlen($value) > 30) {
+                        $fail('The phone field must not be greater than 30 characters.');
                     }
                 },
             ]
