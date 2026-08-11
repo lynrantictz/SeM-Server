@@ -28,7 +28,7 @@ return new class extends Migration
             ->select(['id', 'phone'])
             ->orderBy('id')
             ->get()
-            ->each(function (object $customer): void {
+            ->each(function (object $customer) use ($supportedCodes): void {
                 $digits = preg_replace('/\D+/', '', (string) $customer->phone);
                 if ($digits === null || $digits === '') {
                     return;
