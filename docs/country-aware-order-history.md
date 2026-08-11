@@ -57,10 +57,15 @@ New customers store the canonical value in `customers.phone` and the additive
 `customers.phone_e164` column. `phone_e164` is unique and is the authoritative
 lookup key; it is hidden from API serialization. The original `phone` value is
 retained during the additive migration for rollback and compatibility. The
-migration backfills recognizable legacy Tanzanian values without deleting or
-rewriting the original column. Unresolved legacy rows remain supported by the
-TZ-only compatibility lookup and do not become matches for another country's
-E.164 number.
+migration only adds the nullable column; it does not backfill customer data,
+because countries may not be seeded when migrations run.
+
+After running `php artisan db:seed --class=LocationSeeder`, operators may run
+`php artisan customers:backfill-phone-e164`. This command uses the runtime
+normalizer, writes only values with supported calling codes, and skips invalid,
+ambiguous, or already-used values without changing the original `phone` column.
+Unresolved legacy rows remain supported by the TZ-only compatibility lookup and
+do not become matches for another country's E.164 number.
 
 Order creation, order phone changes, verification records, and history lookup
 all pass through the same normalizer. The order's business country is used
