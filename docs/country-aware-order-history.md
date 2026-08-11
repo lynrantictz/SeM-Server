@@ -62,7 +62,8 @@ retained during the additive migration for rollback and compatibility. The
 migration only adds the nullable column; it does not backfill customer data,
 because countries may not be seeded when migrations run.
 
-After running `php artisan db:seed --class=LocationSeeder`, operators may run
+After running
+`php artisan db:seed --class=Database\Seeders\LocationSeeder`, operators may run
 `php artisan customers:backfill-phone-e164`. This command uses the runtime
 normalizer, writes only values with supported calling codes, and skips invalid,
 ambiguous, or already-used values without changing the original `phone` column.
