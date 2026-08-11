@@ -77,7 +77,12 @@ final class PhoneNumberNormalizer
         $values = [$canonical, $digits];
 
         if (str_starts_with($digits, self::DEFAULT_COUNTRY_CODE) && strlen($digits) > 3) {
-            $values[] = '0' . substr($digits, 3);
+            $nationalDigits = substr($digits, 3);
+            $values[] = '0' . $nationalDigits;
+
+            if (strlen($nationalDigits) === 9) {
+                $values[] = $nationalDigits;
+            }
         }
 
         return array_values(array_unique($values));
@@ -91,7 +96,15 @@ final class PhoneNumberNormalizer
 
         $country = trim($country);
         if (preg_match('/^[0-9]{1,3}$/', $country)) {
-            return $country;
+            $countryModel = Country::query()
+                ->where('phone_code', $country)
+                ->first();
+
+            if (!$countryModel) {
+                throw new InvalidPhoneNumberException('The country code is invalid.');
+            }
+
+            return (string) $countryModel->phone_code;
         }
 
         if (!preg_match('/^[A-Za-z]{2}$/', $country)) {

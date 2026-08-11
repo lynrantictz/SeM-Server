@@ -30,6 +30,8 @@ return new class extends Migration
 
                 if (strlen($digits) === 10 && str_starts_with($digits, '0')) {
                     $digits = '255' . substr($digits, 1);
+                } elseif (strlen($digits) === 9) {
+                    $digits = '255' . $digits;
                 } elseif (!preg_match('/^[1-9][0-9]{7,14}$/', $digits)) {
                     return;
                 }

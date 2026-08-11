@@ -19,6 +19,11 @@ it('keeps a second country distinct when national digits match', function () {
         ->not->toBe($normalizer->normalize('0758483019'));
 });
 
+it('includes legacy nine-digit Tanzanian values in lookup candidates', function () {
+    expect((new PhoneNumberNormalizer())->legacyLookupValues('+255758483019'))
+        ->toContain('758483019');
+});
+
 it('rejects malformed and out-of-range phone input', function (string $phone) {
     (new PhoneNumberNormalizer())->normalize($phone);
 })->with([

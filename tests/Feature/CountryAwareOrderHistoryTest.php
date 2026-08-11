@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\Customer\Customer;
+use App\Models\Location\Country;
 use App\Models\Order\Order;
 use App\Repositories\Customer\CustomerRepository;
 use App\Repositories\Order\OrderCustomerVerificationRepository;
@@ -29,6 +30,15 @@ it('keeps Tanzanian local and international lookup compatible', function () {
         ->assertJsonPath('data.0.number', 'TZ-000001');
 
     expect($customer->fresh()->phone)->toBe('+255758483019');
+});
+
+it('finds a legacy nine-digit Tanzanian customer by canonical input', function () {
+    $customer = Customer::query()->create(['phone' => '758483019']);
+    historyOrderFor($customer, 'TZ-000006');
+
+    $this->getJson('/api/v1/phone/+255758483019/verify')
+        ->assertOk()
+        ->assertJsonPath('data.0.number', 'TZ-000006');
 });
 
 it('does not return a Tanzanian order for another country with the same national digits', function () {
@@ -71,6 +81,20 @@ it('reassigns only the changed order to the new canonical customer', function ()
         ->and($otherOrder->fresh()->customer_id)->toBe($oldCustomer->id)
         ->and($oldCustomer->fresh()->orders()->pluck('id')->all())->toBe([$otherOrder->id])
         ->and($order->fresh()->customerVerification->phone)->toBe('+254758483019');
+});
+
+it('rejects an unsupported numeric country code', function () {
+    Country::query()->create([
+        'name' => 'Tanzania',
+        'iso2' => 'TZ',
+        'iso3' => 'TZA',
+        'currency' => 'TZS',
+        'phone_code' => '255',
+        'flag' => 'flags/tz.jpg',
+    ]);
+
+    expect(fn () => (new \App\Services\PhoneNumberNormalizer())->normalize('758483019', '999'))
+        ->toThrow(\App\Exceptions\InvalidPhoneNumberException::class);
 });
 
 it('returns a validation error for invalid history phone input', function () {
