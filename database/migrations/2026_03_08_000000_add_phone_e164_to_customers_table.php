@@ -16,8 +16,14 @@ return new class extends Migration
         });
 
         // This is an additive backfill: the original phone value is retained.
-        // Only the legacy Tanzanian formats that can be identified safely are
-        // populated; the application still supports unresolved legacy rows.
+        // Only values with a supported calling code are populated; the
+        // application still supports unresolved legacy rows.
+        $supportedCodes = DB::table('countries')
+            ->pluck('phone_code')
+            ->map(fn ($code): string => (string) $code)
+            ->filter(fn (string $code): bool => preg_match('/^[1-9][0-9]{0,2}$/', $code) === 1)
+            ->values();
+
         DB::table('customers')
             ->select(['id', 'phone'])
             ->orderBy('id')
@@ -33,6 +39,12 @@ return new class extends Migration
                 } elseif (strlen($digits) === 9) {
                     $digits = '255' . $digits;
                 } elseif (!preg_match('/^[1-9][0-9]{7,14}$/', $digits)) {
+                    return;
+                }
+
+                if ($supportedCodes->every(
+                    fn (string $code): bool => !str_starts_with($digits, $code)
+                )) {
                     return;
                 }
 
