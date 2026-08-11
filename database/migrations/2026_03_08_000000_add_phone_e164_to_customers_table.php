@@ -48,7 +48,7 @@ return new class extends Migration
                     return;
                 }
 
-                $canonical = '+' . $digits;
+                $canonical = $digits;
                 $alreadyUsed = DB::table('customers')
                     ->where('phone_e164', $canonical)
                     ->where('id', '!=', $customer->id)

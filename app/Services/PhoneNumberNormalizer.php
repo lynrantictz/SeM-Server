@@ -6,10 +6,10 @@ use App\Exceptions\InvalidPhoneNumberException;
 use App\Models\Location\Country;
 
 /**
- * Converts supported phone input to the canonical E.164 representation.
+ * Converts supported phone input to the canonical digits-only E.164 representation.
  *
- * The leading plus is part of the stored representation. Tanzanian local
- * numbers remain supported by treating them as TZ when no country is given.
+ * Tanzanian local numbers remain supported by treating them as TZ when no
+ * country is given.
  */
 final class PhoneNumberNormalizer
 {
@@ -37,31 +37,30 @@ final class PhoneNumberNormalizer
             throw new InvalidPhoneNumberException('The phone number format is invalid.');
         }
 
-        // Also accept the common international access-code form, while
-        // always storing the canonical E.164 form.
+        // Also accept the common international access-code form.
         if (!$hasPlus && str_starts_with($digits, '00')) {
             $digits = substr($digits, 2);
-            return $this->asE164($digits);
         }
 
-        $countryCode = $this->countryCode($country);
+        $countryCode = $country === null ? null : $this->countryCode($country);
 
         if (str_starts_with($digits, '0')) {
-            $nationalNumber = substr($digits, 1);
-            return $this->asE164($countryCode . $nationalNumber);
+            return $this->asE164(($countryCode ?? self::DEFAULT_COUNTRY_CODE) . substr($digits, 1));
         }
 
-        if (!$hasPlus && $country !== null && !str_starts_with($digits, $countryCode) && strlen($digits) <= 12) {
-            return $this->asE164($countryCode . $digits);
+        // Non-national digits are international input. Resolve their calling
+        // code before considering any supplied country.
+        if ($this->hasSupportedCallingCode($digits)) {
+            return $this->asE164($digits);
         }
 
         // A nine-digit number without a trunk prefix is a legacy Tanzanian
         // input. Keep it compatible with the previous helper behavior.
-        if (!$hasPlus && $country === null && strlen($digits) === 9) {
+        if (!$hasPlus && $countryCode === null && strlen($digits) === 9) {
             return $this->asE164(self::DEFAULT_COUNTRY_CODE . $digits);
         }
 
-        return $this->asE164($digits);
+        throw new InvalidPhoneNumberException('The phone number country code is invalid.');
     }
 
     /**
@@ -128,16 +127,17 @@ final class PhoneNumberNormalizer
             throw new InvalidPhoneNumberException('The phone number must contain 8 to 15 international digits.');
         }
 
-        $supportedCodes = Country::query()->pluck('phone_code')
-            ->map(fn ($code) => (string) $code)
-            ->sortByDesc(fn ($code) => strlen((string) $code));
-
-        foreach ($supportedCodes as $code) {
-            if (str_starts_with($digits, $code)) {
-                return '+' . $digits;
-            }
+        if (!$this->hasSupportedCallingCode($digits)) {
+            throw new InvalidPhoneNumberException('The phone number country code is invalid.');
         }
 
-        throw new InvalidPhoneNumberException('The phone number country code is invalid.');
+        return $digits;
+    }
+
+    private function hasSupportedCallingCode(string $digits): bool
+    {
+        return Country::query()->pluck('phone_code')
+            ->map(fn ($code) => (string) $code)
+            ->contains(fn (string $code): bool => str_starts_with($digits, $code));
     }
 }

@@ -1,8 +1,8 @@
 # Country-aware order-history phone contract
 
-The backend uses a canonical E.164 phone string at application storage and
-lookup boundaries. The stored representation includes the leading `+`, for
-example `+255758483019` and `+254758483019`. The country calling code is part
+The backend uses a canonical digits-only E.164 phone string at application
+storage and lookup boundaries. The stored representation has no leading `+`,
+for example `255758483019` and `254758483019`. The country calling code is part
 of the identity; national digits alone are never compared across countries.
 
 ## Client endpoint
@@ -20,22 +20,22 @@ The existing Client path remains supported:
 GET /api/v1/phone/{phone}/verify
 ```
 
-`{phone}` should be URL-safe canonical E.164. Both forms below are accepted
-for compatibility with the current Client, which sends digits in the path:
+`{phone}` should be URL-safe canonical E.164 digits. A leading `+` is also
+accepted for compatibility:
 
 ```text
-+255758483019
 255758483019
++255758483019
 ```
 
 The existing Tanzanian local form is also accepted and interpreted as TZ:
 
 ```text
-0758483019 -> +255758483019
+0758483019 -> 255758483019
 ```
 
 A number from another country must carry its country calling code. For
-example, `+254758483019` (or `254758483019`) is a different customer from the
+example, `254758483019` (or `+254758483019`) is a different customer from the
 Tanzanian number above, even though the national digits match. If a future
 Client sends a national number instead, it may pass `?country=TZ` (the legacy
 `countryCode` query name is also accepted); canonical E.164 is preferred.
