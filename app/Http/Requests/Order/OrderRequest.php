@@ -24,9 +24,8 @@ class OrderRequest extends FormRequest
         switch ($this->method()) {
             case "POST":
                 return [
-                    // 'code' => 'required|string|code,codes.code',
-                    // 'items' => 'required|array',
-                    // 'phone' => 'required'
+                    // Code and item validation is handled by the existing order flow.
+                    'phone' => ['required', 'string', 'max:30'],
                 ];
                 break;
         }

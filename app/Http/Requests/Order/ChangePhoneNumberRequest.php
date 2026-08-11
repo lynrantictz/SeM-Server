@@ -22,7 +22,7 @@ class ChangePhoneNumberRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'phone' => 'required|numeric|digits:10'
+            'phone' => ['required', 'string', 'max:30']
         ];
     }
 }

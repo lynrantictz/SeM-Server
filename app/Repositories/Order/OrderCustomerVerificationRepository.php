@@ -4,29 +4,35 @@ namespace App\Repositories\Order;
 
 use App\Models\Order\Order;
 use App\Models\Order\OrderCustomerVerification;
+use App\Services\PhoneNumberNormalizer;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Log;
 
 class OrderCustomerVerificationRepository
 {
     const MODEL = OrderCustomerVerification::class;
 
-    public function storeOrUpdatePhone(Order $order, $phone = null)
+    public function storeOrUpdatePhone(Order $order, ?string $phone = null, ?string $country = null): Order
     {
-        $random_code = rand(1000, 9999);
-        $hashed_random_code = Hash::make($random_code);
-        $verification_inputs = [
-            'phone' => !$phone ? $order->customer->phone : $phone,
-            'verification_code' => $hashed_random_code
+        $randomCode = random_int(1000, 9999);
+        $canonicalPhone = (new PhoneNumberNormalizer())->normalize(
+            $phone ?? $order->customer?->phone,
+            $country ?? $order->business?->district?->city?->country?->iso2
+        );
+        $verificationInputs = [
+            'phone' => $canonicalPhone,
+            'verification_code' => Hash::make($randomCode),
+            'expires_at' => now()->addMinutes(10),
         ];
-        // Generate for verification
-        return DB::transaction(function () use ($order, $verification_inputs, $random_code) {
+
+        return DB::transaction(function () use ($order, $verificationInputs) {
             $order->customerVerification()->updateOrCreate(
                 ['order_id' => $order->id],
-                $verification_inputs
+                $verificationInputs
             );
-            Log::info($random_code);
+
+            // The code is delivered by the configured messaging integration;
+            // never write OTPs or phone numbers to application logs.
             return $order;
         });
     }

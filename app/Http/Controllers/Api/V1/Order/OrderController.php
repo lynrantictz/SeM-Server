@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1\Order;
 
+use App\Exceptions\InvalidPhoneNumberException;
 use App\Http\Controllers\Api\V1\Order\Trait\PhoneVerificationTrait;
 use App\Http\Controllers\Api\BaseController;
 use App\Http\Requests\Order\ChangePhoneNumberRequest;
@@ -9,20 +10,22 @@ use App\Http\Requests\Order\OrderRequest;
 use App\Http\Requests\Order\PhoneVerifyRequest;
 use App\Models\Order\Order;
 use App\Models\Section\Code;
+use App\Repositories\Customer\CustomerRepository;
 use App\Repositories\Order\OrderRepository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Log;
 
 class OrderController extends BaseController
 {
     protected OrderRepository $orders;
+    protected CustomerRepository $customers;
 
     use PhoneVerificationTrait;
 
-    public function __construct(OrderRepository $orders)
+    public function __construct(OrderRepository $orders, CustomerRepository $customers)
     {
         $this->orders = $orders;
+        $this->customers = $customers;
     }
 
     /**
@@ -59,7 +62,12 @@ class OrderController extends BaseController
         if (!$code->codable->business->is_active) {
             return $this->sendError('Business is disabled. contact a hotel/restaurant', [], HTTP_NOT_FOUND);
         }
-        $order = $this->orders->store($code, $request->except('code'));
+        try {
+            $order = $this->orders->store($code, $request->except('code'));
+        } catch (InvalidPhoneNumberException $exception) {
+            return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $data['order'] = $order;
         return $this->sendResponse($data, 'Order Placed successfully', HTTP_OK);
     }
@@ -126,13 +134,62 @@ class OrderController extends BaseController
             return $this->sendError('Order not found', [], HTTP_NOT_FOUND);
         }
 
-        $data['order'] = $this->orders->changePhone($order, $request->only('phone'));
+        try {
+            $data['order'] = $this->orders->changePhone($order, $request->only('phone'));
+        } catch (InvalidPhoneNumberException $exception) {
+            return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         return $this->sendResponse($data, 'Phone number changed successfully', HTTP_OK);
     }
 
     /**
      * Update the specified resource in storage.
      */
+    /**
+     * Return order history for a canonical phone number.
+     *
+     * The path is retained for the Client contract: GET /phone/{phone}/verify.
+     * A country or countryCode query parameter is optional for national input;
+     * canonical E.164 input does not need either parameter.
+     */
+    public function getOrdersByPhone(Request $request, string $phone)
+    {
+        try {
+            $customer = $this->customers->findCustomerByPhone(
+                $phone,
+                $request->query('country') ?? $request->query('countryCode')
+            );
+        } catch (InvalidPhoneNumberException $exception) {
+            return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        if (!$customer || !$customer->orders()->exists()) {
+            return $this->sendError('No orders found for this phone number', [], HTTP_NOT_FOUND);
+        }
+
+        $orders = $customer->orders()
+            ->with([
+                'customer',
+                'business',
+                'business.district',
+                'business.district.city',
+                'business.district.city.country',
+                'status',
+                'paymentMethod',
+                'paymentStatus',
+                'items',
+                'items.item',
+            ])
+            ->latest()
+            ->get();
+
+        // The matching phone is the lookup credential, not response data.
+        $orders->each(fn (Order $order) => $order->customer?->makeHidden(['phone']));
+
+        return $this->sendResponse($orders, 'Orders retrieved successfully', HTTP_OK);
+    }
+
     public function update(Request $request, string $id)
     {
         //
