@@ -12,7 +12,7 @@ class OrderCustomerVerificationRepository
 {
     const MODEL = OrderCustomerVerification::class;
 
-    public function storeOrUpdatePhone(Order $order, ?string $phone = null, ?string $country = null): Order
+    public function storeOrUpdatePhone(Order $order, string|int|null $phone = null, ?string $country = null): Order
     {
         $randomCode = random_int(1000, 9999);
         $canonicalPhone = (new PhoneNumberNormalizer())->normalize(

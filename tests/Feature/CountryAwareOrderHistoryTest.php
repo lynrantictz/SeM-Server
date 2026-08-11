@@ -88,6 +88,15 @@ it('reassigns only the changed order to the new canonical customer', function ()
         ->and($order->fresh()->customerVerification->phone)->toBe('254758483019');
 });
 
+it('accepts numeric phone values when changing an order phone', function () {
+    $customer = (new CustomerRepository())->getCustomerByPhone('0758483019');
+    $order = historyOrderFor($customer, 'TZ-000007');
+
+    (new OrderRepository())->changePhone($order, ['phone' => 758483019]);
+
+    expect($order->fresh()->customerVerification->phone)->toBe('255758483019');
+});
+
 it('rejects an unsupported numeric country code', function () {
     expect(fn () => (new \App\Services\PhoneNumberNormalizer())->normalize('758483019', '999'))
         ->toThrow(\App\Exceptions\InvalidPhoneNumberException::class);
