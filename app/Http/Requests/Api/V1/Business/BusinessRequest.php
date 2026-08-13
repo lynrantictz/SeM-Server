@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1\Business;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class BusinessRequest extends FormRequest
 {
@@ -32,6 +33,17 @@ class BusinessRequest extends FormRequest
                     'tax_allowed' => 'required',
                     'contacts' => 'required',
                     'contacts.*.contact' => 'required|unique:business_contacts,contact',
+                ];
+            case 'PUT':
+                return [
+                    'district_id' => 'required|exists:districts,id',
+                    'business_type_id' => 'required|exists:business_types,id',
+                    'tin' => ['required', Rule::unique('businesses', 'tin')->ignore($this->business->id)],
+                    'name' => 'required',
+                    'location' => 'required',
+                    'tax_allowed' => 'required|boolean',
+                    'contacts' => 'required|array|min:1',
+                    'contacts.*.contact' => 'required|string',
                 ];
         }
     }

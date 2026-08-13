@@ -2,19 +2,10 @@
 
 namespace App\Models\Business\Trait\Attribute;
 
-use App\Models\Location\Country;
-
 trait VendorAttribute
 {
-
-    public function setPhoneAttribute($value)
+    public function setPhoneAttribute($value): void
     {
-        $phone = str_replace(' ', '', $value);
-        if (substr($phone, 0, 1) === '0') {
-            $phone = substr($phone, 1);
-        }
-        $country = Country::find(request()->input('country_id'));
-        $phone = $country->phone_code . $phone;
-        $this->attributes['phone'] = $phone;
+        $this->attributes['phone'] = preg_replace('/\D+/', '', (string) $value);
     }
 }

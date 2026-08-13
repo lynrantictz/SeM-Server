@@ -52,7 +52,12 @@ class BusinessRepository extends BaseRepository
     public function update(Business $business, array $inputs)
     {
         return DB::transaction(function () use ($business, $inputs) {
-            return $business->update($inputs);
+            $business->update(Arr::except($inputs, ['contacts']));
+            if (array_key_exists('contacts', $inputs)) {
+                $business->contacts()->delete();
+                $business->contacts()->createMany($inputs['contacts']);
+            }
+            return $business;
         });
     }
 }
