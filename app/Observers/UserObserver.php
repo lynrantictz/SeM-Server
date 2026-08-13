@@ -29,9 +29,7 @@ class UserObserver implements ShouldHandleEventsAfterCommit
                         'expires_at' => now()->addMinutes(60),
                     ]);
 
-                    $verificationUrl = config('app.business_url') . '/verify-email?token=' . $token;
-
-                    Log::info($verificationUrl);
+                    $verificationUrl = rtrim(config('app.business_url'), '/') . '/email-verification?token=' . $token;
 
                     $user->notify(new VerifyEmailApi($verificationUrl));
                     break;

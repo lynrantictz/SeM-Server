@@ -37,7 +37,7 @@ class VerifyEmailApi extends Notification implements ShouldQueue
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject('Verify your email address – Ordos')
+            ->subject('Verify your Paperstick account')
             ->view('emails.verify-email', [
                 'user' => $notifiable,
                 'verificationUrl' => $this->verificationUrl,

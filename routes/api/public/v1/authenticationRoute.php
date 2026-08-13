@@ -16,5 +16,7 @@ Route::get('locale', function () {
 });
 
 Route::get('/verify-email', [AuthController::class, 'verifyEmail']);
+Route::post('/resend-verification', [AuthController::class, 'resendVerification'])
+    ->middleware('throttle:5,1');
 
 Route::post('/payments/azampay/callback', [PaymentWebhookController::class, 'handle']);
