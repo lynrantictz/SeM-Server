@@ -8,12 +8,18 @@ use App\Http\Controllers\Api\BaseController;
 use App\Http\Requests\Order\ChangePhoneNumberRequest;
 use App\Http\Requests\Order\OrderRequest;
 use App\Http\Requests\Order\PhoneVerifyRequest;
+use App\Http\Requests\Order\SendOrderHistoryVerificationRequest;
+use App\Http\Requests\Order\VerifyOrderHistoryVerificationRequest;
 use App\Models\Order\Order;
+use App\Models\Order\OrderHistoryVerification;
 use App\Models\Section\Code;
 use App\Repositories\Customer\CustomerRepository;
 use App\Repositories\Order\OrderRepository;
+use App\Services\PhoneNumberNormalizer;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class OrderController extends BaseController
 {
@@ -147,26 +153,98 @@ class OrderController extends BaseController
      * Update the specified resource in storage.
      */
     /**
-     * Return order history for a canonical phone number.
-     *
-     * The path is retained for the Client contract: GET /phone/{phone}/verify.
-     * A country or countryCode query parameter is required for national input;
-     * canonical E.164 input does not need either parameter.
+     * Send a short-lived code before a guest can access their order history.
+     */
+    public function sendOrderHistoryVerification(SendOrderHistoryVerificationRequest $request)
+    {
+        try {
+            $phone = (new PhoneNumberNormalizer())->normalize(
+                $request->input('phone'),
+                $request->input('country')
+            );
+        } catch (InvalidPhoneNumberException $exception) {
+            return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $otp = (string) random_int(1000, 9999);
+
+        OrderHistoryVerification::query()->updateOrCreate(
+            ['phone' => $phone],
+            [
+                'verification_code' => Hash::make($otp),
+                'verified_at' => null,
+                'access_token' => null,
+                'expires_at' => now()->addMinutes(10),
+            ]
+        );
+
+        $message = 'Verification code delivery is not configured.';
+        if (app()->environment(['local', 'testing'])) {
+            Log::info('Order history verification code (local testing only)', ['otp' => $otp]);
+            $message = 'Verification code generated. Check the Laravel log during local testing.';
+        }
+
+        return $this->sendResponse([], $message, HTTP_OK);
+    }
+
+    /**
+     * Confirm the OTP and issue a short-lived token for retrieving a guest's orders.
+     */
+    public function verifyOrderHistoryVerification(VerifyOrderHistoryVerificationRequest $request)
+    {
+        try {
+            $phone = (new PhoneNumberNormalizer())->normalize(
+                $request->input('phone'),
+                $request->input('country')
+            );
+        } catch (InvalidPhoneNumberException $exception) {
+            return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $verification = OrderHistoryVerification::query()->where('phone', $phone)->first();
+
+        if (! $verification || $verification->expires_at->isPast()) {
+            return $this->sendError('This verification code has expired. Request a new code and try again.', [], HTTP_BAD_REQUEST);
+        }
+
+        if (! Hash::check($request->input('otp'), $verification->verification_code)) {
+            return $this->sendError('The verification code is incorrect.', [], HTTP_BAD_REQUEST);
+        }
+
+        $token = Str::random(64);
+        $verification->update([
+            'verified_at' => now(),
+            'access_token' => Hash::make($token),
+            'expires_at' => now()->addMinutes(15),
+        ]);
+
+        return $this->sendResponse(['token' => $token], 'Phone number verified successfully.', HTTP_OK);
+    }
+
+    /**
+     * Return order history only after the matching phone number has been verified.
      */
     public function getOrdersByPhone(Request $request, string $phone)
     {
-        $country = $request->query('country');
-        $countryCode = $request->query('countryCode');
+        $country = $request->query('country') ?? $request->query('countryCode');
+        $token = $request->query('token');
 
-        if (is_array($country) || is_array($countryCode)) {
+        if (is_array($country) || is_array($token)) {
             return $this->sendError('The country code is invalid.', [], HTTP_UNPROCESSABLE_ENTITY);
         }
 
         try {
-            $customer = $this->customers->findCustomerByPhone($phone, $country ?? $countryCode);
+            $canonicalPhone = (new PhoneNumberNormalizer())->normalize($phone, $country);
         } catch (InvalidPhoneNumberException $exception) {
             return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
         }
+
+        $verification = OrderHistoryVerification::query()->where('phone', $canonicalPhone)->first();
+        if (! $token || ! $verification || ! $verification->verified_at || $verification->expires_at->isPast() || ! Hash::check($token, $verification->access_token ?? '')) {
+            return $this->sendError('Verify this phone number before viewing its order history.', [], HTTP_UNAUTHORIZED);
+        }
+
+        $customer = $this->customers->findCustomerByPhone($canonicalPhone);
 
         if (!$customer || !$customer->orders()->exists()) {
             return $this->sendError('No orders found for this phone number', [], HTTP_NOT_FOUND);

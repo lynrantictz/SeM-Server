@@ -6,6 +6,8 @@ use App\Http\Controllers\Api\Location\DistrictController;
 use App\Http\Controllers\Api\V1\Order\OrderController;
 use Illuminate\Support\Facades\Route;
 
+Route::post('order-history/verification', [OrderController::class, 'sendOrderHistoryVerification'])->middleware('throttle:3,1');
+Route::post('order-history/verification/confirm', [OrderController::class, 'verifyOrderHistoryVerification'])->middleware('throttle:5,1');
 Route::get('phone/{phone}/verify', [OrderController::class, 'getOrdersByPhone']);
 
 Route::group(['prefix' => 'orders'], function () {

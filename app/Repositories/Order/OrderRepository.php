@@ -100,6 +100,8 @@ class OrderRepository extends BaseRepository
             $order->customerVerification()->update($verificationInputs);
 
             // The code is delivered by the configured messaging integration.
+
+            \Log::info("Resent verification code {$randomCode} to phone {$phone} for order {$order->number}");
             return $order;
         });
     }
