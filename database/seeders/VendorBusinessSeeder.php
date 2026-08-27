@@ -25,12 +25,17 @@ class VendorBusinessSeeder extends Seeder
                 'phone' => '255712000000',
                 'address' => 'Kaunda drive, Oysterbay',
                 'business' => [
-                    'district_id' => 5,
+                    // Oyster Bay is in Kinondoni, Dar es Salaam.
+                    'district_id' => 9,
                     'business_type_id' => 7,
                     'tin' => '0000-000-000',
                     'name' => 'Seashells Millennium Hotel',
                     'location' => 'Millennium Towers, Bagamoyo Road',
                     'google_location' => 'https://maps.app.goo.gl/58b8vecTTGqKbTtA7',
+                    'latitude' => -6.7461370,
+                    'longitude' => 39.2458290,
+                    'location_verified_at' => now(),
+                    'is_active' => true,
                 ]
             ]
         ];
@@ -44,7 +49,7 @@ class VendorBusinessSeeder extends Seeder
                 $vendorData
             );
 
-            $vendor->businesses()->firstOrCreate(
+            $vendor->businesses()->updateOrCreate(
                 ['name' => $businessData['name'], 'vendor_id' => $vendor->id],
                 array_merge($businessData, [
                     'order_prefix' => (new OrderPrefixService())->generate($businessData['name']),
