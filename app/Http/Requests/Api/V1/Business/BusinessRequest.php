@@ -33,8 +33,8 @@ class BusinessRequest extends FormRequest
                     'latitude' => 'nullable|numeric|between:-90,90',
                     'longitude' => 'nullable|numeric|between:-180,180',
                     'tax_allowed' => 'required',
-                    'contacts' => 'required',
-                    'contacts.*.contact' => 'required|unique:business_contacts,contact',
+                    'contacts' => 'required|array|min:1',
+                    'contacts.*.contact' => 'required|string|distinct|unique:business_contacts,contact',
                 ];
             case 'PUT':
                 return [
@@ -47,7 +47,7 @@ class BusinessRequest extends FormRequest
                     'longitude' => 'nullable|numeric|between:-180,180',
                     'tax_allowed' => 'required|boolean',
                     'contacts' => 'required|array|min:1',
-                    'contacts.*.contact' => 'required|string',
+                    'contacts.*.contact' => 'required|string|distinct',
                 ];
         }
     }

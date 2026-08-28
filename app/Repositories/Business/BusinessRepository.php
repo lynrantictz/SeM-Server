@@ -4,8 +4,10 @@ namespace App\Repositories\Business;
 
 use App\Models\Business\Business;
 use App\Models\Business\Vendor;
+use App\Models\Location\District;
 use App\Repositories\BaseRepository;
 use App\Services\OrderPrefixService;
+use App\Services\PhoneNumberNormalizer;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 
@@ -42,7 +44,7 @@ class BusinessRepository extends BaseRepository
 
             // contacts is an array of ['contact' => '...'] objects
             if (!empty($inputs['contacts'])) {
-                $business->contacts()->createMany($inputs['contacts']);
+                $business->contacts()->createMany($this->normalizeContacts($inputs['contacts'], $business->district_id));
             }
 
             return $business->load('contacts');
@@ -55,9 +57,28 @@ class BusinessRepository extends BaseRepository
             $business->update(Arr::except($inputs, ['contacts']));
             if (array_key_exists('contacts', $inputs)) {
                 $business->contacts()->delete();
-                $business->contacts()->createMany($inputs['contacts']);
+                $business->contacts()->createMany($this->normalizeContacts($inputs['contacts'], $business->district_id));
             }
             return $business;
         });
+    }
+
+    private function normalizeContacts(array $contacts, int $districtId): array
+    {
+        $district = District::query()->with('city.country')->findOrFail($districtId);
+        $country = $district->city?->country?->iso2;
+        if (!$country) {
+            throw new \InvalidArgumentException('The selected district must belong to a country.');
+        }
+        $normalizer = new PhoneNumberNormalizer();
+
+        return collect($contacts)
+            ->map(function (array $contact) use ($normalizer, $country) {
+                $canonical = $normalizer->normalize($contact['contact'] ?? null, $country);
+
+                return ['contact' => $canonical];
+            })
+            ->values()
+            ->all();
     }
 }

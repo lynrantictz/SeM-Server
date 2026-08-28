@@ -8,6 +8,6 @@ trait MeTrait
 {
     public function owner($request)
     {
-        return $request->user()->load(['vendors.businesses','roles', 'roles.permissions']);
+        return $request->user()->load(['vendors.country', 'vendors.businesses', 'roles', 'roles.permissions']);
     }
 }
