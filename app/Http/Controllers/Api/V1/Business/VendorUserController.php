@@ -28,8 +28,8 @@ class VendorUserController extends BaseController
 
     private function ensureOwner(Vendor $vendor): void
     {
-        $this->ensureAccess($vendor);
-        abort_unless(auth()->user()->type === UserType::OWNER->value, HTTP_FORBIDDEN, 'Only an owner can manage vendor users.');
+        $membership = auth()->user()->vendors()->whereKey($vendor->id)->first();
+        abort_unless($membership && $membership->pivot->is_primary, HTTP_FORBIDDEN, 'Only this vendor owner can manage vendor users.');
     }
 
     public function index(Request $request, Vendor $vendor)
@@ -137,7 +137,7 @@ class VendorUserController extends BaseController
 
             VendorInvitation::where('vendor_id', $vendor->id)->where('user_id', $user->id)->whereNull('accepted_at')->delete();
             $token = Str::random(64);
-            VendorInvitation::create([
+            $invitation = VendorInvitation::create([
                 'vendor_id' => $vendor->id,
                 'user_id' => $user->id,
                 'token' => hash('sha256', $token),
@@ -145,12 +145,12 @@ class VendorUserController extends BaseController
                 'expires_at' => now()->addDays(7),
             ]);
 
-            return [$user, $token];
+            return [$user, $token, $requiresPasswordSetup, $invitation->id];
         });
 
-        [$user, $token] = $result;
+        [$user, $token, $requiresPasswordSetup, $invitationId] = $result;
         $acceptUrl = rtrim(config('app.business_url'), '/') . '/accept-vendor-invitation?token=' . $token;
-        $user->notify(new VendorInvitationNotification($vendor, $acceptUrl, $requiresPasswordSetup));
+        $user->notify(new VendorInvitationNotification($vendor, $acceptUrl, $requiresPasswordSetup, $invitationId));
 
         return $this->sendResponse([], 'Vendor user invited successfully.', HTTP_CREATED);
     }
@@ -198,7 +198,7 @@ class VendorUserController extends BaseController
         $token = Str::random(64);
         $requiresPasswordSetup = !$user->is_active || !$user->email_verified_at;
         VendorInvitation::where('vendor_id', $vendor->id)->where('user_id', $user->id)->whereNull('accepted_at')->delete();
-        VendorInvitation::create([
+        $invitation = VendorInvitation::create([
             'vendor_id' => $vendor->id,
             'user_id' => $user->id,
             'token' => hash('sha256', $token),
@@ -208,7 +208,7 @@ class VendorUserController extends BaseController
         $vendor->users()->updateExistingPivot($user->id, ['invited_at' => now(), 'is_active' => false, 'accepted_at' => null, 'revoked_at' => null]);
 
         $acceptUrl = rtrim(config('app.business_url'), '/') . '/accept-vendor-invitation?token=' . $token;
-        $user->notify(new VendorInvitationNotification($vendor, $acceptUrl, $requiresPasswordSetup));
+        $user->notify(new VendorInvitationNotification($vendor, $acceptUrl, $requiresPasswordSetup, $invitation->id));
 
         return $this->sendResponse([], 'A new invitation email has been sent.');
     }
@@ -251,6 +251,20 @@ class VendorUserController extends BaseController
                 'requires_password_setup' => $invitation->requires_password_setup,
             ],
         ], 'Invitation retrieved successfully.');
+    }
+
+    public function acceptInApp(Request $request, VendorInvitation $invitation)
+    {
+        abort_unless($invitation->user_id === $request->user()->id, HTTP_FORBIDDEN, 'This invitation does not belong to you.');
+        abort_if($invitation->requires_password_setup, HTTP_UNPROCESSABLE_ENTITY, 'Set your password from the invitation email to activate this new account.');
+        abort_if($invitation->accepted_at || $invitation->expires_at->isPast(), HTTP_UNPROCESSABLE_ENTITY, 'This invitation is no longer available.');
+
+        DB::transaction(function () use ($invitation) {
+            $invitation->vendor->users()->updateExistingPivot($invitation->user_id, ['is_active' => true, 'accepted_at' => now(), 'revoked_at' => null]);
+            $invitation->update(['accepted_at' => now()]);
+        });
+
+        return $this->sendResponse([], 'Vendor access accepted successfully.');
     }
 
     private function pendingInvitation(string $token): VendorInvitation

@@ -54,7 +54,11 @@ class VendorRepository extends BaseRepository
     public function getAllAccess(array $filters = [])
     {
         return $this->getQuery($filters)
-            ->where('vendor_user.user_id', auth()->id());
+            ->where('vendor_user.user_id', auth()->id())
+            ->where(function ($query) {
+                $query->where('vendor_user.is_primary', true)
+                    ->orWhere('vendor_user.is_active', true);
+            });
     }
 
     public function getBusinessesQuery(Vendor $vendor, array $filters = [])
@@ -110,7 +114,10 @@ class VendorRepository extends BaseRepository
         return DB::transaction(function () use ($inputs) {
             $vendor = auth()->user()->vendors()->create($inputs);
             auth()->user()->vendors()->updateExistingPivot($vendor->id, [
-                'is_primary' => true
+                'is_primary' => true,
+                'role' => 'manager',
+                'access_scope' => 'all_businesses',
+                'is_active' => true,
             ]);
             return $vendor;
         });

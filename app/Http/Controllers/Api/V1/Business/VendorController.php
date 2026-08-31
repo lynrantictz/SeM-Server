@@ -79,20 +79,28 @@ class VendorController extends BaseController
      */
     public function show(Vendor $vendor)
     {
+        $this->vendorMembership($vendor);
         $data['vendor'] = $vendor->load('country');
         return $this->sendResponse($data, 'Vendor retrieved successfully.', HTTP_OK);
     }
 
     public function businesses(Request $request, Vendor $vendor)
     {
+        $membership = $this->vendorMembership($vendor);
         $validated = $request->validate([
             'search' => ['nullable', 'string', 'max:100'],
             'per_page' => ['nullable', 'integer', 'in:10,25,50'],
         ]);
 
-        $paginator = $this->vendors
+        $query = $this->vendors
             ->getBusinessesQuery($vendor, $validated)
-            ->orderByDesc('businesses.created_at')
+            ->orderByDesc('businesses.created_at');
+
+        if (!$membership->pivot->is_primary && $membership->pivot->access_scope === 'selected_businesses') {
+            $query->whereIn('businesses.id', auth()->user()->businesses()->where('vendor_id', $vendor->id)->pluck('businesses.id'));
+        }
+
+        $paginator = $query
             ->paginate($validated['per_page'] ?? 10)
             ->withQueryString();
 
@@ -122,6 +130,7 @@ class VendorController extends BaseController
      */
     public function update(VendorStoreRequest $request, Vendor $vendor)
     {
+        $this->vendorMembership($vendor, true, true);
         $this->vendors->update($vendor, $request->all());
         $data['vendor'] = $vendor->load('country');
         return $this->sendResponse($data, 'Vendor updated successfully.', HTTP_OK);
@@ -133,5 +142,19 @@ class VendorController extends BaseController
     public function destroy(string $id)
     {
         //
+    }
+
+    private function vendorMembership(Vendor $vendor, bool $requiresManager = false, bool $requiresAllBusinesses = false)
+    {
+        $membership = auth()->user()->vendors()->whereKey($vendor->id)->first();
+        abort_unless($membership, HTTP_FORBIDDEN, 'You do not have access to this vendor.');
+
+        $isOwner = (bool) $membership->pivot->is_primary;
+        $isManager = $membership->pivot->role === 'manager' && (bool) $membership->pivot->is_active;
+        abort_unless($isOwner || $membership->pivot->is_active, HTTP_FORBIDDEN, 'Your access to this vendor is not active.');
+        abort_if($requiresManager && !$isOwner && !$isManager, HTTP_FORBIDDEN, 'You do not have permission to manage this vendor.');
+        abort_if($requiresAllBusinesses && !$isOwner && $membership->pivot->access_scope !== 'all_businesses', HTTP_FORBIDDEN, 'You need access to all businesses to perform this action.');
+
+        return $membership;
     }
 }

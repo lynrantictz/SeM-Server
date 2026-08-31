@@ -42,6 +42,7 @@ class BusinessController extends BaseController
      */
     public function store(BusinessRequest $request, Vendor $vendor)
     {
+        $this->canManageBusiness($vendor, null, true);
         $data['business'] = $this->businesses->store($vendor, $request->all());
         return $this->sendResponse(
             $data,
@@ -71,6 +72,7 @@ class BusinessController extends BaseController
      */
     public function update(BusinessRequest $request, Business $business)
     {
+        $this->canManageBusiness($business->vendor, $business);
         $this->businesses->update($business, $request->all());
         $data['business'] = $business->fresh()->load('contacts');
         return $this->sendResponse(
@@ -85,5 +87,23 @@ class BusinessController extends BaseController
     public function destroy(string $id)
     {
         //
+    }
+
+    private function canManageBusiness(Vendor $vendor, ?Business $business = null, bool $creating = false): void
+    {
+        $membership = auth()->user()->vendors()->whereKey($vendor->id)->first();
+        abort_unless($membership, HTTP_FORBIDDEN, 'You do not have access to this vendor.');
+
+        if ($membership->pivot->is_primary) {
+            return;
+        }
+
+        abort_unless($membership->pivot->is_active && $membership->pivot->role === 'manager', HTTP_FORBIDDEN, 'You do not have permission to manage businesses.');
+
+        if ($membership->pivot->access_scope === 'all_businesses') {
+            return;
+        }
+
+        abort_if($creating || !$business || !auth()->user()->businesses()->whereKey($business->id)->where('vendor_id', $vendor->id)->exists(), HTTP_FORBIDDEN, 'You only have access to selected businesses.');
     }
 }
