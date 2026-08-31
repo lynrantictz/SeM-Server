@@ -3,9 +3,12 @@
 use App\Http\Controllers\Api\V1\Payment\PaymentWebhookController;
 use App\Http\Controllers\Api\V1\Auth\AuthController;
 use App\Http\Controllers\Api\V1\Auth\LoginController;
+use App\Http\Controllers\Api\V1\Business\VendorUserController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('login', LoginController::class);
+Route::get('vendor-invitations/preview', [VendorUserController::class, 'showInvitation']);
+Route::post('vendor-invitations/accept', [VendorUserController::class, 'acceptInvitation']);
 
 // Locale debug endpoint (public): returns current locale and a sample translation
 Route::get('locale', function () {

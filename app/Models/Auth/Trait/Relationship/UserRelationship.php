@@ -15,11 +15,13 @@ trait UserRelationship
 
     public function businessUser()
     {
-        return $this->hasOne(BusinessUser::class);
+        return $this->hasMany(BusinessUser::class);
     }
 
     public function vendors()
     {
-        return $this->belongsToMany(Vendor::class, 'vendor_user', 'user_id', 'vendor_id')->withPivot('is_primary');
+        return $this->belongsToMany(Vendor::class, 'vendor_user', 'user_id', 'vendor_id')
+            ->withPivot(['is_primary', 'role', 'access_scope', 'is_active', 'invited_at', 'accepted_at', 'revoked_at'])
+            ->withTimestamps();
     }
 }

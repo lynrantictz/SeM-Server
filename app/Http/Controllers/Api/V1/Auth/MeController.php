@@ -27,8 +27,9 @@ class MeController extends BaseController
 
         switch($user->type) {
             case UserType::OWNER->value:
+            case UserType::VENDOR->value:
                 $data['user'] = $this->owner($request);
-                return $this->sendResponse($data, 'Welcome back boss!');
+                return $this->sendResponse($data, 'Welcome back!');
                 break;
                 default:
                     break;
