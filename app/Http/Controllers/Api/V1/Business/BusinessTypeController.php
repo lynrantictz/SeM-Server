@@ -2,11 +2,10 @@
 
 namespace App\Http\Controllers\Api\V1\Business;
 
-use App\Http\Controllers\Controller;
+use App\Http\Controllers\Api\BaseController;
 use App\Repositories\Business\BusinessTypeRepository;
-use Illuminate\Http\Request;
 
-class BusinessTypeController extends Controller
+class BusinessTypeController extends BaseController
 {
     protected BusinessTypeRepository $businessTypes;
 
@@ -15,59 +14,14 @@ class BusinessTypeController extends Controller
         $this->businessTypes = $businessTypes;
     }
 
-    /**
-     * Display a listing of the resource.
-     */
     public function index()
     {
-        //
-    }
+        $response['business_types'] = $this->businessTypes
+            ->query()
+            ->select(['id', 'name', 'description'])
+            ->orderBy('name')
+            ->get();
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
-
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(Request $request)
-    {
-        //
-    }
-
-    /**
-     * Display the specified resource.
-     */
-    public function show(string $id)
-    {
-        //
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
-    {
-        //
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
+        return $this->sendResponse($response, 'Business types retrieved successfully', HTTP_OK);
     }
 }

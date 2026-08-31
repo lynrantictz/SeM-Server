@@ -20,7 +20,14 @@ class BusinessTypeSeeder extends Seeder
             'Grocery Store',
             'Clothing Store',
             'Electronics Store',
-            'Hotel'
+            'Hotel',
+            'Bar',
+            'Fast Food',
+            'Bar & Lounge',
+            'Ice Cream Shop',
+            'Bakery',
+            'Café',
+
         ];
         foreach ($types as $type) {
             BusinessType::firstOrCreate(['name' => $type]);
