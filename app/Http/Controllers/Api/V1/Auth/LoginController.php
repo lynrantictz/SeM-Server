@@ -15,26 +15,26 @@ class LoginController extends BaseController
      */
     public function __invoke(Request $request)
     {
-        $request->validate([
-            'email'    => ['nullable', 'email'],
-//            'code'    => ['nullable', 'string'],
+        $validated = $request->validate([
+            'login' => ['nullable', 'string', 'max:255'],
+            // Retained temporarily for existing clients during the transition.
+            'email' => ['nullable', 'string', 'max:255'],
+            'code' => ['nullable', 'string', 'max:255'],
             'password' => ['required', 'string'],
         ]);
 
-        if (!$request->email && !$request->code) {
+        $identifier = trim((string) ($validated['login'] ?? $validated['email'] ?? $validated['code'] ?? ''));
+        if ($identifier === '') {
             return $this->sendError(
                 'Either email or code is required.',
                 ['login' => ['Either email or code is required.']]
             );
         }
 
-        $user = User::when(
-            $request->email,
-            fn($q) => $q->where('email', $request->email)
-        )->when(
-            $request->code,
-            fn($q) => $q->where('email', $request->code)
-        )->first();
+        $user = User::query()
+            ->whereRaw('LOWER(email) = ?', [mb_strtolower($identifier)])
+            ->orWhereRaw('UPPER(code) = ?', [mb_strtoupper($identifier)])
+            ->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
             return $this->sendError(
@@ -43,7 +43,7 @@ class LoginController extends BaseController
             );
         }
 
-        if (!$user->email_verified_at && $user->type === UserType::VENDOR->value) {
+        if (!$user->email_verified_at && in_array($user->type, [UserType::OWNER->value, UserType::VENDOR->value], true)) {
             return $this->sendError(
                 'Email Not verified.',
                 ['account' => ['Your email has not been verified.']]
@@ -57,6 +57,20 @@ class LoginController extends BaseController
             );
         }
 
+        if ($user->type === UserType::BUSINESS->value) {
+            $hasActiveBusinessAccess = $user->businessUser()
+                ->where('is_active', true)
+                ->whereHas('business', fn ($query) => $query->where('is_active', true))
+                ->exists();
+
+            if (!$hasActiveBusinessAccess) {
+                return $this->sendError(
+                    'Staff access is disabled.',
+                    ['account' => ['Your staff access is disabled or the assigned business is inactive. Contact your business manager.']]
+                );
+            }
+        }
+
         // Optional: revoke old tokens
         $user->tokens()->delete();
 
@@ -64,6 +78,7 @@ class LoginController extends BaseController
 
         return $this->sendResponse([
             'token' => $token,
+            'must_change_password' => $user->must_change_password,
         ], 'Login successful.');
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Models\Auth\Trait\Attribute;
 
+use App\Services\PhoneNumberNormalizer;
 use Illuminate\Support\Facades\Hash;
 
 trait UserAttribute
@@ -13,7 +14,16 @@ trait UserAttribute
 
     public function setPhoneAttribute($value)
     {
-        $this->attributes['phone'] = setPhoneFormat(request()->input('countryCode'), $value);
+        if ($value === null || trim((string) $value) === '') {
+            $this->attributes['phone'] = null;
+
+            return;
+        }
+
+        $this->attributes['phone'] = app(PhoneNumberNormalizer::class)->normalize(
+            $value,
+            request()->input('countryCode'),
+        );
     }
 
     public function setNameAttribute($value)

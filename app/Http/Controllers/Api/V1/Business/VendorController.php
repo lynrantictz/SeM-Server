@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Business;
 
 use App\Http\Controllers\Api\BaseController;
+use App\Http\Controllers\Api\V1\Business\Concerns\AuthorizesVendorDirectories;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Busines\VendorStoreRequest;
 use App\Models\Business\Vendor;
@@ -12,6 +13,8 @@ use Illuminate\Support\Facades\Log;
 
 class VendorController extends BaseController
 {
+    use AuthorizesVendorDirectories;
+
     protected VendorRepository $vendors;
 
     public function __construct(VendorRepository $vendors)
@@ -24,6 +27,8 @@ class VendorController extends BaseController
      */
     public function index(Request $request)
     {
+        $this->ensureCanAccessVendorDirectories();
+
         $validated = $request->validate([
             'search' => ['nullable', 'string', 'max:100'],
             'per_page' => ['nullable', 'integer', 'in:10,25,50'],
@@ -70,6 +75,8 @@ class VendorController extends BaseController
      */
     public function store(VendorStoreRequest $request)
     {
+        abort_if(is_business(), HTTP_FORBIDDEN, 'Staff accounts cannot create vendors.');
+
         $data['vendor'] = $this->vendors->store($request->all());
         return $this->sendResponse($data, 'Vendor created successfully.', HTTP_CREATED);
     }

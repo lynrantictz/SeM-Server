@@ -2,13 +2,10 @@
 
 namespace App\Http\Controllers\Api\V1\Auth;
 
-use App\Enums\User\UserType;
 use App\Http\Controllers\Api\BaseController;
 use App\Http\Controllers\Api\V1\Auth\Traits\MeTrait;
-use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 
 class MeController extends BaseController
 {
@@ -18,23 +15,9 @@ class MeController extends BaseController
      */
     public function __invoke(Request $request): JsonResponse
     {
-        $user = $request->user();
-//        // check if user has no business then a user will be a owner which owns different vendors
-//        if ($user->businessUser()->count() === 0) {
-//            return $this->owner($request);
-//        }
-//        return $this->businessUser($request);
-
-        switch($user->type) {
-            case UserType::OWNER->value:
-            case UserType::VENDOR->value:
-                $data['user'] = $this->owner($request);
-                return $this->sendResponse($data, 'Welcome back!');
-                break;
-                default:
-                    break;
-        }
-        return $this->sendError('Unauthorized');
+        return $this->sendResponse([
+            'user' => $this->profile($request),
+        ], 'Welcome back!');
     }
 
 

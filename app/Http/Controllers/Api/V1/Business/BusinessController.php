@@ -3,16 +3,17 @@
 namespace App\Http\Controllers\Api\V1\Business;
 
 use App\Http\Controllers\Api\BaseController;
-use App\Http\Controllers\Controller;
+use App\Http\Controllers\Api\V1\Business\Concerns\AuthorizesVendorDirectories;
 use App\Http\Requests\Api\V1\Business\BusinessRequest;
 use App\Models\Business\Business;
 use App\Models\Business\Vendor;
 use App\Repositories\Business\BusinessRepository;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 
 class BusinessController extends BaseController
 {
+    use AuthorizesVendorDirectories;
+
     protected BusinessRepository $businesses;
 
     public function __construct(BusinessRepository $businesses)
@@ -25,16 +26,22 @@ class BusinessController extends BaseController
      */
     public function index(Request $request)
     {
-        $perPage = (int) $request->input('per_page', 10);
-        $sort = $request->input('sort', 'created_at');
-        $direction = $request->input('direction', 'desc');
-        $query = $this->businesses->getQuery($request->all());
-        $query->orderBy($sort, $direction);
-        $data['businesses'] = $query->paginate($perPage);
-        return $this->sendResponse(
-            $data,
-            'Businesses retrieved successfully.'
-        );
+        $this->ensureCanAccessVendorDirectories();
+
+        $validated = $request->validate([
+            'search' => ['nullable', 'string', 'max:100'],
+            'per_page' => ['nullable', 'integer', 'in:10,25,50'],
+        ]);
+
+        $paginator = $this->businesses
+            ->getQuery($validated)
+            ->orderByDesc('businesses.created_at')
+            ->paginate($validated['per_page'] ?? 10)
+            ->withQueryString();
+
+        return $this->sendResponse([
+            'businesses' => $this->businessPaginatorData($paginator),
+        ], 'Businesses retrieved successfully.');
     }
 
     /**
@@ -54,9 +61,16 @@ class BusinessController extends BaseController
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show(Business $business)
     {
-        //
+        $business = $this->businesses
+            ->getQuery()
+            ->whereKey($business->id)
+            ->firstOrFail();
+
+        return $this->sendResponse([
+            'business' => $business,
+        ], 'Business retrieved successfully.');
     }
 
     /**
@@ -105,5 +119,26 @@ class BusinessController extends BaseController
         }
 
         abort_if($creating || !$business || !auth()->user()->businesses()->whereKey($business->id)->where('vendor_id', $vendor->id)->exists(), HTTP_FORBIDDEN, 'You only have access to selected businesses.');
+    }
+
+    private function businessPaginatorData($paginator): array
+    {
+        return [
+            'data' => $paginator->items(),
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'from' => $paginator->firstItem(),
+                'to' => $paginator->lastItem(),
+            ],
+            'links' => [
+                'first' => $paginator->url(1),
+                'last' => $paginator->url($paginator->lastPage()),
+                'prev' => $paginator->previousPageUrl(),
+                'next' => $paginator->nextPageUrl(),
+            ],
+        ];
     }
 }

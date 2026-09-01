@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Models\Business\Business;
 use App\Models\Business\Vendor;
 use App\Services\OrderPrefixService;
+use App\Services\StaffCodePrefixService;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
@@ -53,6 +54,7 @@ class VendorBusinessSeeder extends Seeder
                 ['name' => $businessData['name'], 'vendor_id' => $vendor->id],
                 array_merge($businessData, [
                     'order_prefix' => (new OrderPrefixService())->generate($businessData['name']),
+                    'code_prefix' => (new StaffCodePrefixService())->generate($businessData['name']),
                     'current_order_number' => 0,
                 ])
             );

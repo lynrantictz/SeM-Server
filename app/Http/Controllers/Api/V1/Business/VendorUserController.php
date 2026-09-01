@@ -130,6 +130,7 @@ class VendorUserController extends BaseController
                         'title' => "vendor-{$vendor->id}-user-{$user->id}-business-{$businessId}",
                         'business_role' => 'vendor_manager',
                         'is_active' => true,
+                        'activated_at' => now(),
                     ],
                 ])->all();
                 $user->businesses()->syncWithoutDetaching($assignments);

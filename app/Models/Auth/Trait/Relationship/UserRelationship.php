@@ -10,7 +10,16 @@ trait UserRelationship
 {
     public function businesses()
     {
-        return $this->belongsToMany(Business::class);
+        return $this->belongsToMany(Business::class)
+            ->withPivot([
+                'title',
+                'business_role',
+                'business_staff_role_id',
+                'is_active',
+                'activated_at',
+                'deactivated_at',
+            ])
+            ->withTimestamps();
     }
 
     public function businessUser()

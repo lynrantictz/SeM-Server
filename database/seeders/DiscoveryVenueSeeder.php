@@ -64,7 +64,9 @@ class DiscoveryVenueSeeder extends Seeder
                     'latitude' => round($location['latitude'] + (sin($index * 2.17) * 0.075) + ((($index * 17) % 11) - 5) * 0.002, 7),
                     'longitude' => round($location['longitude'] + (cos($index * 1.73) * 0.09) + ((($index * 29) % 13) - 6) * 0.002, 7),
                     'location_verified_at' => now(), 'is_active' => true, 'tax_allowed' => false,
-                    'order_prefix' => 'DV' . str_pad((string) $index, 3, '0', STR_PAD_LEFT), 'current_order_number' => 0,
+                    'order_prefix' => 'ORD-DV' . str_pad((string) $index, 3, '0', STR_PAD_LEFT),
+                    'code_prefix' => 'DV' . str_pad((string) $index, 3, '0', STR_PAD_LEFT),
+                    'current_order_number' => 0,
                     'image_url' => $images[($index - 1) % count($images)], 'discovery_description' => "A welcoming {$typeName} serving guests in {$location['city']}.",
                     'rating' => 4 + (($index % 10) / 10), 'review_count' => 12 + ($index * 7), 'opening_hours' => $typeName === 'Hotel' ? 'Open 24 hours' : 'Open until 10:00 pm', 'price_range' => 'TSh ' . (5000 + (($index % 4) * 5000)) . '–' . (20000 + (($index % 5) * 5000)),
                 ]

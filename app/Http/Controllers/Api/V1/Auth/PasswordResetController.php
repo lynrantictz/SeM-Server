@@ -32,6 +32,7 @@ class PasswordResetController extends BaseController
 
         DB::transaction(function () use ($user, $request) {
             $user->password = $request->input('password');
+            $user->must_change_password = false;
             $user->save();
             try {
                 $user->tokens()->delete();
@@ -40,9 +41,11 @@ class PasswordResetController extends BaseController
             }
         });
 
-        // Revoke existing tokens to require fresh login across devices
+        $token = $user->createToken('api')->plainTextToken;
 
-
-        return $this->sendResponse(['user' => $user], 'password updated successfully.');
+        return $this->sendResponse([
+            'user' => $user,
+            'token' => $token,
+        ], 'Password updated successfully.');
     }
 }

@@ -8,6 +8,7 @@ use App\Models\Location\District;
 use App\Repositories\BaseRepository;
 use App\Services\OrderPrefixService;
 use App\Services\PhoneNumberNormalizer;
+use App\Services\StaffCodePrefixService;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 
@@ -15,30 +16,93 @@ class BusinessRepository extends BaseRepository
 {
     const MODEL = Business::class;
 
-    public function __construct(protected OrderPrefixService $prefixService) {}
+    public function __construct(
+        protected OrderPrefixService $prefixService,
+        protected StaffCodePrefixService $staffCodePrefixService,
+    ) {}
 
     public function getQuery(array $filters = [])
     {
+        $search = mb_strtolower(trim((string) ($filters['search'] ?? '')));
+
         return $this->query()
-            ->with('type', 'contacts', 'vendor', 'district.region.country')
+            ->select([
+                'businesses.id',
+                'businesses.uuid',
+                'businesses.vendor_id',
+                'businesses.district_id',
+                'businesses.business_type_id',
+                'businesses.tin',
+                'businesses.name',
+                'businesses.location',
+                'businesses.google_location',
+                'businesses.latitude',
+                'businesses.longitude',
+                'businesses.order_prefix',
+                'businesses.code_prefix',
+                'businesses.current_order_number',
+                'businesses.is_active',
+                'businesses.tax_allowed',
+                'businesses.created_at',
+            ])
+            ->with([
+                'type:id,name',
+                'contacts:id,business_id,contact,is_active',
+                'vendor:id,uuid,name',
+                'district:id,city_id,name',
+                'district.city:id,country_id,name',
+                'district.city.country:id,name,iso2,phone_code,flag',
+            ])
+            ->withCount('categories')
             ->when((is_owner() || is_vendor()), function ($query) {
                 $query->join('vendors', 'vendors.id', '=', 'businesses.vendor_id')
                     ->join('vendor_user', 'vendor_user.vendor_id', '=', 'vendors.id')
-                    ->where('vendor_user.user_id', auth()->id());
+                    ->where('vendor_user.user_id', auth()->id())
+                    ->where(function ($membershipQuery) {
+                        $membershipQuery
+                            ->where('vendor_user.is_primary', true)
+                            ->orWhere('vendor_user.is_active', true);
+                    })
+                    ->where(function ($scopeQuery) {
+                        $scopeQuery
+                            ->where('vendor_user.is_primary', true)
+                            ->orWhere('vendor_user.access_scope', 'all_businesses')
+                            ->orWhereIn('businesses.id', auth()->user()->businesses()
+                                ->wherePivot('is_active', true)
+                                ->select('businesses.id'));
+                    });
             })
-            ->when($filters['search'] ?? null, function ($query, $search) {
-                $keyword = ucwords(trim($search));
-                $query->where('businesses.name', 'like', '%' . $keyword . '%')
-                    ->orWhere('businesses.location', 'like', '%' . $keyword . '%')
-                    ->orWhere('businesses.tin', 'like', '%' . $keyword . '%');
+            ->when(is_business(), function ($query) {
+                $query->whereIn('businesses.id', auth()->user()->businesses()
+                    ->wherePivot('is_active', true)
+                    ->select('businesses.id'));
+            })
+            ->when($search !== '', function ($query) use ($search) {
+                $term = '%' . $search . '%';
+
+                $query->where(function ($searchQuery) use ($term) {
+                    $searchQuery
+                        ->whereRaw('LOWER(businesses.name) LIKE ?', [$term])
+                        ->orWhereRaw('LOWER(businesses.tin) LIKE ?', [$term])
+                        ->orWhereRaw('LOWER(businesses.location) LIKE ?', [$term])
+                        ->orWhereHas('vendor', fn ($vendorQuery) => $vendorQuery->whereRaw('LOWER(name) LIKE ?', [$term]))
+                        ->orWhereHas('type', fn ($typeQuery) => $typeQuery->whereRaw('LOWER(name) LIKE ?', [$term]))
+                        ->orWhereHas('contacts', fn ($contactQuery) => $contactQuery->where('contact', 'like', $term))
+                        ->orWhereHas('district', fn ($districtQuery) => $districtQuery
+                            ->whereRaw('LOWER(name) LIKE ?', [$term])
+                            ->orWhereHas('city', fn ($cityQuery) => $cityQuery
+                                ->whereRaw('LOWER(name) LIKE ?', [$term])
+                                ->orWhereHas('country', fn ($countryQuery) => $countryQuery->whereRaw('LOWER(name) LIKE ?', [$term]))));
+                });
             });
     }
 
     public function store(Vendor $vendor, array $inputs)
     {
         return DB::transaction(function () use ($vendor, $inputs) {
-            // Generate unique order prefix from business name
+            // Orders and staff login codes use deliberately separate namespaces.
             $inputs['order_prefix'] = $this->prefixService->generate($inputs['name']);
+            $inputs['code_prefix'] = $this->staffCodePrefixService->generate($inputs['name']);
 
             $business = $vendor->businesses()->create(Arr::except($inputs, ['contacts']));
 

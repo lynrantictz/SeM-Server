@@ -6,8 +6,22 @@ use Illuminate\Http\JsonResponse;
 
 trait MeTrait
 {
-    public function owner($request)
+    public function profile($request)
     {
-        return $request->user()->load(['vendors.country', 'vendors.businesses', 'roles', 'roles.permissions']);
+        $user = $request->user()->load([
+            'vendors.country',
+            'vendors.businesses',
+            'businesses.vendor.country',
+            'businesses.type',
+            'roles',
+            'roles.permissions',
+        ]);
+
+        $user->setRelation(
+            'businesses',
+            $user->businesses->filter(fn ($business) => (bool) $business->pivot->is_active)->values()
+        );
+
+        return $user;
     }
 }

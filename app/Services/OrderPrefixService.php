@@ -15,26 +15,26 @@ class OrderPrefixService
      *  3. If the candidate already exists, try numeric suffixes (e.g. LHT2, LHT3…).
      *
      * @param  string  $businessName
-     * @return string  3–4 uppercase chars, guaranteed unique in businesses table
+     * @return string  An order-only prefix, guaranteed unique in businesses table
      */
     public function generate(string $businessName): string
     {
         $base = $this->buildBase($businessName);
 
         // Try the base first, then base+N until unique
-        $candidate = $base;
+        $candidate = 'ORD-' . $base;
         $n = 2;
 
         while (Business::where('order_prefix', $candidate)->exists()) {
             // Append numeric suffix; if base is already 4 chars, replace last char with digit
             $suffix  = (string) $n;
             $trimmed = substr($base, 0, max(2, 4 - strlen($suffix)));
-            $candidate = $trimmed . $suffix;
+            $candidate = 'ORD-' . $trimmed . $suffix;
             $n++;
 
             // Safety valve: if we somehow loop forever, add timestamp fragment
             if ($n > 999) {
-                $candidate = strtoupper(substr(uniqid(), -4));
+                $candidate = 'ORD-' . strtoupper(substr(uniqid(), -4));
                 if (!Business::where('order_prefix', $candidate)->exists()) {
                     break;
                 }
