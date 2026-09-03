@@ -13,6 +13,7 @@ Route::group(['prefix' => 'businesses'], function () {
     Route::get('{business}/management-access', [BusinessStaffController::class, 'managementAccess']);
     Route::get('{business}/staff', [BusinessStaffController::class, 'index']);
     Route::post('{business}/staff', [BusinessStaffController::class, 'store']);
+    Route::post('{business}/staff/{user}/reset-password', [BusinessStaffController::class, 'resetPassword']);
     Route::put('{business}/staff/{user}', [BusinessStaffController::class, 'update']);
     Route::get('', [BusinessController::class, 'index']);
     Route::get('{business}', [BusinessController::class, 'show']);

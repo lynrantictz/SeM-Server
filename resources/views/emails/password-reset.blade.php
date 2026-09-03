@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reset your Paperstick password</title></head>
+<body style="margin:0;padding:0;background:#f5f8fc;color:#10233f;font-family:Arial,Helvetica,sans-serif;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" style="padding:32px 16px;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:620px;overflow:hidden;border:1px solid #e5eaf1;border-radius:16px;background:#fff;">
+<tr><td style="height:5px;background:#ff7619;font-size:0;line-height:0;">&nbsp;</td></tr>
+<tr><td style="padding:28px 36px;"><a href="{{ config('app.business_url') }}"><img src="{{ rtrim(config('app.business_url'), '/') }}/paperstic.png" alt="Paperstick" width="178" style="display:block;border:0;max-width:178px;height:auto;"></a></td></tr>
+<tr><td style="padding:42px 36px;background:#0b4385;"><p style="margin:0 0 14px;color:#ffb27d;font-size:12px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;">Password reset</p><h1 style="margin:0;color:#fff;font-size:31px;line-height:1.2;">Set a new password.</h1><p style="margin:18px 0 0;color:#dce9f7;font-size:16px;line-height:1.65;">Use the secure link below to regain access to your Paperstick account.</p></td></tr>
+<tr><td style="padding:36px;"><p style="margin:0 0 18px;font-size:16px;line-height:1.6;">Hello <strong>{{ $user->name }}</strong>,</p><p style="margin:0;font-size:16px;line-height:1.7;">We received a request to reset the password for your Paperstick account. This link is valid for 60 minutes and can only be used once.</p><table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:30px 0;"><tr><td style="border-radius:999px;background:#ff7619;"><a href="{{ $resetUrl }}" style="display:inline-block;padding:15px 26px;border-radius:999px;color:#fff;font-size:15px;font-weight:bold;text-decoration:none;">Reset password</a></td></tr></table><p style="margin:0;color:#64748b;font-size:13px;line-height:1.6;">If you did not request this, you can safely ignore this email. Your current password will remain unchanged.</p><p style="margin:18px 0 0;word-break:break-all;color:#0b4385;font-size:12px;line-height:1.6;">{{ $resetUrl }}</p></td></tr>
+<tr><td style="padding:24px 36px;border-top:1px solid #e5eaf1;background:#f8fafc;text-align:center;"><p style="margin:0 0 8px;color:#0b4385;font-size:12px;font-weight:bold;letter-spacing:1.5px;">NO DOWNLOADS. JUST SCAN, ORDER &amp; PAY.</p><p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.6;">© {{ date('Y') }} Paperstick. All rights reserved.</p></td></tr>
+</table></td></tr></table>
+</body></html>

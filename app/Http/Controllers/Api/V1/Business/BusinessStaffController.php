@@ -206,6 +206,37 @@ class BusinessStaffController extends BaseController
         ], 'Staff account updated successfully.');
     }
 
+    public function resetPassword(Business $business, User $user): mixed
+    {
+        $this->ensureCanManageBusiness($business);
+
+        $membership = BusinessUser::query()
+            ->where('business_id', $business->id)
+            ->where('user_id', $user->id)
+            ->firstOrFail();
+
+        abort_unless(
+            $user->type === 'business' && filled($user->code),
+            HTTP_UNPROCESSABLE_ENTITY,
+            'Only staff accounts with a login code can have their password reset here.'
+        );
+
+        // The user mutator hashes the raw password. Do not hash the code here,
+        // otherwise the value would be hashed twice and staff could not log in.
+        $user->forceFill([
+            'password' => $user->code,
+            'must_change_password' => true,
+        ])->save();
+
+        // A reset invalidates any current device session. The next login will
+        // use the code as the temporary password and open change-password.
+        $user->tokens()->delete();
+
+        return $this->sendResponse([
+            'staff' => $this->staffData($membership->fresh()->load(['user', 'businessStaffRole'])),
+        ], 'Password reset successfully. The staff login code is now their temporary password.');
+    }
+
     private function ensureCanManageBusiness(Business $business): void
     {
         $staffMembership = BusinessUser::query()
