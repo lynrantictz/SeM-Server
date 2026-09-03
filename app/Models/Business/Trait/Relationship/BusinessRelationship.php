@@ -7,6 +7,7 @@ use App\Models\Business\BusinessType;
 use App\Models\Business\Vendor;
 use App\Models\Location\District;
 use App\Models\Menu\Category;
+use App\Models\Business\ComplianceDocument;
 
 trait BusinessRelationship
 {
@@ -33,5 +34,10 @@ trait BusinessRelationship
     public function contacts()
     {
         return $this->hasMany(BusinessContacts::class, 'business_id', 'id');
+    }
+
+    public function complianceDocuments()
+    {
+        return $this->hasMany(ComplianceDocument::class);
     }
 }

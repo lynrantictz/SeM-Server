@@ -5,6 +5,7 @@ use App\Exceptions\InvalidPhoneNumberException;
 use App\Services\PhoneNumberNormalizer;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schedule;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
@@ -47,3 +48,5 @@ Artisan::command('customers:backfill-phone-e164', function () {
 
     $this->info("Backfilled {$updated} customer phone values; skipped {$skipped}.");
 })->purpose('Backfill customer phone_e164 values after countries are seeded');
+
+Schedule::command('compliance-documents:send-expiry-reminders')->dailyAt('08:00');

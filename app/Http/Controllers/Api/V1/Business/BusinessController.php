@@ -9,6 +9,7 @@ use App\Models\Business\Business;
 use App\Models\Business\Vendor;
 use App\Repositories\Business\BusinessRepository;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class BusinessController extends BaseController
 {
@@ -93,6 +94,58 @@ class BusinessController extends BaseController
             $data,
             'Business updated successfully.',
         );
+    }
+
+    public function logo(Business $business)
+    {
+        $this->businesses->getQuery()->whereKey($business->id)->firstOrFail();
+        return $this->logoResponse($business);
+    }
+
+    /** Public business identity images are safe to show in the app and menu pages. */
+    public function publicLogo(Business $business)
+    {
+        return $this->logoResponse($business);
+    }
+
+    private function logoResponse(Business $business)
+    {
+        $business->refresh();
+        abort_unless($business->logo_path && $business->logo_disk, HTTP_NOT_FOUND, 'This business has not uploaded a logo.');
+        abort_unless(Storage::disk($business->logo_disk)->exists($business->logo_path), HTTP_NOT_FOUND, 'The business logo file is unavailable.');
+
+        return Storage::disk($business->logo_disk)->response(
+            $business->logo_path,
+            null,
+            ['Content-Type' => $business->logo_mime_type ?? 'image/png']
+        );
+    }
+
+    public function updateLogo(Request $request, Business $business)
+    {
+        $this->canManageBusiness($business->vendor, $business);
+        $validated = $request->validate([
+            'logo' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+        ]);
+
+        $file = $validated['logo'];
+        $oldDisk = $business->logo_disk;
+        $oldPath = $business->logo_path;
+        $path = $file->store("business-logos/{$business->uuid}", 'public');
+        $business->update([
+            'logo_disk' => 'public',
+            'logo_path' => $path,
+            'logo_mime_type' => $file->getMimeType() ?: 'image/png',
+            'logo_updated_at' => now(),
+        ]);
+
+        if ($oldDisk && $oldPath) {
+            Storage::disk($oldDisk)->delete($oldPath);
+        }
+
+        return $this->sendResponse([
+            'business' => $business->fresh(),
+        ], 'Business logo updated successfully.');
     }
 
     /**

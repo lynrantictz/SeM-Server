@@ -6,6 +6,7 @@ namespace App\Models\Business\Trait\Relationship;
 use App\Models\Business\Business;
 use App\Models\Auth\User;
 use App\Models\Location\Country;
+use App\Models\Business\ComplianceDocument;
 
 trait VendorRelationship
 {
@@ -24,5 +25,10 @@ trait VendorRelationship
         return $this->belongsToMany(User::class, 'vendor_user', 'vendor_id', 'user_id')
             ->withPivot(['is_primary', 'role', 'access_scope', 'is_active', 'invited_at', 'accepted_at', 'revoked_at'])
             ->withTimestamps();
+    }
+
+    public function complianceDocuments()
+    {
+        return $this->hasMany(ComplianceDocument::class);
     }
 }
