@@ -5,6 +5,7 @@ namespace App\Models\Section\Trait\Relationship;
 use App\Models\Business\Business;
 use App\Models\Section\Code;
 use App\Models\Section\SubSection;
+use App\Models\Section\ServicePoint;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
@@ -33,5 +34,10 @@ trait SectionRelationship
     public function business(): BelongsTo
     {
         return $this->belongsTo(Business::class);
+    }
+
+    public function servicePoints(): HasMany
+    {
+        return $this->hasMany(ServicePoint::class)->whereNull('sub_section_id');
     }
 }

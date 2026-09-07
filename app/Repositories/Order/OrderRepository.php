@@ -4,6 +4,7 @@ namespace App\Repositories\Order;
 
 use App\Models\Order\Order;
 use App\Models\Section\Code;
+use App\Models\Section\ServicePoint;
 use App\Repositories\BaseRepository;
 use App\Repositories\Customer\CustomerRepository;
 use App\Services\TaxCalculatorService;
@@ -24,12 +25,15 @@ class OrderRepository extends BaseRepository
         $business = $code->codable->business;
         $country = $business->district?->city?->country?->iso2;
         $customer = (new CustomerRepository())->getCustomerByPhone($inputs['phone'], $country);
+        $servicePoint = $code->codable instanceof ServicePoint ? $code->codable : null;
         return [
             'business_id' => $business->id,
             'user_id' => null, //TODO:: update later when a registered user is making order
             'customer_id' => $customer->id,
             'order_status_id' => config('constants.order_status.PENDING'),
             'payment_status_id' => config('constants.payment_status.PENDING'),
+            'service_point_id' => $servicePoint?->id,
+            'service_point_label' => $servicePoint?->display_name,
         ];
     }
 

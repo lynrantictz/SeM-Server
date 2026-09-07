@@ -5,12 +5,24 @@ use App\Http\Controllers\Api\V1\Business\BusinessStaffController;
 use App\Http\Controllers\Api\V1\Business\BusinessStaffRoleController;
 use App\Http\Controllers\Api\V1\Business\BusinessTypeController;
 use App\Http\Controllers\Api\V1\Business\ComplianceDocumentController;
+use App\Http\Controllers\Api\V1\Section\ServiceAreaController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('business-types', [BusinessTypeController::class, 'index']);
 Route::get('business-staff-roles', [BusinessStaffRoleController::class, 'index']);
 
 Route::group(['prefix' => 'businesses'], function () {
+    Route::get('{business}/service-areas', [ServiceAreaController::class, 'index']);
+    Route::get('{business}/service-areas/sections', [ServiceAreaController::class, 'sections']);
+    Route::get('{business}/service-areas/subsections', [ServiceAreaController::class, 'subSections']);
+    Route::get('{business}/service-points', [ServiceAreaController::class, 'servicePoints']);
+    Route::post('{business}/sections', [ServiceAreaController::class, 'storeSection']);
+    Route::put('{business}/sections/{section}', [ServiceAreaController::class, 'updateSection']);
+    Route::post('{business}/sections/{section}/subsections', [ServiceAreaController::class, 'storeSubSection']);
+    Route::put('{business}/subsections/{subSection}', [ServiceAreaController::class, 'updateSubSection']);
+    Route::post('{business}/service-points', [ServiceAreaController::class, 'storeServicePoint']);
+    Route::put('{business}/service-points/{servicePoint}', [ServiceAreaController::class, 'updateServicePoint']);
+    Route::post('{business}/service-points/{servicePoint}/rotate-code', [ServiceAreaController::class, 'rotateCode']);
     Route::get('{business}/logo', [BusinessController::class, 'logo']);
     Route::post('{business}/logo', [BusinessController::class, 'updateLogo']);
     Route::get('{business}/documents', [ComplianceDocumentController::class, 'businessIndex']);

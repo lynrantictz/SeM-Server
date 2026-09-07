@@ -17,7 +17,7 @@ class CodeController extends BaseController
         }
 
         // Generate the URL that the QR code will point to
-        $url = url('/menu/' . $code->code);
+        $url = rtrim(config('paperstick.client_url'), '/') . '/menu?c=' . urlencode($code->code);
 
         // Generate the QR code
         $qrCode = QrCode::size(300)->generate($url);
@@ -35,7 +35,7 @@ class CodeController extends BaseController
         }
 
         // Generate the URL that the QR code will point to
-        $url = url('/menu/' . $code->code);
+        $url = rtrim(config('paperstick.client_url'), '/') . '/menu?c=' . urlencode($code->code);
 
         // Generate the QR code
         $qrCode = QrCode::size(300)->generate($url);

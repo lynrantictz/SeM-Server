@@ -10,6 +10,7 @@ use App\Models\Order\OrderStatus;
 use App\Models\Payment\Payment;
 use App\Models\Payment\PaymentMethod;
 use App\Models\Payment\PaymentStatus;
+use App\Models\Section\ServicePoint;
 
 trait OrderRelationship
 {
@@ -51,5 +52,10 @@ trait OrderRelationship
     public function payment()
     {
         return $this->hasOne(Payment::class, 'order_id', 'id');
+    }
+
+    public function servicePoint()
+    {
+        return $this->belongsTo(ServicePoint::class);
     }
 }

@@ -5,6 +5,7 @@ namespace App\Models\Section\Trait\Relationship;
 use App\Models\Business\Business;
 use App\Models\Section\Code;
 use App\Models\Section\Section;
+use App\Models\Section\ServicePoint;
 
 trait SubSectionRelationship
 {
@@ -21,6 +22,11 @@ trait SubSectionRelationship
     public function business()
     {
         return $this->belongsTo(Business::class);
+    }
+
+    public function servicePoints()
+    {
+        return $this->hasMany(ServicePoint::class, 'sub_section_id');
     }
 
 }

@@ -9,7 +9,6 @@ use App\Models\Section\Code;
 use App\Repositories\Menu\CategoryRepository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 
 class CategoryController extends BaseController
 {
@@ -29,6 +28,9 @@ class CategoryController extends BaseController
         if (!$code) {
             return $this->sendError('Invalid code', [], HTTP_NOT_FOUND);
         }
+        if (!$code->is_active) {
+            return $this->sendError('This QR code is no longer active.', [], HTTP_NOT_FOUND);
+        }
 
         $relationships = [
             'business',
@@ -39,11 +41,16 @@ class CategoryController extends BaseController
             'business.district.city.country'
         ];
 
-        if (Schema::hasColumn($code->codable->getTable(), 'section_id')) {
+        if ($code->codable instanceof \App\Models\Section\ServicePoint) {
+            array_unshift($relationships, 'section', 'subSection');
+        } elseif ($code->codable instanceof \App\Models\Section\SubSection) {
             array_unshift($relationships, 'section');
         }
 
         $codable = $code->codable->load($relationships);
+        if (!$codable->business->is_active) {
+            return $this->sendError('This business is not currently accepting orders.', [], HTTP_NOT_FOUND);
+        }
         $menu = $code->codable->business->categories()->with([
             'items' => function ($query) {
                 $query->where('is_active', true);
