@@ -183,6 +183,9 @@ class ServiceAreaController extends BaseController
             'is_active' => ['sometimes', 'boolean'],
         ];
         $data = $request->validate($rules);
+        if ($partial && !array_key_exists('section_id', $data)) {
+            return $data + ['business_id' => $business->id];
+        }
         $sectionId = $data['section_id'] ?? $request->input('section_id');
         $section = Section::query()->whereKey($sectionId)->where('business_id', $business->id)->firstOrFail();
         if (!empty($data['sub_section_id'])) {
