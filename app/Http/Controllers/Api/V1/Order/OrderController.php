@@ -16,10 +16,12 @@ use App\Models\Section\Code;
 use App\Repositories\Customer\CustomerRepository;
 use App\Repositories\Order\OrderRepository;
 use App\Services\PhoneNumberNormalizer;
+use App\Services\MenuAvailabilityService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class OrderController extends BaseController
 {
@@ -68,10 +70,22 @@ class OrderController extends BaseController
         if (!$code->codable->business->is_active) {
             return $this->sendError('Business is disabled. contact a hotel/restaurant', [], HTTP_NOT_FOUND);
         }
+        if (!$code->codable->business->dine_in_enabled) {
+            return $this->sendError('QR dine-in ordering is not enabled for this business.', [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+        if ($code->codable instanceof \App\Models\Section\ServicePoint && !$code->codable->is_active) {
+            return $this->sendError('This table, room, or service point is not currently accepting orders.', [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+        $businessStatus = app(MenuAvailabilityService::class)->businessStatus($code->codable->business);
+        if (!$businessStatus['is_open_now']) {
+            return $this->sendError($businessStatus['reason'], ['menu_status' => $businessStatus], HTTP_UNPROCESSABLE_ENTITY);
+        }
         try {
             $order = $this->orders->store($code, $request->except('code'));
         } catch (InvalidPhoneNumberException $exception) {
             return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
+        } catch (ValidationException $exception) {
+            return $this->sendError('One or more menu items cannot be ordered.', $exception->errors(), HTTP_UNPROCESSABLE_ENTITY);
         }
 
         $data['order'] = $order;

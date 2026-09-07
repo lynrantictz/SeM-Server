@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Order\Order;
 use App\Models\Section\Code;
 use App\Repositories\Menu\CategoryRepository;
+use App\Services\MenuAvailabilityService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -42,6 +43,9 @@ class CategoryController extends BaseController
         ];
 
         if ($code->codable instanceof \App\Models\Section\ServicePoint) {
+            if (!$code->codable->is_active) {
+                return $this->sendError('This table, room, or service point is not currently accepting orders.', [], HTTP_NOT_FOUND);
+            }
             array_unshift($relationships, 'section', 'subSection');
         } elseif ($code->codable instanceof \App\Models\Section\SubSection) {
             array_unshift($relationships, 'section');
@@ -51,17 +55,38 @@ class CategoryController extends BaseController
         if (!$codable->business->is_active) {
             return $this->sendError('This business is not currently accepting orders.', [], HTTP_NOT_FOUND);
         }
-        $menu = $code->codable->business->categories()->with([
+        $business = $code->codable->business;
+        if (!$business->dine_in_enabled) {
+            return $this->sendError('QR dine-in ordering is not enabled for this business.', [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+        $availability = app(MenuAvailabilityService::class);
+        $businessStatus = $availability->businessStatus($business);
+        if (!$businessStatus['is_open_now']) {
+            return $this->sendError($businessStatus['reason'], ['menu_status' => $businessStatus], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $menu = $business->categories()->with([
             'items' => function ($query) {
-                $query->where('is_active', true);
+                $query->where('is_active', true)->where('is_sold_out', false)->with('availabilityRules.days');
             },
         ])
             ->where('is_active', true)
             ->orderBy('categories.name', 'ASC')
-            ->get();
+            ->get()
+            ->map(function ($category) use ($availability, $business) {
+                $category->setRelation('items', $category->items->filter(function ($item) use ($availability, $business) {
+                    $status = $availability->itemStatus($item, $business);
+                    $item->setAttribute('availability', $status);
+                    return $status['is_available_now'];
+                })->values());
+                return $category;
+            })
+            ->filter(fn ($category) => $category->items->isNotEmpty())
+            ->values();
 
         $data['code'] = $codable;
         $data['menu'] = $menu;
+        $data['menu_status'] = $businessStatus;
 
         return $this->sendResponse($data, 'Menu retrieved successfully', HTTP_OK);
     }

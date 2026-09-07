@@ -8,6 +8,7 @@ use App\Models\Business\Vendor;
 use App\Models\Location\District;
 use App\Models\Menu\Category;
 use App\Models\Business\ComplianceDocument;
+use App\Models\Business\BusinessOpeningHour;
 
 trait BusinessRelationship
 {
@@ -39,5 +40,10 @@ trait BusinessRelationship
     public function complianceDocuments()
     {
         return $this->hasMany(ComplianceDocument::class);
+    }
+
+    public function openingHours()
+    {
+        return $this->hasMany(BusinessOpeningHour::class);
     }
 }

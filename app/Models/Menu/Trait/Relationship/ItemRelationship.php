@@ -4,6 +4,7 @@ namespace App\Models\Menu\Trait\Relationship;
 
 use App\Models\Menu\Category;
 use App\Models\Menu\ItemPrice;
+use App\Models\Menu\ItemAvailabilityRule;
 
 trait ItemRelationship
 {
@@ -15,5 +16,10 @@ trait ItemRelationship
     public function prices()
     {
         return $this->hasMany(ItemPrice::class);
+    }
+
+    public function availabilityRules()
+    {
+        return $this->hasMany(ItemAvailabilityRule::class);
     }
 }

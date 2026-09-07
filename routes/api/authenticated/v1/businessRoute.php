@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\V1\Business\BusinessController;
 use App\Http\Controllers\Api\V1\Business\BusinessStaffController;
 use App\Http\Controllers\Api\V1\Business\BusinessStaffRoleController;
 use App\Http\Controllers\Api\V1\Business\BusinessTypeController;
+use App\Http\Controllers\Api\V1\Business\BusinessMenuSettingsController;
 use App\Http\Controllers\Api\V1\Business\ComplianceDocumentController;
 use App\Http\Controllers\Api\V1\Section\ServiceAreaController;
 use Illuminate\Support\Facades\Route;
@@ -12,6 +13,8 @@ Route::get('business-types', [BusinessTypeController::class, 'index']);
 Route::get('business-staff-roles', [BusinessStaffRoleController::class, 'index']);
 
 Route::group(['prefix' => 'businesses'], function () {
+    Route::get('{business}/menu-settings', [BusinessMenuSettingsController::class, 'show']);
+    Route::put('{business}/menu-settings', [BusinessMenuSettingsController::class, 'update']);
     Route::get('{business}/service-areas', [ServiceAreaController::class, 'index']);
     Route::get('{business}/service-areas/sections', [ServiceAreaController::class, 'sections']);
     Route::get('{business}/service-areas/subsections', [ServiceAreaController::class, 'subSections']);
