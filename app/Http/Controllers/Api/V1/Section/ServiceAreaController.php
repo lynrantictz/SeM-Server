@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Section;
 
 use App\Http\Controllers\Api\BaseController;
 use App\Models\Business\Business;
+use App\Models\Business\OrderingChannel;
 use App\Models\Section\Code;
 use App\Models\Section\Section;
 use App\Models\Section\ServicePoint;
@@ -44,6 +45,7 @@ class ServiceAreaController extends BaseController
                 'section:id,uuid,name',
                 'subSection:id,uuid,name',
                 'activeCode:id,codable_id,codable_type,code,is_active',
+                'orderingChannels:id,uuid,slug,name,description',
             ])
             ->when($search !== '', function ($query) use ($search) {
                 $term = '%' . $search . '%';
@@ -148,17 +150,24 @@ class ServiceAreaController extends BaseController
         if ($duplicate) {
             return $this->sendError('That service-point label already exists in the selected area. Choose a different label.', ['label' => ['The label has already been used in this area.']], HTTP_UNPROCESSABLE_ENTITY);
         }
+        $channelSlugs = $data['channel_slugs'] ?? $this->defaultChannels($data['type']);
+        unset($data['channel_slugs']);
         $servicePoint = ServicePoint::query()->create($data);
+        $this->syncServicePointChannels($servicePoint, $business, $channelSlugs);
         $this->createCode($servicePoint);
-        return $this->sendResponse(['service_point' => $servicePoint->load(['section', 'subSection', 'activeCode'])], 'Service point and QR code created successfully.', HTTP_CREATED);
+        return $this->sendResponse(['service_point' => $servicePoint->load(['section', 'subSection', 'activeCode', 'orderingChannels'])], 'Service point and QR code created successfully.', HTTP_CREATED);
     }
 
     public function updateServicePoint(Request $request, Business $business, ServicePoint $servicePoint)
     {
         abort_unless($servicePoint->business_id === $business->id, HTTP_NOT_FOUND);
         $this->authorizeManage($business);
-        $servicePoint->update($this->servicePointData($request, $business, true));
-        return $this->sendResponse(['service_point' => $servicePoint->fresh()->load(['section', 'subSection', 'activeCode'])], 'Service point updated successfully.');
+        $data = $this->servicePointData($request, $business, true);
+        $channelSlugs = $data['channel_slugs'] ?? null;
+        unset($data['channel_slugs']);
+        $servicePoint->update($data);
+        if ($channelSlugs !== null) $this->syncServicePointChannels($servicePoint, $business, $channelSlugs);
+        return $this->sendResponse(['service_point' => $servicePoint->fresh()->load(['section', 'subSection', 'activeCode', 'orderingChannels'])], 'Service point updated successfully.');
     }
 
     public function rotateCode(Business $business, ServicePoint $servicePoint)
@@ -181,6 +190,8 @@ class ServiceAreaController extends BaseController
             'capacity' => ['nullable', 'integer', 'min:1', 'max:10000'],
             'notes' => ['nullable', 'string'],
             'is_active' => ['sometimes', 'boolean'],
+            'channel_slugs' => ['nullable', 'array', 'min:1'],
+            'channel_slugs.*' => ['distinct', 'string', 'max:24', 'exists:ordering_channels,slug'],
         ];
         $data = $request->validate($rules);
         if ($partial && !array_key_exists('section_id', $data)) {
@@ -192,6 +203,24 @@ class ServiceAreaController extends BaseController
             SubSection::query()->whereKey($data['sub_section_id'])->where('section_id', $section->id)->where('business_id', $business->id)->firstOrFail();
         }
         return $data + ['business_id' => $business->id];
+    }
+
+    private function defaultChannels(string $type): array
+    {
+        return in_array($type, ['pickup', 'counter'], true) ? ['pickup'] : ['dine_in'];
+    }
+
+    private function syncServicePointChannels(ServicePoint $servicePoint, Business $business, array $slugs): void
+    {
+        $channels = $business->orderingChannels()
+            ->where('ordering_channels.is_active', true)
+            ->wherePivot('is_enabled', true)
+            ->whereIn('slug', array_values(array_unique($slugs)))
+            ->get(['ordering_channels.id', 'ordering_channels.slug']);
+        if ($channels->count() !== count(array_unique($slugs))) {
+            abort(HTTP_UNPROCESSABLE_ENTITY, 'Select only active ordering channels enabled for this business.');
+        }
+        $servicePoint->orderingChannels()->sync($channels->pluck('id')->mapWithKeys(fn ($id) => [$id => []])->all());
     }
 
     private function createCode(ServicePoint $servicePoint): Code

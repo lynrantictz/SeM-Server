@@ -4,6 +4,7 @@ namespace App\Repositories\Business;
 
 use App\Models\Business\Business;
 use App\Models\Business\Vendor;
+use App\Models\Business\Timezone;
 use App\Models\Location\District;
 use App\Repositories\BaseRepository;
 use App\Services\OrderPrefixService;
@@ -107,8 +108,11 @@ class BusinessRepository extends BaseRepository
             // Orders and staff login codes use deliberately separate namespaces.
             $inputs['order_prefix'] = $this->prefixService->generate($inputs['name']);
             $inputs['code_prefix'] = $this->staffCodePrefixService->generate($inputs['name']);
+            $inputs['timezone_id'] = Timezone::query()
+                ->where('identifier', $inputs['timezone'] ?? 'UTC')
+                ->value('id') ?: Timezone::query()->where('identifier', 'UTC')->value('id');
 
-            $business = $vendor->businesses()->create(Arr::except($inputs, ['contacts']));
+            $business = $vendor->businesses()->create(Arr::except($inputs, ['contacts', 'timezone']));
 
             // contacts is an array of ['contact' => '...'] objects
             if (!empty($inputs['contacts'])) {

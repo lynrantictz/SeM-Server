@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\Location\CountryController;
 use App\Http\Controllers\Api\V1\Business\BusinessController;
+use App\Http\Controllers\Api\V1\Business\OrderingChannelController;
 use App\Http\Controllers\Api\V1\Discovery\DiscoveryController;
 use App\Http\Controllers\Api\Location\CityController;
 use App\Http\Controllers\Api\Location\DistrictController;
@@ -14,3 +15,4 @@ Route::group(['prefix' => 'business'], function () {
 
 Route::get('discover/businesses', [DiscoveryController::class, 'index']);
 Route::get('public/businesses/{business}/logo', [BusinessController::class, 'publicLogo']);
+Route::get('ordering-channels', [OrderingChannelController::class, 'index']);

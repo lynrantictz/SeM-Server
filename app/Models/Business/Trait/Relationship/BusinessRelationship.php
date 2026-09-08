@@ -9,6 +9,9 @@ use App\Models\Location\District;
 use App\Models\Menu\Category;
 use App\Models\Business\ComplianceDocument;
 use App\Models\Business\BusinessOpeningHour;
+use App\Models\Business\BusinessPromotion;
+use App\Models\Business\Timezone;
+use App\Models\Business\OrderingChannel;
 
 trait BusinessRelationship
 {
@@ -45,5 +48,22 @@ trait BusinessRelationship
     public function openingHours()
     {
         return $this->hasMany(BusinessOpeningHour::class);
+    }
+
+    public function promotions()
+    {
+        return $this->hasMany(BusinessPromotion::class);
+    }
+
+    public function timezoneDefinition()
+    {
+        return $this->belongsTo(Timezone::class, 'timezone_id');
+    }
+
+    public function orderingChannels()
+    {
+        return $this->belongsToMany(OrderingChannel::class, 'business_ordering_channels')
+            ->withPivot('is_enabled')
+            ->withTimestamps();
     }
 }

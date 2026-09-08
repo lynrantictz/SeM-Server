@@ -14,36 +14,44 @@ class OrderItemRepository extends BaseRepository
 {
     const MODEL = OrderItem::class;
 
-    public function inputManipulator($item, $business): array
+    public function inputManipulator($item, $business, string $channel = 'dine_in'): array
     {
         $itemResults = (new ItemRepository())->query()
             ->where('uuid', $item['uuid'])
-            ->whereHas('category', fn ($query) => $query->where('business_id', $business->id))
-            ->with('availabilityRules.days')
+            ->whereHas('category', fn($query) => $query->where('business_id', $business->id))
+            ->with(['availabilityRules.days', 'discountRules'])
             ->first();
         if (!$itemResults) {
             throw ValidationException::withMessages(['items' => ['One or more selected menu items are invalid for this business.']]);
         }
-        $availability = app(MenuAvailabilityService::class)->itemStatus($itemResults, $business);
+        $availability = app(MenuAvailabilityService::class)->itemStatus($itemResults, $business, $channel);
         if (!$availability['is_available_now']) {
             throw ValidationException::withMessages(['items' => [$itemResults->name . ': ' . $availability['reason']]]);
         }
+        $pricing = app(MenuAvailabilityService::class)->itemPricing($itemResults, $business, $channel);
+        $discountPercentage = $pricing['discount_percentage'];
+        $unitPrice = $pricing['original_price'];
+        $discountAmount = round($pricing['discount_amount'] * (int) $item['quantity'], 2);
+        $finalPrice = $pricing['final_price'];
         return [
             'item_id' => $itemResults->id,
             'quantity' => $item['quantity'],
-            'unit_price' => $itemResults->price,
-            'discount' => $itemResults->discount, //this should be percentage
-            'final_price' => $itemResults->final_price,
-            'total_amount' => $itemResults->final_price * $item['quantity'],
+            'unit_price' => $unitPrice,
+            'discount' => $discountPercentage,
+            'discount_percentage' => $discountPercentage,
+            'discount_amount' => $discountAmount,
+            'final_price' => $finalPrice,
+            'total_amount' => $finalPrice * $item['quantity'],
             'comment' => $item['comment']
         ];
     }
 
-    public function store(Order $order, $items)
+    public function store(Order $order, $items, string $channel = 'dine_in')
     {
-        return DB::transaction(function () use ($order, $items) {
+        return DB::transaction(function () use ($order, $items, $channel) {
+            $order->loadMissing('business.promotions', 'business.timezoneDefinition');
             foreach ($items as $item) {
-                $order->items()->create($this->inputManipulator($item, $order->business));
+                $order->items()->create($this->inputManipulator($item, $order->business, $channel));
             }
             return $order->items;
         });

@@ -5,14 +5,26 @@ use App\Http\Controllers\Api\V1\Business\BusinessStaffController;
 use App\Http\Controllers\Api\V1\Business\BusinessStaffRoleController;
 use App\Http\Controllers\Api\V1\Business\BusinessTypeController;
 use App\Http\Controllers\Api\V1\Business\BusinessMenuSettingsController;
+use App\Http\Controllers\Api\V1\Business\TimezoneController;
 use App\Http\Controllers\Api\V1\Business\ComplianceDocumentController;
 use App\Http\Controllers\Api\V1\Section\ServiceAreaController;
+use App\Http\Controllers\Api\V1\Menu\MenuManagementController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('business-types', [BusinessTypeController::class, 'index']);
 Route::get('business-staff-roles', [BusinessStaffRoleController::class, 'index']);
+Route::get('timezones', [TimezoneController::class, 'index']);
 
 Route::group(['prefix' => 'businesses'], function () {
+    Route::get('{business}/menu-management', [MenuManagementController::class, 'index']);
+    Route::post('{business}/menu-management/categories', [MenuManagementController::class, 'storeCategory']);
+    Route::put('{business}/menu-management/categories/{category}', [MenuManagementController::class, 'updateCategory']);
+    Route::post('{business}/menu-management/items', [MenuManagementController::class, 'storeItem']);
+    Route::put('{business}/menu-management/items/{item}', [MenuManagementController::class, 'updateItem']);
+    Route::post('{business}/menu-management/promotions', [MenuManagementController::class, 'storePromotion']);
+    Route::get('{business}/menu-management/promotions/history', [MenuManagementController::class, 'promotionHistory']);
+    Route::put('{business}/menu-management/promotions/{promotion}', [MenuManagementController::class, 'updatePromotion']);
+    Route::post('{business}/menu-management/promotions/{promotion}/reactivate', [MenuManagementController::class, 'reactivatePromotion']);
     Route::get('{business}/menu-settings', [BusinessMenuSettingsController::class, 'show']);
     Route::put('{business}/menu-settings', [BusinessMenuSettingsController::class, 'update']);
     Route::get('{business}/service-areas', [ServiceAreaController::class, 'index']);

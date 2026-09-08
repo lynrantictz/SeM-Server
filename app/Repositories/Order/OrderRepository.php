@@ -40,9 +40,9 @@ class OrderRepository extends BaseRepository
     /**
      * Store new order
      */
-    public function store(Code $code, $inputs): object
+    public function store(Code $code, $inputs, string $channel = 'dine_in'): object
     {
-        return DB::transaction(function () use ($code, $inputs) {
+        return DB::transaction(function () use ($code, $inputs, $channel) {
             // Lock the business row for update to prevent race conditions
             $business = $code->codable->business()->lockForUpdate()->first();
             // Increment the order number
@@ -58,10 +58,11 @@ class OrderRepository extends BaseRepository
             //create order
             $order = $code->orders()->create(array_merge(
                 $this->inputManipulator($code, $inputs),
-                ['number' => $orderNumber]
+                ['number' => $orderNumber, 'channel' => $channel]
             ));
             // create order items
-            (new OrderItemRepository())->store($order, $inputs['items']);
+            $business->load('promotions');
+            (new OrderItemRepository())->store($order, $inputs['items'], $channel);
             //calculate total amount
             $order_total_amount = $order->items()->sum('total_amount');
             $taxCalculator = $this->calculateTax($business->district->city->country, $order_total_amount);

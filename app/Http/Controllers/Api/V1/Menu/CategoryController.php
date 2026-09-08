@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Menu;
 
 use App\Http\Controllers\Api\BaseController;
+use App\Models\Business\OrderingChannel;
 use App\Http\Controllers\Controller;
 use App\Models\Order\Order;
 use App\Models\Section\Code;
@@ -22,6 +23,8 @@ class CategoryController extends BaseController
 
     public function getMenu(Request $request)
     {
+        $channel = $request->query('channel', 'dine_in');
+        abort_unless(in_array($channel, OrderingChannel::activeSlugs(), true), HTTP_UNPROCESSABLE_ENTITY, 'The ordering channel is invalid.');
         $codeParam = $request->query('c');
         //check if code is valid
         $code = Code::query()->where('code', $codeParam)->first();
@@ -39,7 +42,8 @@ class CategoryController extends BaseController
             'business.vendor',
             'business.district',
             'business.district.city',
-            'business.district.city.country'
+            'business.district.city.country',
+            'business.promotions'
         ];
 
         if ($code->codable instanceof \App\Models\Section\ServicePoint) {
@@ -56,8 +60,8 @@ class CategoryController extends BaseController
             return $this->sendError('This business is not currently accepting orders.', [], HTTP_NOT_FOUND);
         }
         $business = $code->codable->business;
-        if (!$business->dine_in_enabled) {
-            return $this->sendError('QR dine-in ordering is not enabled for this business.', [], HTTP_UNPROCESSABLE_ENTITY);
+        if (!$this->channelEnabled($business, $channel)) {
+            return $this->sendError('This ordering channel is not enabled for this business.', ['channel' => $channel], HTTP_UNPROCESSABLE_ENTITY);
         }
         $availability = app(MenuAvailabilityService::class);
         $businessStatus = $availability->businessStatus($business);
@@ -66,6 +70,7 @@ class CategoryController extends BaseController
         }
 
         $menu = $business->categories()->with([
+            'availabilityRules.days',
             'items' => function ($query) {
                 $query->where('is_active', true)->where('is_sold_out', false)->with('availabilityRules.days');
             },
@@ -73,22 +78,36 @@ class CategoryController extends BaseController
             ->where('is_active', true)
             ->orderBy('categories.name', 'ASC')
             ->get()
-            ->map(function ($category) use ($availability, $business) {
-                $category->setRelation('items', $category->items->filter(function ($item) use ($availability, $business) {
-                    $status = $availability->itemStatus($item, $business);
+            ->map(function ($category) use ($availability, $business, $channel) {
+                $categoryStatus = $availability->categoryStatus($category, $business, $channel);
+                $category->setRelation('items', $category->items->filter(function ($item) use ($availability, $business, $channel) {
+                    $status = $availability->itemStatus($item, $business, $channel);
+                    $pricing = $availability->itemPricing($item, $business, $channel);
+                    $item->setAttribute('discount', $pricing['discount_percentage']);
+                    $item->setAttribute('discount_percentage', $pricing['discount_percentage']);
+                    $item->setAttribute('final_price', $pricing['final_price']);
+                    $item->setAttribute('discount_amount', $pricing['discount_amount']);
                     $item->setAttribute('availability', $status);
                     return $status['is_available_now'];
                 })->values());
+                $category->setAttribute('availability', $categoryStatus);
                 return $category;
             })
-            ->filter(fn ($category) => $category->items->isNotEmpty())
+            ->filter(fn ($category) => $category->getAttribute('availability')['is_available_now'] && $category->items->isNotEmpty())
             ->values();
 
         $data['code'] = $codable;
         $data['menu'] = $menu;
         $data['menu_status'] = $businessStatus;
+        $data['channel'] = $channel;
 
         return $this->sendResponse($data, 'Menu retrieved successfully', HTTP_OK);
+    }
+
+    private function channelEnabled($business, string $channel): bool
+    {
+        $setting = $business->orderingChannels()->where('slug', $channel)->where('ordering_channels.is_active', true)->first();
+        return $setting ? (bool) $setting->pivot->is_enabled : false;
     }
 
     /**

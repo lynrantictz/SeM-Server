@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Order;
 use App\Exceptions\InvalidPhoneNumberException;
 use App\Http\Controllers\Api\V1\Order\Trait\PhoneVerificationTrait;
 use App\Http\Controllers\Api\BaseController;
+use App\Models\Business\OrderingChannel;
 use App\Http\Requests\Order\ChangePhoneNumberRequest;
 use App\Http\Requests\Order\OrderRequest;
 use App\Http\Requests\Order\PhoneVerifyRequest;
@@ -57,6 +58,10 @@ class OrderController extends BaseController
      */
     public function store(OrderRequest $request)
     {
+        $channel = $request->input('channel', 'dine_in');
+        if (!in_array($channel, OrderingChannel::activeSlugs(), true)) {
+            return $this->sendError('The ordering channel is invalid.', ['channel' => $channel], HTTP_UNPROCESSABLE_ENTITY);
+        }
         //check if code exist
         $code = Code::query()->whereCode($request->input('code'))->first();
         if (!$code) {
@@ -70,8 +75,8 @@ class OrderController extends BaseController
         if (!$code->codable->business->is_active) {
             return $this->sendError('Business is disabled. contact a hotel/restaurant', [], HTTP_NOT_FOUND);
         }
-        if (!$code->codable->business->dine_in_enabled) {
-            return $this->sendError('QR dine-in ordering is not enabled for this business.', [], HTTP_UNPROCESSABLE_ENTITY);
+        if (!$this->channelEnabled($code->codable->business, $channel)) {
+            return $this->sendError('This ordering channel is not enabled for this business.', ['channel' => $channel], HTTP_UNPROCESSABLE_ENTITY);
         }
         if ($code->codable instanceof \App\Models\Section\ServicePoint && !$code->codable->is_active) {
             return $this->sendError('This table, room, or service point is not currently accepting orders.', [], HTTP_UNPROCESSABLE_ENTITY);
@@ -81,7 +86,7 @@ class OrderController extends BaseController
             return $this->sendError($businessStatus['reason'], ['menu_status' => $businessStatus], HTTP_UNPROCESSABLE_ENTITY);
         }
         try {
-            $order = $this->orders->store($code, $request->except('code'));
+            $order = $this->orders->store($code, $request->except('code'), $channel);
         } catch (InvalidPhoneNumberException $exception) {
             return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
         } catch (ValidationException $exception) {
@@ -90,6 +95,12 @@ class OrderController extends BaseController
 
         $data['order'] = $order;
         return $this->sendResponse($data, 'Order Placed successfully', HTTP_OK);
+    }
+
+    private function channelEnabled($business, string $channel): bool
+    {
+        $setting = $business->orderingChannels()->where('slug', $channel)->where('ordering_channels.is_active', true)->first();
+        return $setting ? (bool) $setting->pivot->is_enabled : false;
     }
 
     /**
