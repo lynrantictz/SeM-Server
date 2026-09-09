@@ -38,6 +38,8 @@ class OrderRequest extends FormRequest
                     'items.*.uuid' => ['required', 'uuid'],
                     'items.*.quantity' => ['required', 'integer', 'min:1', 'max:100'],
                     'items.*.comment' => ['nullable', 'string', 'max:500'],
+                    'items.*.options' => ['nullable', 'array'],
+                    'items.*.options.*.uuid' => ['required', 'uuid'],
                 ];
                 break;
         }

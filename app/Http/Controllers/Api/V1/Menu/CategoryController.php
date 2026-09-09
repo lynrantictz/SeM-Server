@@ -72,7 +72,11 @@ class CategoryController extends BaseController
         $menu = $business->categories()->with([
             'availabilityRules.days',
             'items' => function ($query) {
-                $query->where('is_active', true)->where('is_sold_out', false)->with('availabilityRules.days');
+                $query->where('is_active', true)->where('is_sold_out', false)
+                    ->with([
+                        'availabilityRules.days',
+                        'optionGroups' => fn ($groups) => $groups->where('is_active', true)->with(['options' => fn ($options) => $options->where('is_active', true)]),
+                    ]);
             },
         ])
             ->where('is_active', true)

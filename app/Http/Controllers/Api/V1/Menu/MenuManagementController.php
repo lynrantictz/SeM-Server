@@ -40,7 +40,7 @@ class MenuManagementController extends BaseController
             ->when(($data['status'] ?? 'all') === 'active', fn ($query) => $query->where('is_active', true)->where('is_sold_out', false))
             ->when(($data['status'] ?? 'all') === 'hidden', fn ($query) => $query->where('is_active', false))
             ->when(($data['status'] ?? 'all') === 'sold_out', fn ($query) => $query->where('is_sold_out', true))
-            ->with(['category:id,uuid,name,is_active', 'discountRules', 'availabilityRules.days'])
+            ->with(['category:id,uuid,name,is_active', 'discountRules', 'availabilityRules.days', 'optionGroups.options'])
             ->when($term !== '', fn ($query) => $query->where(fn ($q) => $q->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($term) . '%'])->orWhereHas('category', fn ($category) => $category->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($term) . '%']))))
             ->orderByDesc('created_at')->paginate($data['per_page'] ?? 10);
         $availability = app(MenuAvailabilityService::class);
@@ -98,11 +98,14 @@ class MenuManagementController extends BaseController
         $category = Category::query()->whereKey($data['category_id'])->where('business_id', $business->id)->firstOrFail();
         $discountRules = $data['channel_discounts'] ?? null;
         $availability = $data['availability'] ?? null;
+        $options = $data['option_groups'] ?? null;
         unset($data['channel_discounts']);
         unset($data['availability']);
+        unset($data['option_groups']);
         $item = Item::query()->create($data + ['category_id' => $category->id, 'final_price' => $this->finalPrice($data)]);
         $this->syncItemDiscounts($item, $discountRules);
         $this->syncItemAvailability($item, $availability);
+        $this->syncItemOptions($item, $options);
         return $this->sendResponse(['item' => $item->load('category')], 'Menu item created successfully.', HTTP_CREATED);
     }
 
@@ -113,13 +116,16 @@ class MenuManagementController extends BaseController
         $data = $this->itemData($request, true);
         $discountRules = $data['channel_discounts'] ?? null;
         $availability = $data['availability'] ?? null;
+        $options = $data['option_groups'] ?? null;
         unset($data['channel_discounts']);
         unset($data['availability']);
+        unset($data['option_groups']);
         if (isset($data['category_id'])) Category::query()->whereKey($data['category_id'])->where('business_id', $business->id)->firstOrFail();
         $merged = array_merge($item->only(['price', 'discount']), $data);
         $item->update($data + ['final_price' => $this->finalPrice($merged)]);
         if ($discountRules !== null) $this->syncItemDiscounts($item, $discountRules);
         if (array_key_exists('availability', $request->all())) $this->syncItemAvailability($item, $availability);
+        if (array_key_exists('option_groups', $request->all())) $this->syncItemOptions($item, $options);
         return $this->sendResponse(['item' => $item->fresh()->load('category')], 'Menu item updated successfully.');
     }
 
@@ -184,6 +190,19 @@ class MenuManagementController extends BaseController
             'currency' => ['sometimes', 'string', 'size:3'],
             'is_active' => ['sometimes', 'boolean'],
             'is_sold_out' => ['sometimes', 'boolean'],
+            'option_groups' => ['nullable', 'array'],
+            'option_groups.*.name' => ['required', 'string', 'max:120'],
+            'option_groups.*.selection_type' => ['required', Rule::in(['single', 'multiple'])],
+            'option_groups.*.is_required' => ['sometimes', 'boolean'],
+            'option_groups.*.min_selections' => ['sometimes', 'integer', 'min:0', 'max:50'],
+            'option_groups.*.max_selections' => ['nullable', 'integer', 'min:1', 'max:50'],
+            'option_groups.*.sort_order' => ['sometimes', 'integer', 'min:0'],
+            'option_groups.*.is_active' => ['sometimes', 'boolean'],
+            'option_groups.*.options' => ['required', 'array', 'min:1'],
+            'option_groups.*.options.*.name' => ['required', 'string', 'max:120'],
+            'option_groups.*.options.*.price_adjustment' => ['sometimes', 'numeric', 'min:0'],
+            'option_groups.*.options.*.sort_order' => ['sometimes', 'integer', 'min:0'],
+            'option_groups.*.options.*.is_active' => ['sometimes', 'boolean'],
             'availability' => ['nullable', 'array'],
             'availability.channel' => ['nullable', Rule::in(OrderingChannel::activeSlugs())],
             'availability.channels' => ['nullable', 'array', 'min:1'],
@@ -213,6 +232,31 @@ class MenuManagementController extends BaseController
                 'ends_at' => $rule['ends_at'] ?? null,
                 'is_active' => $rule['is_active'] ?? true,
             ]);
+        }
+    }
+
+    private function syncItemOptions(Item $item, ?array $groups): void
+    {
+        $item->optionGroups()->with('options')->get()->each(fn ($group) => $group->options()->delete());
+        $item->optionGroups()->delete();
+        foreach ($groups ?? [] as $groupIndex => $groupData) {
+            $group = $item->optionGroups()->create([
+                'name' => $groupData['name'],
+                'selection_type' => $groupData['selection_type'],
+                'is_required' => $groupData['is_required'] ?? false,
+                'min_selections' => $groupData['min_selections'] ?? (($groupData['is_required'] ?? false) ? 1 : 0),
+                'max_selections' => $groupData['max_selections'] ?? ($groupData['selection_type'] === 'single' ? 1 : null),
+                'sort_order' => $groupData['sort_order'] ?? $groupIndex,
+                'is_active' => $groupData['is_active'] ?? true,
+            ]);
+            foreach ($groupData['options'] as $optionIndex => $optionData) {
+                $group->options()->create([
+                    'name' => $optionData['name'],
+                    'price_adjustment' => $optionData['price_adjustment'] ?? 0,
+                    'sort_order' => $optionData['sort_order'] ?? $optionIndex,
+                    'is_active' => $optionData['is_active'] ?? true,
+                ]);
+            }
         }
     }
 

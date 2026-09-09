@@ -122,7 +122,7 @@ class OrderController extends BaseController
             'status',
             'paymentMethod',
             'paymentStatus',
-            'items',
+            'items.options',
             'items.item',
             'customerVerification',
             'payment',

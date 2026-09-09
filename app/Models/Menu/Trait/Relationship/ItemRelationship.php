@@ -6,6 +6,7 @@ use App\Models\Menu\Category;
 use App\Models\Menu\ItemPrice;
 use App\Models\Menu\ItemAvailabilityRule;
 use App\Models\Menu\ItemDiscountRule;
+use App\Models\Menu\ItemOptionGroup;
 
 trait ItemRelationship
 {
@@ -27,5 +28,10 @@ trait ItemRelationship
     public function discountRules()
     {
         return $this->hasMany(ItemDiscountRule::class);
+    }
+
+    public function optionGroups()
+    {
+        return $this->hasMany(ItemOptionGroup::class)->orderBy('sort_order');
     }
 }

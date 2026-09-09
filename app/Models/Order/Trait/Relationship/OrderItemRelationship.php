@@ -4,6 +4,7 @@ namespace App\Models\Order\Trait\Relationship;
 
 use App\Models\Menu\Item;
 use App\Models\Order\Order;
+use App\Models\Order\OrderItemOption;
 
 trait OrderItemRelationship
 {
@@ -16,6 +17,11 @@ trait OrderItemRelationship
     public function item()
     {
         return $this->belongsTo(Item::class);
+    }
+
+    public function options()
+    {
+        return $this->hasMany(OrderItemOption::class);
     }
 
 }
