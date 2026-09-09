@@ -45,7 +45,9 @@ class CodeController extends BaseController
             'c' => $code->code,
             'channel' => $channel,
         ]);
-        $qrCode = QrCode::size(300)->generate($url);
+        // The printed card places the Paperstick mark over the centre of the QR.
+        // Use the highest correction level so the branded mark does not reduce scan reliability.
+        $qrCode = QrCode::errorCorrection('H')->size(300)->generate($url);
 
         return response($qrCode, 200, ['Content-Type' => 'image/svg+xml']);
     }

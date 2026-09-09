@@ -9,6 +9,7 @@ use App\Models\Menu\Category;
 use App\Models\Menu\Item;
 use App\Models\Business\BusinessPromotion;
 use App\Models\Business\BusinessPromotionAudit;
+use App\Services\MenuAvailabilityService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -17,14 +18,55 @@ class MenuManagementController extends BaseController
     public function index(Request $request, Business $business)
     {
         $this->authorizeManage($business);
-        $data = $request->validate(['search' => ['nullable', 'string', 'max:100'], 'per_page' => ['nullable', 'integer', 'in:10,25,50']]);
+        $data = $request->validate([
+            'search' => ['nullable', 'string', 'max:100'],
+            'per_page' => ['nullable', 'integer', 'in:10,25,50'],
+            'channel' => ['nullable', 'string', 'max:24'],
+            'category_id' => ['nullable', 'integer'],
+            'status' => ['nullable', 'in:all,active,hidden,sold_out'],
+        ]);
+        $orderingChannels = $business->orderingChannels()
+            ->where('ordering_channels.is_active', true)
+            ->wherePivot('is_enabled', true)
+            ->orderBy('ordering_channels.sort_order')
+            ->get(['ordering_channels.slug', 'ordering_channels.name', 'ordering_channels.description']);
+        $channel = (string) ($data['channel'] ?? $orderingChannels->first()?->slug ?? 'dine_in');
+        abort_unless($orderingChannels->contains('slug', $channel), HTTP_UNPROCESSABLE_ENTITY, 'The selected ordering channel is not enabled for this business.');
         $term = trim((string) ($data['search'] ?? ''));
-        $items = Item::query()->whereHas('category', fn ($query) => $query->where('business_id', $business->id))
+        $items = Item::query()->whereHas('category', function ($query) use ($business, $data) {
+                $query->where('business_id', $business->id)
+                    ->when(isset($data['category_id']), fn ($category) => $category->whereKey($data['category_id']));
+            })
+            ->when(($data['status'] ?? 'all') === 'active', fn ($query) => $query->where('is_active', true)->where('is_sold_out', false))
+            ->when(($data['status'] ?? 'all') === 'hidden', fn ($query) => $query->where('is_active', false))
+            ->when(($data['status'] ?? 'all') === 'sold_out', fn ($query) => $query->where('is_sold_out', true))
             ->with(['category:id,uuid,name,is_active', 'discountRules', 'availabilityRules.days'])
             ->when($term !== '', fn ($query) => $query->where(fn ($q) => $q->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($term) . '%'])->orWhereHas('category', fn ($category) => $category->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($term) . '%']))))
             ->orderByDesc('created_at')->paginate($data['per_page'] ?? 10);
+        $availability = app(MenuAvailabilityService::class);
+        $business->load(['promotions' => fn ($query) => $query->where('is_active', true)]);
+        $items->getCollection()->transform(function (Item $item) use ($availability, $business, $channel) {
+            $pricing = $availability->itemPricing($item, $business, $channel);
+            $status = $availability->itemStatus($item, $business, $channel);
+            $rules = $item->availabilityRules->where('is_active', true)->where('channel', $channel)->values();
+            $days = $rules->flatMap(fn ($rule) => $rule->days->pluck('day_of_week'))->unique()->sort()->values()->all();
+            $firstRule = $rules->first();
+            $item->setAttribute('pricing', $pricing + ['channel' => $channel]);
+            $item->setAttribute('availability_summary', [
+                'has_schedule' => $rules->isNotEmpty(),
+                'days' => $days,
+                'from_date' => $firstRule?->available_from_date?->toDateString(),
+                'to_date' => $firstRule?->available_to_date?->toDateString(),
+                'starts_at' => $firstRule?->starts_at,
+                'ends_at' => $firstRule?->ends_at,
+                'is_available_now' => $status['is_available_now'],
+                'reason' => $status['reason'],
+            ]);
+            return $item;
+        });
         return $this->sendResponse([
             'categories' => Category::query()->where('business_id', $business->id)->with('availabilityRules.days')->orderBy('name')->get(['id','uuid','name','is_active']),
+            'ordering_channels' => $orderingChannels->values(),
             'items' => $this->paginator($items),
             'promotion' => $business->promotions()->where('is_active', true)->orderByDesc('priority')->first(),
         ], 'Menu retrieved successfully.');
