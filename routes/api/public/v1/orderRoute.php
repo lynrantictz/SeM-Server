@@ -11,7 +11,11 @@ Route::post('order-history/verification/confirm', [OrderController::class, 'veri
 Route::get('phone/{phone}/verify', [OrderController::class, 'getOrdersByPhone']);
 
 Route::group(['prefix' => 'orders'], function () {
-   Route::post('', [OrderController::class, 'store']);
+   Route::post('', [OrderController::class, 'store'])->middleware('throttle:5,1');
+   Route::post('active', [OrderController::class, 'activeGuestOrders'])->middleware('throttle:30,1');
+   Route::get('checkout-verifications/{uuid}', [OrderController::class, 'resumeCheckoutVerification'])->middleware('throttle:10,1');
+   Route::post('checkout-verifications/{uuid}/confirm', [OrderController::class, 'confirmCheckoutVerification'])->middleware('throttle:10,1');
+   Route::post('checkout-verifications/{uuid}/resend', [OrderController::class, 'resendCheckoutVerification'])->middleware('throttle:3,1');
    Route::get('{number}', [OrderController::class, 'show']);
    Route::put('{order}/verify-phone', [OrderController::class, 'verifyPhone']);
    Route::post('{order}/resend-phone-verification-code', [OrderController::class, 'resendPhoneVerificationCode']);

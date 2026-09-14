@@ -6,13 +6,16 @@ use App\Exceptions\InvalidPhoneNumberException;
 use App\Http\Controllers\Api\V1\Order\Trait\PhoneVerificationTrait;
 use App\Http\Controllers\Api\BaseController;
 use App\Models\Business\OrderingChannel;
+use App\Models\Business\Business;
 use App\Http\Requests\Order\ChangePhoneNumberRequest;
 use App\Http\Requests\Order\OrderRequest;
 use App\Http\Requests\Order\PhoneVerifyRequest;
 use App\Http\Requests\Order\SendOrderHistoryVerificationRequest;
 use App\Http\Requests\Order\VerifyOrderHistoryVerificationRequest;
 use App\Models\Order\Order;
+use App\Models\Order\OrderCheckoutVerification;
 use App\Models\Order\OrderHistoryVerification;
+use App\Models\Order\OrderCustomerSession;
 use App\Models\Section\Code;
 use App\Repositories\Customer\CustomerRepository;
 use App\Repositories\Order\OrderRepository;
@@ -20,9 +23,11 @@ use App\Services\PhoneNumberNormalizer;
 use App\Services\MenuAvailabilityService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Validator;
 
 class OrderController extends BaseController
 {
@@ -59,42 +64,338 @@ class OrderController extends BaseController
     public function store(OrderRequest $request)
     {
         $channel = $request->input('channel', 'dine_in');
-        if (!in_array($channel, OrderingChannel::activeSlugs(), true)) {
-            return $this->sendError('The ordering channel is invalid.', ['channel' => $channel], HTTP_UNPROCESSABLE_ENTITY);
-        }
-        //check if code exist
-        $code = Code::query()->whereCode($request->input('code'))->first();
+        $code = Code::query()
+            ->with('codable.business.district.city.country')
+            ->whereCode($request->input('code'))
+            ->first();
         if (!$code) {
             return $this->sendError('code not found', [], HTTP_NOT_FOUND);
         }
-        // check if code is active
-        if (!$code->is_active) {
-            return $this->sendError('code is disabled. contact a hotel/restaurant', [], HTTP_NOT_FOUND);
+        if (!in_array($channel, OrderingChannel::activeSlugs(), true)) {
+            return $this->sendError('The ordering channel is invalid.', ['channel' => $channel], HTTP_UNPROCESSABLE_ENTITY);
         }
-        // check if business is active
-        if (!$code->codable->business->is_active) {
-            return $this->sendError('Business is disabled. contact a hotel/restaurant', [], HTTP_NOT_FOUND);
+        if ($reason = $this->checkoutUnavailableReason($code, $channel)) {
+            return $this->sendError($reason, [], HTTP_UNPROCESSABLE_ENTITY);
         }
-        if (!$this->channelEnabled($code->codable->business, $channel)) {
-            return $this->sendError('This ordering channel is not enabled for this business.', ['channel' => $channel], HTTP_UNPROCESSABLE_ENTITY);
-        }
-        if ($code->codable instanceof \App\Models\Section\ServicePoint && !$code->codable->is_active) {
-            return $this->sendError('This table, room, or service point is not currently accepting orders.', [], HTTP_UNPROCESSABLE_ENTITY);
-        }
-        $businessStatus = app(MenuAvailabilityService::class)->businessStatus($code->codable->business);
-        if (!$businessStatus['is_open_now']) {
-            return $this->sendError($businessStatus['reason'], ['menu_status' => $businessStatus], HTTP_UNPROCESSABLE_ENTITY);
-        }
+
         try {
-            $order = $this->orders->store($code, $request->except('code'), $channel);
+            $businessCountry = $code->codable->business->district?->city?->country?->iso2;
+            $phone = (new PhoneNumberNormalizer())->normalize($request->input('phone'), $businessCountry);
+        } catch (InvalidPhoneNumberException $exception) {
+            return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        // No WhatsApp/SMS provider is configured in this application yet.
+        // In local development, expose the OTP only through the Laravel log.
+        if (!app()->environment(['local', 'testing'])) {
+            return $this->sendError('Phone verification delivery is not configured. The order was not created.', [], 503);
+        }
+
+        $otp = (string) random_int(1000, 9999);
+        $checkout = OrderCheckoutVerification::create([
+            'code_id' => $code->id,
+            'channel' => $channel,
+            'phone' => $phone,
+            'checkout_payload' => [
+                'items' => collect($request->input('items'))->map(fn (array $item) => [
+                    'uuid' => $item['uuid'],
+                    'quantity' => $item['quantity'],
+                    'comment' => $item['comment'] ?? null,
+                    'options' => collect($item['options'] ?? [])->map(fn ($option) => [
+                        'uuid' => is_array($option) ? $option['uuid'] : $option,
+                    ])->values()->all(),
+                ])->values()->all(),
+            ],
+            'verification_code' => Hash::make($otp),
+            'code_sent_at' => now(),
+            'expires_at' => now()->addMinutes(10),
+        ]);
+
+        Log::info('Order checkout verification code (local testing only)', [
+            'checkout_uuid' => $checkout->uuid,
+            'otp' => $otp,
+        ]);
+
+        return $this->sendResponse([
+            'verification' => [
+                'uuid' => $checkout->uuid,
+                'expires_at' => $checkout->expires_at,
+                'session_expires_at' => $checkout->created_at->copy()->addMinutes(30),
+            ],
+        ], 'Verification code generated. Check the Laravel log during local testing.', HTTP_OK);
+    }
+
+    public function confirmCheckoutVerification(PhoneVerifyRequest $request, string $uuid)
+    {
+        try {
+            $result = DB::transaction(function () use ($request, $uuid) {
+                $checkout = OrderCheckoutVerification::query()
+                    ->where('uuid', $uuid)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$checkout) {
+                    return ['error' => 'Checkout verification was not found. Please start checkout again.', 'status' => HTTP_NOT_FOUND];
+                }
+                // Make a successful confirmation safe to retry if the browser
+                // did not receive the first response.
+                if ($checkout->order_id && Hash::check($request->input('otp'), $checkout->verification_code)) {
+                    $completedOrder = Order::query()->find($checkout->order_id);
+                    return $completedOrder
+                        ? ['order' => $completedOrder, 'guest_session' => $this->issueGuestOrderSession((int) $completedOrder->customer_id, (int) $completedOrder->business_id)]
+                        : ['error' => 'The order linked to this verification could not be found.', 'status' => HTTP_NOT_FOUND];
+                }
+                if ($checkout->created_at->copy()->addMinutes(30)->isPast()) {
+                    return ['error' => 'This checkout session has expired. Start checkout again.', 'status' => 410];
+                }
+                if ($checkout->expires_at->isPast()) {
+                    return ['error' => 'This verification code has expired. Request a new code.', 'status' => 410];
+                }
+                if ($checkout->attempts >= 5) {
+                    return ['error' => 'Too many incorrect codes. Request a new code to continue.', 'status' => 429];
+                }
+                if (!Hash::check($request->input('otp'), $checkout->verification_code)) {
+                    $checkout->increment('attempts');
+                    return ['error' => 'The verification code is incorrect.', 'status' => HTTP_BAD_REQUEST];
+                }
+
+                $code = Code::query()
+                    ->with('codable.business.district.city.country')
+                    ->find($checkout->code_id);
+                if (!$code) {
+                    return ['error' => 'This menu is no longer available. Please scan its QR code again.', 'status' => HTTP_UNPROCESSABLE_ENTITY];
+                }
+
+                if ($reason = $this->checkoutUnavailableReason($code, $checkout->channel)) {
+                    return ['error' => $reason, 'status' => HTTP_UNPROCESSABLE_ENTITY];
+                }
+
+                $payload = $checkout->checkout_payload;
+                $payload['phone'] = $checkout->phone;
+                $order = $this->orders->store($code, $payload, $checkout->channel);
+                $order->forceFill(['phone_verified_at' => now()])->save();
+
+                $checkout->forceFill([
+                    'verified_at' => now(),
+                    'order_id' => $order->id,
+                    'customer_id' => $order->customer_id,
+                    // The canonical phone now lives on customers. Keep the
+                    // checkout row free of copied personal data after OTP.
+                    'phone' => null,
+                ])->save();
+
+                return [
+                    'order' => $order->fresh(),
+                    'guest_session' => $this->issueGuestOrderSession((int) $order->customer_id, (int) $order->business_id),
+                ];
+            });
         } catch (InvalidPhoneNumberException $exception) {
             return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
         } catch (ValidationException $exception) {
-            return $this->sendError('One or more menu items cannot be ordered.', $exception->errors(), HTTP_UNPROCESSABLE_ENTITY);
+            return $this->sendError('One or more menu items can no longer be ordered.', $exception->errors(), HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $data['order'] = $order;
-        return $this->sendResponse($data, 'Order Placed successfully', HTTP_OK);
+        if (isset($result['error'])) {
+            return $this->sendError($result['error'], [], $result['status']);
+        }
+
+        return $this->sendResponse(
+            ['order' => $result['order'], 'guest_session' => $result['guest_session']],
+            'Phone verified. Your order has been sent to the business and is waiting for approval.',
+            HTTP_OK
+        );
+    }
+
+    /**
+     * List a verified guest's active orders for only the currently scanned business.
+     */
+    public function activeGuestOrders(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'business_uuid' => ['required', 'uuid'],
+            'access_token' => ['required', 'string', 'max:160'],
+        ]);
+        if ($validator->fails()) {
+            return $this->sendError('Valid business and verified session are required.', $validator->errors(), HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        [$sessionUuid, $secret] = array_pad(explode('.', $request->input('access_token'), 2), 2, null);
+        $session = $secret
+            ? OrderCustomerSession::query()->where('uuid', $sessionUuid)->where('expires_at', '>', now())->first()
+            : null;
+        if (!$session || !Hash::check($secret, $session->token_hash)) {
+            return $this->sendError('Your order session has expired. Verify your phone again to view active orders.', [], HTTP_UNAUTHORIZED);
+        }
+
+        $business = Business::query()->where('uuid', $request->input('business_uuid'))->first();
+        if (!$business) {
+            return $this->sendError('Business not found.', [], HTTP_NOT_FOUND);
+        }
+        if ((int) $session->business_id !== (int) $business->id) {
+            return $this->sendError('This verified order session belongs to a different business.', [], HTTP_FORBIDDEN);
+        }
+
+        $orders = Order::query()
+            ->with(['status', 'paymentStatus', 'items.item'])
+            ->where('business_id', $business->id)
+            ->where('customer_id', $session->customer_id)
+            ->where(function ($query) {
+                $query->whereHas('status', fn ($status) => $status->whereIn('name', ['Pending', 'Processing']))
+                    ->orWhere(function ($awaitingPayment) {
+                        $awaitingPayment
+                            ->whereHas('paymentStatus', fn ($payment) => $payment->where('name', 'Pending'))
+                            ->whereDoesntHave('status', fn ($status) => $status->whereIn('name', ['Cancelled', 'Refunded']));
+                    });
+            })
+            ->latest('created_at')
+            ->limit(10)
+            ->get()
+            ->map(fn (Order $order) => [
+                'uuid' => $order->uuid,
+                'number' => $order->number,
+                'status' => $order->status?->name ?? 'Pending',
+                'payment_status' => $order->paymentStatus?->name ?? 'Pending',
+                'total_amount' => $order->total_amount,
+                'currency' => $business->currency ?? 'TZS',
+                'created_at' => $order->created_at,
+                'items' => $order->items->map(fn ($item) => [
+                    'name' => $item->item?->name ?? 'Menu item',
+                    'quantity' => $item->quantity,
+                ])->values(),
+            ])->values();
+
+        return $this->sendResponse(['orders' => $orders], 'Active orders retrieved successfully.', HTTP_OK);
+    }
+
+    private function issueGuestOrderSession(int $customerId, int $businessId): array
+    {
+        $secret = Str::random(48);
+        $session = OrderCustomerSession::query()->create([
+            'business_id' => $businessId,
+            'customer_id' => $customerId,
+            'token_hash' => Hash::make($secret),
+            'expires_at' => now()->addDays(7),
+        ]);
+
+        return [
+            'access_token' => $session->uuid . '.' . $secret,
+            'expires_at' => $session->expires_at,
+        ];
+    }
+
+    public function resendCheckoutVerification(string $uuid)
+    {
+        $checkout = OrderCheckoutVerification::query()->where('uuid', $uuid)->first();
+        if (!$checkout) {
+            return $this->sendError('Checkout verification was not found.', [], HTTP_NOT_FOUND);
+        }
+        if ($checkout->order_id || $checkout->verified_at) {
+            return $this->sendError('This checkout has already been verified.', [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+        if ($checkout->created_at->copy()->addMinutes(30)->isPast()) {
+            return $this->sendError('This checkout has expired. Please start checkout again.', [], 410);
+        }
+        $resendAvailableAt = ($checkout->code_sent_at ?? $checkout->created_at)->copy()->addSeconds(20);
+        if (now()->lt($resendAvailableAt)) {
+            $seconds = max(1, $resendAvailableAt->getTimestamp() - now()->getTimestamp());
+            return $this->sendError("Please wait {$seconds} seconds before requesting another code.", [], 429);
+        }
+        if ($checkout->resend_count >= 3) {
+            return $this->sendError('You have reached the resend limit. Please start checkout again later.', [], 429);
+        }
+
+        $otp = (string) random_int(1000, 9999);
+        $checkout->update([
+            'verification_code' => Hash::make($otp),
+            'code_sent_at' => now(),
+            'attempts' => 0,
+            'resend_count' => $checkout->resend_count + 1,
+            'expires_at' => now()->addMinutes(10),
+        ]);
+        Log::info('Order checkout verification code resent (local testing only)', [
+            'checkout_uuid' => $checkout->uuid,
+            'otp' => $otp,
+        ]);
+
+        return $this->sendResponse([
+            'resend_available_at' => now()->addSeconds(20),
+        ], 'Verification code generated. Check the Laravel log during local testing.', HTTP_OK);
+    }
+
+    public function resumeCheckoutVerification(string $uuid)
+    {
+        $checkout = OrderCheckoutVerification::query()->where('uuid', $uuid)->first();
+        if (!$checkout) {
+            return $this->sendError('Checkout verification was not found. Please start checkout again.', [], HTTP_NOT_FOUND);
+        }
+        $code = Code::query()->with('codable.business')->find($checkout->code_id);
+        $businessUuid = $code?->codable?->business?->uuid;
+        if (!$businessUuid) {
+            return $this->sendError('The business for this checkout could not be found. Please scan its QR code again.', [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+        if ($checkout->order_id) {
+            $order = Order::query()->find($checkout->order_id);
+            if ($order) {
+                return $this->sendResponse([
+                    'verification' => [
+                        'completed' => true,
+                        'order_number' => $order->number,
+                        'business_uuid' => $businessUuid,
+                    ],
+                    'guest_session' => $this->issueGuestOrderSession((int) $order->customer_id, (int) $order->business_id),
+                ], 'This checkout was already completed.', HTTP_OK);
+            }
+        }
+        if ($checkout->verified_at) {
+            return $this->sendError('This checkout has already been verified.', [], 409);
+        }
+        if ($checkout->created_at->copy()->addMinutes(30)->isPast()) {
+            return $this->sendError('This checkout has expired. Please start checkout again.', [], 410);
+        }
+
+        $digits = preg_replace('/\\D+/', '', (string) $checkout->phone);
+        $maskedPhone = strlen($digits) > 6
+            ? '+' . substr($digits, 0, 3) . str_repeat('•', strlen($digits) - 6) . substr($digits, -3)
+            : '+' . str_repeat('•', max(0, strlen($digits) - 2)) . substr($digits, -2);
+
+        return $this->sendResponse([
+            'verification' => [
+                'business_uuid' => $businessUuid,
+                'masked_phone' => $maskedPhone,
+                'expires_at' => $checkout->expires_at,
+                'session_expires_at' => $checkout->created_at->copy()->addMinutes(30),
+                'code_expired' => $checkout->expires_at->isPast(),
+                'resend_available_at' => ($checkout->code_sent_at ?? $checkout->created_at)->copy()->addSeconds(20),
+            ],
+        ], 'Pending phone verification restored.', HTTP_OK);
+    }
+
+    private function checkoutUnavailableReason(Code $code, string $channel): ?string
+    {
+        if (!in_array($channel, OrderingChannel::activeSlugs(), true)) {
+            return 'This ordering channel is no longer available.';
+        }
+        if (!$code->is_active) {
+            return 'This menu QR code is disabled. Please contact the business.';
+        }
+
+        $business = $code->codable?->business;
+        if (!$business || !$business->is_active) {
+            return 'This business is currently unavailable.';
+        }
+        if (!$this->channelEnabled($business, $channel)) {
+            return 'This ordering channel is not enabled for this business.';
+        }
+        if ($code->codable instanceof \App\Models\Section\ServicePoint && !$code->codable->is_active) {
+            return 'This table, room, or service point is not currently accepting orders.';
+        }
+
+        $businessStatus = app(MenuAvailabilityService::class)->businessStatus($business);
+        if (!$businessStatus['is_open_now']) {
+            return $businessStatus['reason'];
+        }
+
+        return null;
     }
 
     private function channelEnabled($business, string $channel): bool

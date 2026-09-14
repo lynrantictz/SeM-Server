@@ -74,7 +74,6 @@ class OrderRepository extends BaseRepository
              */
             $order->update($taxCalculator);
 
-            (new OrderCustomerVerificationRepository())->storeOrUpdatePhone($order);
             return $order;
         });
     }

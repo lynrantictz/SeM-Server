@@ -3,6 +3,8 @@
 use Illuminate\Foundation\Inspiring;
 use App\Exceptions\InvalidPhoneNumberException;
 use App\Services\PhoneNumberNormalizer;
+use App\Models\Order\OrderCheckoutVerification;
+use App\Models\Order\OrderCustomerSession;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schedule;
@@ -50,3 +52,21 @@ Artisan::command('customers:backfill-phone-e164', function () {
 })->purpose('Backfill customer phone_e164 values after countries are seeded');
 
 Schedule::command('compliance-documents:send-expiry-reminders')->dailyAt('08:00');
+
+Schedule::call(function (): void {
+    OrderCheckoutVerification::query()
+        ->whereNull('order_id')
+        ->where('expires_at', '<', now()->subHour())
+        ->delete();
+})->hourly()->name('cleanup-expired-order-checkouts');
+
+Schedule::call(function (): void {
+    OrderCheckoutVerification::query()
+        ->whereNotNull('order_id')
+        ->where('created_at', '<', now()->subDays(7))
+        ->delete();
+
+    OrderCustomerSession::query()
+        ->where('expires_at', '<', now())
+        ->delete();
+})->daily()->name('cleanup-completed-order-checkouts-and-guest-sessions');
