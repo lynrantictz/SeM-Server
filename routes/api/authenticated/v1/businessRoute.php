@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Business\BusinessController;
+use App\Http\Controllers\Api\V1\Business\BusinessOrderController;
 use App\Http\Controllers\Api\V1\Business\BusinessStaffController;
 use App\Http\Controllers\Api\V1\Business\BusinessStaffRoleController;
 use App\Http\Controllers\Api\V1\Business\BusinessTypeController;
@@ -16,6 +17,8 @@ Route::get('business-staff-roles', [BusinessStaffRoleController::class, 'index']
 Route::get('timezones', [TimezoneController::class, 'index']);
 
 Route::group(['prefix' => 'businesses'], function () {
+    Route::get('{business}/orders', [BusinessOrderController::class, 'index']);
+    Route::post('{business}/orders/{order}/actions', [BusinessOrderController::class, 'action']);
     Route::get('{business}/menu-management', [MenuManagementController::class, 'index']);
     Route::post('{business}/menu-management/categories', [MenuManagementController::class, 'storeCategory']);
     Route::put('{business}/menu-management/categories/{category}', [MenuManagementController::class, 'updateCategory']);

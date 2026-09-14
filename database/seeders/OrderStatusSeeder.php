@@ -16,6 +16,7 @@ class OrderStatusSeeder extends Seeder
         $statuses = [
             'Pending',
             'Processing',
+            'Ready',
             'Completed',
             'Cancelled',
             'Refunded'

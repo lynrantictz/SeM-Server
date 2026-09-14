@@ -16,6 +16,8 @@ use App\Models\Order\Order;
 use App\Models\Order\OrderCheckoutVerification;
 use App\Models\Order\OrderHistoryVerification;
 use App\Models\Order\OrderCustomerSession;
+use App\Models\Order\OrderStatus;
+use App\Models\Payment\PaymentStatus;
 use App\Models\Section\Code;
 use App\Repositories\Customer\CustomerRepository;
 use App\Repositories\Order\OrderRepository;
@@ -235,17 +237,36 @@ class OrderController extends BaseController
             return $this->sendError('This verified order session belongs to a different business.', [], HTTP_FORBIDDEN);
         }
 
+        $statuses = OrderStatus::query()->get(['id', 'name']);
+        $statusNameById = $statuses->mapWithKeys(fn ($status) => [(string) $status->id => $status->name]);
+        $activeStatusIds = $statuses
+            ->whereIn('name', ['Pending', 'Processing'])
+            ->map(fn ($status) => (string) $status->id)
+            ->values()
+            ->all();
+        $terminalStatusIds = $statuses
+            ->whereIn('name', ['Cancelled', 'Refunded'])
+            ->map(fn ($status) => (string) $status->id)
+            ->values()
+            ->all();
+        $paymentStatuses = PaymentStatus::query()->get(['id', 'name']);
+        $paymentStatusNameById = $paymentStatuses->mapWithKeys(fn ($status) => [(string) $status->id => $status->name]);
+        $pendingPaymentStatusId = $paymentStatuses->firstWhere('name', 'Pending')?->id;
+
         $orders = Order::query()
-            ->with(['status', 'paymentStatus', 'items.item'])
+            ->with(['items.item'])
             ->where('business_id', $business->id)
             ->where('customer_id', $session->customer_id)
-            ->where(function ($query) {
-                $query->whereHas('status', fn ($status) => $status->whereIn('name', ['Pending', 'Processing']))
-                    ->orWhere(function ($awaitingPayment) {
-                        $awaitingPayment
-                            ->whereHas('paymentStatus', fn ($payment) => $payment->where('name', 'Pending'))
-                            ->whereDoesntHave('status', fn ($status) => $status->whereIn('name', ['Cancelled', 'Refunded']));
+            ->where(function ($query) use ($activeStatusIds, $terminalStatusIds, $pendingPaymentStatusId) {
+                $query->whereIn('order_status_id', $activeStatusIds);
+                if ($pendingPaymentStatusId !== null) {
+                    $query->orWhere(function ($awaitingPayment) use ($pendingPaymentStatusId, $terminalStatusIds) {
+                        $awaitingPayment->where('payment_status_id', $pendingPaymentStatusId);
+                        if ($terminalStatusIds) {
+                            $awaitingPayment->whereNotIn('order_status_id', $terminalStatusIds);
+                        }
                     });
+                }
             })
             ->latest('created_at')
             ->limit(10)
@@ -253,8 +274,8 @@ class OrderController extends BaseController
             ->map(fn (Order $order) => [
                 'uuid' => $order->uuid,
                 'number' => $order->number,
-                'status' => $order->status?->name ?? 'Pending',
-                'payment_status' => $order->paymentStatus?->name ?? 'Pending',
+                'status' => $statusNameById[(string) $order->order_status_id] ?? 'Pending',
+                'payment_status' => $paymentStatusNameById[(string) $order->payment_status_id] ?? 'Pending',
                 'total_amount' => $order->total_amount,
                 'currency' => $business->currency ?? 'TZS',
                 'created_at' => $order->created_at,
@@ -423,8 +444,12 @@ class OrderController extends BaseController
             'status',
             'paymentMethod',
             'paymentStatus',
+            'tax',
             'items.options',
             'items.item',
+            'servicePoint.section',
+            'servicePoint.subSection',
+            'orderingChannel',
             'customerVerification',
             'payment',
         ];

@@ -10,5 +10,10 @@ class Order extends BaseModel
 {
     use OrderAttribute, OrderRelationship;
 
+    protected $casts = [
+        'order_status_id' => 'integer',
+        'payment_status_id' => 'integer',
+    ];
+
     protected $appends = ['created_at_formatted'];
 }
