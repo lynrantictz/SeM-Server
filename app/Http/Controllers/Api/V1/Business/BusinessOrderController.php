@@ -35,13 +35,23 @@ class BusinessOrderController extends BaseController
         $validated = $request->validate([
             'tab' => ['nullable', Rule::in(['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'history'])],
             'search' => ['nullable', 'string', 'max:100'],
+            'payment_method_id' => ['nullable', 'integer', Rule::exists('payment_methods', 'id')],
+            'date_from' => ['nullable', 'date_format:Y-m-d'],
+            'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', Rule::in([10, 25, 50])],
         ]);
 
         $tab = $validated['tab'] ?? $this->defaultTab($role);
         abort_unless($this->canSeeTab($role, $tab), HTTP_FORBIDDEN, 'This order queue is not available for your role.');
-        $baseQuery = $this->applyTab($this->visibleOrders($business, $role), $tab);
+        $baseQuery = $this->ordersForTab($business, $role, $tab);
+        if ($tab === 'paid' && !empty($validated['payment_method_id'])) {
+            $baseQuery->where('payment_method_id', $validated['payment_method_id']);
+        }
+        if (in_array($tab, ['paid', 'history'], true)) {
+            if (!empty($validated['date_from'])) $baseQuery->whereDate('created_at', '>=', $validated['date_from']);
+            if (!empty($validated['date_to'])) $baseQuery->whereDate('created_at', '<=', $validated['date_to']);
+        }
 
         $search = trim((string) ($validated['search'] ?? ''));
         if ($search !== '') {
@@ -60,6 +70,9 @@ class BusinessOrderController extends BaseController
                 'approver:id,name',
                 'assignee:id,name',
                 'paymentStatus:id,name',
+                'paymentMethod:id,name',
+                'payment:id,order_id,provider,confirmation_source,confirmed_by_user_id,confirmed_at',
+                'payment.confirmedBy:id,name',
                 'servicePoint:id,type,label,display_name,section_id,sub_section_id',
                 'servicePoint.section:id,name',
                 'servicePoint.subSection:id,name',
@@ -80,7 +93,7 @@ class BusinessOrderController extends BaseController
         $counts = [];
         foreach (['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'history'] as $countTab) {
             if ($this->canSeeTab($role, $countTab)) {
-                $counts[$countTab] = $this->applyTab($this->visibleOrders($business, $role), $countTab)->count();
+                $counts[$countTab] = $this->ordersForTab($business, $role, $countTab)->count();
             }
         }
 
@@ -88,6 +101,10 @@ class BusinessOrderController extends BaseController
             'role' => $role,
             'default_tab' => $this->defaultTab($role),
             'counts' => $counts,
+            'payment_methods' => PaymentMethod::query()->orderBy('name')->get(['id', 'name'])->map(fn (PaymentMethod $method) => [
+                'id' => $method->id,
+                'name' => $method->name,
+            ])->values(),
             'orders' => [
                 'data' => collect($orders->items())->map(fn (Order $order) => $this->orderData($order))->values(),
                 'meta' => [
@@ -186,7 +203,8 @@ class BusinessOrderController extends BaseController
             ]);
 
             return $record->fresh()->load([
-                'status:id,name', 'customer:id,phone,phone_e164', 'approver:id,name', 'assignee:id,name', 'paymentStatus:id,name',
+                'status:id,name', 'customer:id,phone,phone_e164', 'approver:id,name', 'assignee:id,name', 'paymentStatus:id,name', 'paymentMethod:id,name',
+                'payment:id,order_id,provider,confirmation_source,confirmed_by_user_id,confirmed_at', 'payment.confirmedBy:id,name',
                 'servicePoint:id,type,label,display_name,section_id,sub_section_id',
                 'servicePoint.section:id,name', 'servicePoint.subSection:id,name',
                 'items:id,order_id,item_id,quantity,unit_price,final_price,total_amount,comment',
@@ -355,7 +373,8 @@ class BusinessOrderController extends BaseController
     private function loadOrder(Order $order): Order
     {
         return $order->fresh()->load([
-            'status:id,name', 'customer:id,phone,phone_e164', 'approver:id,name', 'assignee:id,name', 'paymentStatus:id,name',
+            'status:id,name', 'customer:id,phone,phone_e164', 'approver:id,name', 'assignee:id,name', 'paymentStatus:id,name', 'paymentMethod:id,name',
+            'payment:id,order_id,provider,confirmation_source,confirmed_by_user_id,confirmed_at', 'payment.confirmedBy:id,name',
             'servicePoint:id,type,label,display_name,section_id,sub_section_id', 'servicePoint.section:id,name', 'servicePoint.subSection:id,name',
             'items:id,order_id,item_id,quantity,unit_price,final_price,total_amount,comment', 'items.item:id,uuid,name', 'items.options:id,order_item_id,name,price_adjustment',
             'items.options.itemOption:id,uuid',
@@ -413,7 +432,7 @@ class BusinessOrderController extends BaseController
     private function canSeeTab(string $role, string $tab): bool
     {
         if (in_array($role, ['kitchen', 'chef'], true)) return in_array($tab, ['preparing', 'ready', 'history'], true);
-        if ($role === 'waiter') return in_array($tab, ['awaiting', 'preparing', 'ready', 'awaiting_payment', 'history'], true);
+        if ($role === 'waiter') return in_array($tab, ['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'history'], true);
         return in_array($tab, ['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'history'], true);
     }
 
@@ -463,6 +482,27 @@ class BusinessOrderController extends BaseController
         return $query;
     }
 
+    private function ordersForTab(Business $business, string $role, string $tab): Builder
+    {
+        if (in_array($role, ['kitchen', 'chef'], true) && $tab === 'history') {
+            return $this->visibleOrders($business, $role)
+                ->whereHas('statusHistories', fn (Builder $history) => $history
+                    ->where('changed_by_user_id', auth()->id())
+                    ->whereHas('toStatus', fn (Builder $status) => $status->where('name', 'Ready')));
+        }
+
+        $query = $this->applyTab($this->visibleOrders($business, $role), $tab);
+
+        if ($role === 'waiter' && $tab === 'paid') {
+            $query->where(function (Builder $paidOrder) {
+                $paidOrder->where('approver_id', auth()->id())
+                    ->orWhereHas('payment', fn (Builder $payment) => $payment->where('confirmed_by_user_id', auth()->id()));
+            });
+        }
+
+        return $query;
+    }
+
     private function statusIds(array $names): array
     {
         return OrderStatus::query()->whereIn('name', $names)->pluck('id')->all();
@@ -471,12 +511,22 @@ class BusinessOrderController extends BaseController
     private function orderData(Order $order): array
     {
         $point = $order->servicePoint;
+        $servedAt = $order->relationLoaded('statusHistories')
+            ? $order->statusHistories->first(fn (OrderStatusHistory $history) => $history->toStatus?->name === 'Served')?->created_at
+            : null;
+        $serviceDurationMinutes = $servedAt
+            ? max(0, (int) $order->created_at->diffInMinutes($servedAt))
+            : null;
+
         return [
             'uuid' => $order->uuid,
             'number' => $order->number,
             'channel' => $order->channel,
             'status' => $order->status?->name,
             'payment_status' => $order->paymentStatus?->name,
+            'payment_method' => $order->paymentMethod?->name
+                ?? ($order->payment?->provider ? str($order->payment->provider)->replace('_', ' ')->title()->toString() : null),
+            'paid_by' => $order->payment?->confirmedBy?->name ?? $order->approver?->name,
             'customer' => [
                 'name' => null,
                 'phone' => $order->customer?->phone,
@@ -506,6 +556,7 @@ class BusinessOrderController extends BaseController
             'tax_amount' => (float) $order->tax_amount,
             'total_amount' => (float) $order->total_amount,
             'created_at' => $order->created_at,
+            'service_duration_minutes' => $serviceDurationMinutes,
             'approved_at' => $order->approved_at,
             'approved_by' => $order->approver?->name,
             'assigned_to' => $order->assignee ? ['id' => $order->assignee->id, 'name' => $order->assignee->name] : null,

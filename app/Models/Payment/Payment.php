@@ -2,7 +2,9 @@
 
 namespace App\Models\Payment;
 
+use App\Models\Auth\User;
 use App\Models\BaseModel;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Payment extends BaseModel
 {
@@ -27,4 +29,9 @@ class Payment extends BaseModel
         'response_payload' => 'array',
         'confirmed_at' => 'datetime',
     ];
+
+    public function confirmedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'confirmed_by_user_id');
+    }
 }
