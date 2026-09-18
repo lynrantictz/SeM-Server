@@ -17,6 +17,7 @@ class OrderStatusSeeder extends Seeder
             'Pending',
             'Processing',
             'Ready',
+            'Served',
             'Completed',
             'Cancelled',
             'Refunded'

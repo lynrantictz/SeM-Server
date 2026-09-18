@@ -15,6 +15,9 @@ class Payment extends BaseModel
         'amount',
         'currency',
         'status',
+        'confirmation_source',
+        'confirmed_by_user_id',
+        'confirmed_at',
         'request_payload',
         'response_payload',
     ];
@@ -22,5 +25,6 @@ class Payment extends BaseModel
     protected $casts = [
         'request_payload' => 'array',
         'response_payload' => 'array',
+        'confirmed_at' => 'datetime',
     ];
 }

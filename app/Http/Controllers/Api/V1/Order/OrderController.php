@@ -33,6 +33,9 @@ use Illuminate\Support\Facades\Validator;
 
 class OrderController extends BaseController
 {
+    private const CHECKOUT_SESSION_MINUTES = 5;
+    private const CHECKOUT_CODE_MINUTES = 5;
+
     protected OrderRepository $orders;
     protected CustomerRepository $customers;
 
@@ -110,7 +113,7 @@ class OrderController extends BaseController
             ],
             'verification_code' => Hash::make($otp),
             'code_sent_at' => now(),
-            'expires_at' => now()->addMinutes(10),
+            'expires_at' => now()->addMinutes(self::CHECKOUT_CODE_MINUTES),
         ]);
 
         Log::info('Order checkout verification code (local testing only)', [
@@ -122,7 +125,7 @@ class OrderController extends BaseController
             'verification' => [
                 'uuid' => $checkout->uuid,
                 'expires_at' => $checkout->expires_at,
-                'session_expires_at' => $checkout->created_at->copy()->addMinutes(30),
+                'session_expires_at' => $checkout->created_at->copy()->addMinutes(self::CHECKOUT_SESSION_MINUTES),
             ],
         ], 'Verification code generated. Check the Laravel log during local testing.', HTTP_OK);
     }
@@ -147,7 +150,7 @@ class OrderController extends BaseController
                         ? ['order' => $completedOrder, 'guest_session' => $this->issueGuestOrderSession((int) $completedOrder->customer_id, (int) $completedOrder->business_id)]
                         : ['error' => 'The order linked to this verification could not be found.', 'status' => HTTP_NOT_FOUND];
                 }
-                if ($checkout->created_at->copy()->addMinutes(30)->isPast()) {
+                if ($checkout->created_at->copy()->addMinutes(self::CHECKOUT_SESSION_MINUTES)->isPast()) {
                     return ['error' => 'This checkout session has expired. Start checkout again.', 'status' => 410];
                 }
                 if ($checkout->expires_at->isPast()) {
@@ -313,7 +316,8 @@ class OrderController extends BaseController
         if ($checkout->order_id || $checkout->verified_at) {
             return $this->sendError('This checkout has already been verified.', [], HTTP_UNPROCESSABLE_ENTITY);
         }
-        if ($checkout->created_at->copy()->addMinutes(30)->isPast()) {
+        $sessionExpiresAt = $checkout->created_at->copy()->addMinutes(self::CHECKOUT_SESSION_MINUTES);
+        if (now()->gte($sessionExpiresAt)) {
             return $this->sendError('This checkout has expired. Please start checkout again.', [], 410);
         }
         $resendAvailableAt = ($checkout->code_sent_at ?? $checkout->created_at)->copy()->addSeconds(20);
@@ -326,12 +330,16 @@ class OrderController extends BaseController
         }
 
         $otp = (string) random_int(1000, 9999);
+        $codeExpiresAt = now()->addMinutes(self::CHECKOUT_CODE_MINUTES);
+        if ($codeExpiresAt->gt($sessionExpiresAt)) {
+            $codeExpiresAt = $sessionExpiresAt;
+        }
         $checkout->update([
             'verification_code' => Hash::make($otp),
             'code_sent_at' => now(),
             'attempts' => 0,
             'resend_count' => $checkout->resend_count + 1,
-            'expires_at' => now()->addMinutes(10),
+            'expires_at' => $codeExpiresAt,
         ]);
         Log::info('Order checkout verification code resent (local testing only)', [
             'checkout_uuid' => $checkout->uuid,
@@ -370,7 +378,7 @@ class OrderController extends BaseController
         if ($checkout->verified_at) {
             return $this->sendError('This checkout has already been verified.', [], 409);
         }
-        if ($checkout->created_at->copy()->addMinutes(30)->isPast()) {
+        if ($checkout->created_at->copy()->addMinutes(self::CHECKOUT_SESSION_MINUTES)->isPast()) {
             return $this->sendError('This checkout has expired. Please start checkout again.', [], 410);
         }
 
@@ -384,7 +392,7 @@ class OrderController extends BaseController
                 'business_uuid' => $businessUuid,
                 'masked_phone' => $maskedPhone,
                 'expires_at' => $checkout->expires_at,
-                'session_expires_at' => $checkout->created_at->copy()->addMinutes(30),
+                'session_expires_at' => $checkout->created_at->copy()->addMinutes(self::CHECKOUT_SESSION_MINUTES),
                 'code_expired' => $checkout->expires_at->isPast(),
                 'resend_available_at' => ($checkout->code_sent_at ?? $checkout->created_at)->copy()->addSeconds(20),
             ],

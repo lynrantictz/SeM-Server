@@ -18,7 +18,14 @@ Route::get('timezones', [TimezoneController::class, 'index']);
 
 Route::group(['prefix' => 'businesses'], function () {
     Route::get('{business}/orders', [BusinessOrderController::class, 'index']);
+    Route::get('{business}/orders/context', [BusinessOrderController::class, 'context']);
+    Route::post('{business}/orders', [BusinessOrderController::class, 'store']);
+    Route::put('{business}/orders/{order}', [BusinessOrderController::class, 'update']);
+    Route::post('{business}/orders/{order}/notes', [BusinessOrderController::class, 'storeNote']);
+    Route::post('{business}/orders/{order}/lock', [BusinessOrderController::class, 'acquireLock']);
+    Route::delete('{business}/orders/{order}/lock', [BusinessOrderController::class, 'releaseLock']);
     Route::post('{business}/orders/{order}/actions', [BusinessOrderController::class, 'action']);
+    Route::post('{business}/orders/{order}/payment-qr', [BusinessOrderController::class, 'paymentQr']);
     Route::get('{business}/menu-management', [MenuManagementController::class, 'index']);
     Route::post('{business}/menu-management/categories', [MenuManagementController::class, 'storeCategory']);
     Route::put('{business}/menu-management/categories/{category}', [MenuManagementController::class, 'updateCategory']);

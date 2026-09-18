@@ -13,6 +13,7 @@ class Order extends BaseModel
     protected $casts = [
         'order_status_id' => 'integer',
         'payment_status_id' => 'integer',
+        'assigned_to_user_id' => 'integer',
     ];
 
     protected $appends = ['created_at_formatted'];

@@ -9,6 +9,11 @@ class OrderItemOption extends BaseModel
 {
     protected $guarded = ['uuid'];
 
+    public function itemOption()
+    {
+        return $this->belongsTo(\App\Models\Menu\ItemOption::class);
+    }
+
     protected $casts = ['price_adjustment' => 'float'];
 
     public function orderItem(): BelongsTo

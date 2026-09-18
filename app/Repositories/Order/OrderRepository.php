@@ -5,6 +5,8 @@ namespace App\Repositories\Order;
 use App\Models\Order\Order;
 use App\Models\Section\Code;
 use App\Models\Section\ServicePoint;
+use App\Models\Business\Business;
+use App\Models\Business\OrderingChannel;
 use App\Repositories\BaseRepository;
 use App\Repositories\Customer\CustomerRepository;
 use App\Services\TaxCalculatorService;
@@ -76,6 +78,58 @@ class OrderRepository extends BaseRepository
 
             return $order;
         });
+    }
+
+    /** Store an authenticated staff order without requiring a public QR code. */
+    public function storeForStaff(Business $business, array $inputs, int $userId): Order
+    {
+        return DB::transaction(function () use ($business, $inputs, $userId) {
+            $business = Business::query()->lockForUpdate()->findOrFail($business->id);
+            $channel = $inputs['channel'];
+            abort_unless($business->orderingChannels()->where('ordering_channels.slug', $channel)->where('ordering_channels.is_active', true)->wherePivot('is_enabled', true)->exists(), 422, 'The selected ordering channel is not enabled for this business.');
+
+            $servicePoint = null;
+            if (!empty($inputs['service_point_id'])) {
+                $servicePoint = ServicePoint::query()->whereKey($inputs['service_point_id'])->where('business_id', $business->id)->where('is_active', true)->firstOrFail();
+                abort_unless($servicePoint->orderingChannels()->where('slug', $channel)->exists(), 422, 'This service point is not available for the selected ordering channel.');
+            }
+
+            $customer = null;
+            if (!empty($inputs['phone'])) {
+                $customer = (new CustomerRepository())->getCustomerByPhone($inputs['phone'], $inputs['country_iso2'] ?? $business->district?->city?->country?->iso2);
+            }
+
+            $business->current_order_number += 1;
+            $number = $business->order_prefix . '-' . str_pad($business->current_order_number, 6, '0', STR_PAD_LEFT);
+            while (Order::query()->where('number', $number)->exists()) {
+                $business->current_order_number += 1;
+                $number = $business->order_prefix . '-' . str_pad($business->current_order_number, 6, '0', STR_PAD_LEFT);
+            }
+            $business->save();
+
+            $order = Order::query()->create([
+                'business_id' => $business->id,
+                'user_id' => $userId,
+                'customer_id' => $customer?->id,
+                'order_status_id' => config('constants.order_status.PENDING'),
+                'payment_status_id' => config('constants.payment_status.PENDING'),
+                'service_point_id' => $servicePoint?->id,
+                'service_point_label' => $servicePoint?->display_name,
+                'number' => $number,
+                'channel' => $channel,
+                'comment' => $inputs['comment'] ?? null,
+            ]);
+            $business->load('promotions');
+            (new OrderItemRepository())->store($order, $inputs['items'], $channel);
+            $order->update($this->totalsFor($business, $order->items()->sum('total_amount')));
+
+            return $order;
+        });
+    }
+
+    public function totalsFor(Business $business, float|int $itemsTotal): array
+    {
+        return $this->calculateTax($business->district->city->country, $itemsTotal);
     }
 
     public function verifyPhone(Order $order)

@@ -15,6 +15,8 @@ use App\Models\Payment\PaymentMethod;
 use App\Models\Payment\PaymentStatus;
 use App\Models\Auth\User;
 use App\Models\Section\ServicePoint;
+use App\Models\Order\OrderStaffNote;
+use App\Models\Order\OrderWorkLock;
 
 trait OrderRelationship
 {
@@ -36,6 +38,11 @@ trait OrderRelationship
     public function approver()
     {
         return $this->belongsTo(User::class, 'approver_id');
+    }
+
+    public function assignee()
+    {
+        return $this->belongsTo(User::class, 'assigned_to_user_id');
     }
 
     public function statusHistories()
@@ -81,5 +88,15 @@ trait OrderRelationship
     public function orderingChannel()
     {
         return $this->belongsTo(OrderingChannel::class, 'channel', 'slug');
+    }
+
+    public function staffNotes()
+    {
+        return $this->hasMany(OrderStaffNote::class)->orderBy('created_at');
+    }
+
+    public function workLock()
+    {
+        return $this->hasOne(OrderWorkLock::class);
     }
 }
