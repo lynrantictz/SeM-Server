@@ -48,6 +48,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'must_change_password' => 'boolean',
+            'order_alerts_enabled' => 'boolean',
         ];
     }
 
@@ -61,6 +62,7 @@ class User extends Authenticatable
         'type',
         'email_verified_at',
         'must_change_password',
+        'order_alerts_enabled',
     ];
 
     protected $guarded = ['uuid'];
