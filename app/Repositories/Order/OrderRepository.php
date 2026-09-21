@@ -3,6 +3,8 @@
 namespace App\Repositories\Order;
 
 use App\Models\Order\Order;
+use App\Models\Order\OrderStatus;
+use App\Models\Order\OrderStatusHistory;
 use App\Models\Section\Code;
 use App\Models\Section\ServicePoint;
 use App\Models\Business\Business;
@@ -107,12 +109,17 @@ class OrderRepository extends BaseRepository
             }
             $business->save();
 
+            $processingStatus = OrderStatus::query()->where('name', 'Processing')->firstOrFail();
+
             $order = Order::query()->create([
                 'business_id' => $business->id,
                 'user_id' => $userId,
                 'customer_id' => $customer?->id,
-                'order_status_id' => config('constants.order_status.PENDING'),
+                'order_status_id' => $processingStatus->id,
                 'payment_status_id' => config('constants.payment_status.PENDING'),
+                'approver_id' => $userId,
+                'assigned_to_user_id' => $userId,
+                'approved_at' => now(),
                 'service_point_id' => $servicePoint?->id,
                 'service_point_label' => $servicePoint?->display_name,
                 'number' => $number,
@@ -122,6 +129,13 @@ class OrderRepository extends BaseRepository
             $business->load('promotions');
             (new OrderItemRepository())->store($order, $inputs['items'], $channel);
             $order->update($this->totalsFor($business, $order->items()->sum('total_amount')));
+            OrderStatusHistory::query()->create([
+                'order_id' => $order->id,
+                'from_status_id' => null,
+                'to_status_id' => $processingStatus->id,
+                'changed_by_user_id' => $userId,
+                'note' => 'Created and auto-approved by staff.',
+            ]);
 
             return $order;
         });

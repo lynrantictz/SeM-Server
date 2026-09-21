@@ -44,7 +44,7 @@ class OrderItemRepository extends BaseRepository
             'discount_amount' => $discountAmount,
             'final_price' => $finalPrice,
             'total_amount' => $finalPrice * $item['quantity'],
-            'comment' => $item['comment'],
+            'comment' => $item['comment'] ?? null,
             '_selected_options' => $selectedOptions,
         ];
     }

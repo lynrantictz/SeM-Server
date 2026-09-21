@@ -272,8 +272,7 @@ class BusinessOrderController extends BaseController
         abort_unless($this->canCreateOrEdit($role), HTTP_FORBIDDEN, 'Your role cannot create orders.');
         $data = $this->orderPayload($request, $business);
         $order = (new OrderRepository())->storeForStaff($business, $data, auth()->id());
-        OrderStatusHistory::query()->create(['order_id' => $order->id, 'from_status_id' => null, 'to_status_id' => $order->order_status_id, 'changed_by_user_id' => auth()->id(), 'note' => 'Created by staff.']);
-        return $this->sendResponse(['order' => $this->orderData($this->loadOrder($order))], 'Order created successfully.', HTTP_CREATED);
+        return $this->sendResponse(['order' => $this->orderData($this->loadOrder($order))], 'Order created and sent to the kitchen.', HTTP_CREATED);
     }
 
     public function update(Request $request, Business $business, string $order)
