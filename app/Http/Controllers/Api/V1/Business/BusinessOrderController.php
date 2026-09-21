@@ -33,7 +33,7 @@ class BusinessOrderController extends BaseController
     {
         $role = $this->authorizeBusiness($business);
         $validated = $request->validate([
-            'tab' => ['nullable', Rule::in(['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'history'])],
+            'tab' => ['nullable', Rule::in(['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'completed', 'cancelled'])],
             'search' => ['nullable', 'string', 'max:100'],
             'payment_method_id' => ['nullable', 'integer', Rule::exists('payment_methods', 'id')],
             'date_from' => ['nullable', 'date_format:Y-m-d'],
@@ -48,7 +48,7 @@ class BusinessOrderController extends BaseController
         if ($tab === 'paid' && !empty($validated['payment_method_id'])) {
             $baseQuery->where('payment_method_id', $validated['payment_method_id']);
         }
-        if (in_array($tab, ['paid', 'history'], true)) {
+        if (in_array($tab, ['paid', 'completed', 'cancelled'], true)) {
             if (!empty($validated['date_from'])) $baseQuery->whereDate('created_at', '>=', $validated['date_from']);
             if (!empty($validated['date_to'])) $baseQuery->whereDate('created_at', '<=', $validated['date_to']);
         }
@@ -91,7 +91,7 @@ class BusinessOrderController extends BaseController
             ->withQueryString();
 
         $counts = [];
-        foreach (['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'history'] as $countTab) {
+        foreach (['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'completed', 'cancelled'] as $countTab) {
             if ($this->canSeeTab($role, $countTab)) {
                 $counts[$countTab] = $this->ordersForTab($business, $role, $countTab)->count();
             }
@@ -246,24 +246,57 @@ class BusinessOrderController extends BaseController
         $role = $this->authorizeBusiness($business);
         abort_unless($this->canCreateOrEdit($role), HTTP_FORBIDDEN, 'Your role cannot create orders.');
         $channels = $business->orderingChannels()->where('ordering_channels.is_active', true)->wherePivot('is_enabled', true)->orderBy('ordering_channels.sort_order')->get(['ordering_channels.slug', 'ordering_channels.name', 'ordering_channels.description']);
-        $items = Item::query()->where('is_active', true)->where('is_sold_out', false)
-            ->whereHas('category', fn (Builder $query) => $query->where('business_id', $business->id)->where('is_active', true))
-            ->with(['category:id,uuid,name', 'optionGroups' => fn ($query) => $query->where('is_active', true)->orderBy('sort_order'), 'optionGroups.options' => fn ($query) => $query->where('is_active', true)->orderBy('sort_order')])
-            ->orderBy('name')->get();
         return $this->sendResponse([
             'default_country_id' => $business->district?->city?->country?->id,
             'channels' => $channels,
             'service_points' => ServicePoint::query()->where('business_id', $business->id)->where('is_active', true)->with(['section:id,name', 'subSection:id,name', 'orderingChannels:id,slug'])->orderBy('display_name')->get(['id', 'uuid', 'type', 'label', 'display_name', 'section_id', 'sub_section_id']),
             'categories' => Category::query()->where('business_id', $business->id)->where('is_active', true)->orderBy('name')->get(['id', 'uuid', 'name']),
-            'items' => $items->map(fn (Item $item) => [
-                'uuid' => $item->uuid, 'category_id' => $item->category_id, 'name' => $item->name, 'description' => $item->description,
-                'price' => (float) $item->price, 'currency' => $item->currency, 'option_groups' => $item->optionGroups->map(fn ($group) => [
-                    'uuid' => $group->uuid, 'name' => $group->name, 'selection_type' => $group->selection_type, 'is_required' => (bool) $group->is_required,
-                    'min_selections' => (int) $group->min_selections, 'max_selections' => $group->max_selections,
-                    'options' => $group->options->map(fn ($option) => ['uuid' => $option->uuid, 'name' => $option->name, 'price_adjustment' => (float) $option->price_adjustment])->values(),
-                ])->values(),
-            ])->values(),
         ], 'Staff ordering context retrieved successfully.');
+    }
+
+    public function menuItems(Request $request, Business $business)
+    {
+        $role = $this->authorizeBusiness($business);
+        abort_unless($this->canCreateOrEdit($role), HTTP_FORBIDDEN, 'Your role cannot create orders.');
+        $data = $request->validate([
+            'search' => ['nullable', 'string', 'max:100'],
+            'category_id' => ['nullable', 'integer', Rule::exists('categories', 'id')],
+            'channel' => ['required', 'string', 'max:24'],
+            'include' => ['nullable', 'array', 'max:100'],
+            'include.*' => ['uuid'],
+        ]);
+
+        abort_unless($business->orderingChannels()->where('ordering_channels.slug', $data['channel'])->where('ordering_channels.is_active', true)->wherePivot('is_enabled', true)->exists(), HTTP_UNPROCESSABLE_ENTITY, 'The selected ordering channel is not enabled for this business.');
+
+        $search = trim((string) ($data['search'] ?? ''));
+        $itemQuery = Item::query()
+            ->where('is_active', true)
+            ->where('is_sold_out', false)
+            ->whereHas('category', fn (Builder $query) => $query->where('business_id', $business->id)->where('is_active', true))
+            ->when(!empty($data['category_id']), fn (Builder $query) => $query->where('category_id', $data['category_id']))
+            ->with([
+                'category:id,uuid,name',
+                'discountRules',
+                'optionGroups' => fn ($query) => $query->where('is_active', true)->orderBy('sort_order'),
+                'optionGroups.options' => fn ($query) => $query->where('is_active', true)->orderBy('sort_order'),
+            ]);
+
+        $items = (clone $itemQuery)
+            ->when($search !== '', fn (Builder $query) => $query->where(fn (Builder $itemQuery) => $itemQuery
+                ->where('name', 'ilike', "%{$search}%")
+                ->orWhere('description', 'ilike', "%{$search}%")))
+            ->orderBy('name')
+            ->limit(40)
+            ->get();
+
+        if (!empty($data['include'])) {
+            $pinnedItems = (clone $itemQuery)->whereIn('uuid', $data['include'])->get();
+            $items = $items->concat($pinnedItems)->unique('id')->values();
+        }
+
+        return $this->sendResponse([
+            'items' => $items->map(fn (Item $item) => $this->staffMenuItemData($item, $business, $data['channel']))->values(),
+        ], 'Available menu items retrieved successfully.');
     }
 
     public function store(Request $request, Business $business)
@@ -361,6 +394,33 @@ class BusinessOrderController extends BaseController
         return in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager', 'counter', 'counter-clerk', 'waiter'], true);
     }
 
+    private function staffMenuItemData(Item $item, Business $business, string $channel): array
+    {
+        $pricing = app(MenuAvailabilityService::class)->itemPricing($item, $business, $channel);
+
+        return [
+            'uuid' => $item->uuid,
+            'category_id' => $item->category_id,
+            'name' => $item->name,
+            'description' => $item->description,
+            'price' => (float) $pricing['final_price'],
+            'currency' => $item->currency,
+            'option_groups' => $item->optionGroups->map(fn ($group) => [
+                'uuid' => $group->uuid,
+                'name' => $group->name,
+                'selection_type' => $group->selection_type,
+                'is_required' => (bool) $group->is_required,
+                'min_selections' => (int) $group->min_selections,
+                'max_selections' => $group->max_selections,
+                'options' => $group->options->map(fn ($option) => [
+                    'uuid' => $option->uuid,
+                    'name' => $option->name,
+                    'price_adjustment' => (float) $option->price_adjustment,
+                ])->values(),
+            ])->values(),
+        ];
+    }
+
     private function assertLockOwner(Order $order): void
     {
         OrderWorkLock::query()->where('expires_at', '<=', now())->delete();
@@ -430,9 +490,9 @@ class BusinessOrderController extends BaseController
 
     private function canSeeTab(string $role, string $tab): bool
     {
-        if (in_array($role, ['kitchen', 'chef'], true)) return in_array($tab, ['preparing', 'ready', 'history'], true);
-        if ($role === 'waiter') return in_array($tab, ['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'history'], true);
-        return in_array($tab, ['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'history'], true);
+        if (in_array($role, ['kitchen', 'chef'], true)) return in_array($tab, ['preparing', 'ready', 'completed', 'cancelled'], true);
+        if ($role === 'waiter') return in_array($tab, ['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'completed', 'cancelled'], true);
+        return in_array($tab, ['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'completed', 'cancelled'], true);
     }
 
     private function canPerform(string $role, string $action, ?string $channel): bool
@@ -464,7 +524,8 @@ class BusinessOrderController extends BaseController
             'preparing' => ['Processing'],
             'ready' => ['Ready'],
             'awaiting_payment', 'paid' => ['Served'],
-            'history' => ['Completed', 'Cancelled', 'Refunded'],
+            'completed' => ['Completed'],
+            'cancelled' => ['Cancelled', 'Refunded'],
             default => [],
         };
     }
@@ -483,7 +544,7 @@ class BusinessOrderController extends BaseController
 
     private function ordersForTab(Business $business, string $role, string $tab): Builder
     {
-        if (in_array($role, ['kitchen', 'chef'], true) && $tab === 'history') {
+        if (in_array($role, ['kitchen', 'chef'], true) && $tab === 'completed') {
             return $this->visibleOrders($business, $role)
                 ->whereHas('statusHistories', fn (Builder $history) => $history
                     ->where('changed_by_user_id', auth()->id())
@@ -515,6 +576,9 @@ class BusinessOrderController extends BaseController
             : null;
         $serviceDurationMinutes = $servedAt
             ? max(0, (int) $order->created_at->diffInMinutes($servedAt))
+            : null;
+        $serviceLeadTimeSeconds = $servedAt
+            ? max(0, (int) $order->created_at->diffInSeconds($servedAt))
             : null;
 
         return [
@@ -556,6 +620,7 @@ class BusinessOrderController extends BaseController
             'total_amount' => (float) $order->total_amount,
             'created_at' => $order->created_at,
             'service_duration_minutes' => $serviceDurationMinutes,
+            'service_lead_time_seconds' => $serviceLeadTimeSeconds,
             'approved_at' => $order->approved_at,
             'approved_by' => $order->approver?->name,
             'assigned_to' => $order->assignee ? ['id' => $order->assignee->id, 'name' => $order->assignee->name] : null,
