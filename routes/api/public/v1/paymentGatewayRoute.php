@@ -5,5 +5,6 @@ use Illuminate\Support\Facades\Route;
 
 
 Route::group(['prefix' => 'payment-gateways'], function () {
-    Route::post('{order}/checkout', [PaymentGatewayController::class, 'checkout']);
+    Route::post('{order}/mno-checkout', [PaymentGatewayController::class, 'checkout'])->middleware('throttle:3,1');
+    Route::get('{order}/status', [PaymentGatewayController::class, 'status'])->middleware('throttle:30,1');
 });

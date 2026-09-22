@@ -3,45 +3,59 @@
 namespace App\Http\Controllers\Api\V1\Payment;
 
 use App\Http\Controllers\Api\BaseController;
-use App\Http\Controllers\Controller;
 use App\Models\Order\Order;
-use App\Repositories\Payment\PaymentGatewayRepository;
-use App\Services\PaymentGateway\DTOs\MnoCheckoutData;
-use App\Services\PaymentGateway\PaymentGatewayManager;
+use App\Models\Payment\Payment;
+use App\Services\PaymentGateway\PaymentCheckoutService;
 use Illuminate\Http\Request;
 
 class PaymentGatewayController extends BaseController
 {
-    protected PaymentGatewayRepository $paymentGateways;
-    protected PaymentGatewayManager $paymentGatewayManager;
-
-    public function __construct(PaymentGatewayRepository $paymentGateways, PaymentGatewayManager $paymentGatewayManager)
+    public function __construct(private readonly PaymentCheckoutService $checkout)
     {
-        $this->paymentGateways = $paymentGateways;
-        $this->paymentGatewayManager = $paymentGatewayManager;
     }
 
-    /**
-     * Display a listing of the resource.
-     */
-    public function checkout(Request $request, Order $order)
+    public function checkout(Request $request, string $order)
     {
-        // $dto = new MnoCheckoutData(
-        //     accountNumber: $request['phone'],
-        //     amount: $order->total_amount,
-        //     currency: 'TZS',
-        //     externalId: $order->number,
-        //     provider: $request['provider'],
-        //     additionalProperties: [
-        //         'order_id' => $order->id,
-        //         'business_id' => $order->business->id,
-        //         'business_name' => $order->business->name,
-        //     ]
-        // );
+        $validated = $request->validate([
+            'phone' => ['required', 'regex:/^[1-9][0-9]{6,14}$/'],
+            'provider' => ['required'],
+        ]);
 
-        // $gateWay = $this->paymentGatewayManager->gateway('azampay');
-        // return $gateWay->mnoCheckout($dto);
-        $data['order'] = $order;
-        return $this->sendResponse($data, 'Payment Completed', HTTP_OK);
+        $record = Order::query()->where('number', $order)->firstOrFail();
+        $checkout = $this->checkout->initiateMnoCheckout(
+            $record,
+            $validated['phone'],
+            $validated['provider'],
+            auth()->id(),
+            auth()->check() ? 'staff' : 'customer',
+        );
+
+        return $this->sendResponse([
+            'payment' => [
+                ...$this->paymentData($checkout->payment),
+                'prompt_sent' => $checkout->promptSent,
+                'awaiting_gateway_confirmation' => $checkout->awaitingGatewayConfirmation,
+            ],
+        ], 'Mobile money prompt initiated.');
+    }
+
+    public function status(string $order)
+    {
+        $record = Order::query()->where('number', $order)->firstOrFail();
+        $payment = Payment::query()->where('order_id', $record->id)->latest('id')->first();
+
+        return $this->sendResponse(['payment' => $payment ? $this->paymentData($payment) : null], 'Payment status retrieved.');
+    }
+
+    private function paymentData(Payment $payment): array
+    {
+        return [
+            'uuid' => $payment->uuid,
+            'status' => $payment->status,
+            'amount' => $payment->amount,
+            'currency' => $payment->currency,
+            'expires_at' => $payment->expires_at?->toIso8601String(),
+            'failure_reason' => $payment->failure_reason,
+        ];
     }
 }

@@ -71,7 +71,7 @@ class BusinessOrderController extends BaseController
                 'assignee:id,name',
                 'paymentStatus:id,name',
                 'paymentMethod:id,name',
-                'payment:id,order_id,provider,confirmation_source,confirmed_by_user_id,confirmed_at',
+                'payment:payments.id,payments.order_id,payments.provider,payments.status,payments.expires_at,payments.confirmation_source,payments.confirmed_by_user_id,payments.confirmed_at',
                 'payment.confirmedBy:id,name',
                 'servicePoint:id,type,label,display_name,section_id,sub_section_id',
                 'servicePoint.section:id,name',
@@ -204,7 +204,7 @@ class BusinessOrderController extends BaseController
 
             return $record->fresh()->load([
                 'status:id,name', 'customer:id,phone,phone_e164', 'approver:id,name', 'assignee:id,name', 'paymentStatus:id,name', 'paymentMethod:id,name',
-                'payment:id,order_id,provider,confirmation_source,confirmed_by_user_id,confirmed_at', 'payment.confirmedBy:id,name',
+                'payment:payments.id,payments.order_id,payments.provider,payments.status,payments.expires_at,payments.confirmation_source,payments.confirmed_by_user_id,payments.confirmed_at', 'payment.confirmedBy:id,name',
                 'servicePoint:id,type,label,display_name,section_id,sub_section_id',
                 'servicePoint.section:id,name', 'servicePoint.subSection:id,name',
                 'items:id,order_id,item_id,quantity,unit_price,final_price,total_amount,comment',
@@ -433,7 +433,7 @@ class BusinessOrderController extends BaseController
     {
         return $order->fresh()->load([
             'status:id,name', 'customer:id,phone,phone_e164', 'approver:id,name', 'assignee:id,name', 'paymentStatus:id,name', 'paymentMethod:id,name',
-            'payment:id,order_id,provider,confirmation_source,confirmed_by_user_id,confirmed_at', 'payment.confirmedBy:id,name',
+            'payment:payments.id,payments.order_id,payments.provider,payments.status,payments.expires_at,payments.confirmation_source,payments.confirmed_by_user_id,payments.confirmed_at', 'payment.confirmedBy:id,name',
             'servicePoint:id,type,label,display_name,section_id,sub_section_id', 'servicePoint.section:id,name', 'servicePoint.subSection:id,name',
             'items:id,order_id,item_id,quantity,unit_price,final_price,total_amount,comment', 'items.item:id,uuid,name', 'items.options:id,order_item_id,name,price_adjustment',
             'items.options.itemOption:id,uuid',
@@ -580,6 +580,9 @@ class BusinessOrderController extends BaseController
         $serviceLeadTimeSeconds = $servedAt
             ? max(0, (int) $order->created_at->diffInSeconds($servedAt))
             : null;
+        $activeCheckout = $order->payment
+            && in_array($order->payment->status, ['PENDING', 'PROCESSING'], true)
+            && $order->payment->expires_at?->isFuture();
 
         return [
             'uuid' => $order->uuid,
@@ -590,6 +593,10 @@ class BusinessOrderController extends BaseController
             'payment_method' => $order->paymentMethod?->name
                 ?? ($order->payment?->provider ? str($order->payment->provider)->replace('_', ' ')->title()->toString() : null),
             'paid_by' => $order->payment?->confirmedBy?->name ?? $order->approver?->name,
+            'payment_checkout' => $activeCheckout ? [
+                'status' => $order->payment->status,
+                'expires_at' => $order->payment->expires_at?->toIso8601String(),
+            ] : null,
             'customer' => [
                 'name' => null,
                 'phone' => $order->customer?->phone,

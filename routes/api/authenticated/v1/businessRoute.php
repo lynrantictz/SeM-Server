@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Business\BusinessStaffController;
 use App\Http\Controllers\Api\V1\Business\BusinessStaffRoleController;
 use App\Http\Controllers\Api\V1\Business\BusinessTypeController;
 use App\Http\Controllers\Api\V1\Business\BusinessMenuSettingsController;
+use App\Http\Controllers\Api\V1\Business\BusinessPaymentController;
 use App\Http\Controllers\Api\V1\Business\TimezoneController;
 use App\Http\Controllers\Api\V1\Business\ComplianceDocumentController;
 use App\Http\Controllers\Api\V1\Section\ServiceAreaController;
@@ -17,6 +18,8 @@ Route::get('business-staff-roles', [BusinessStaffRoleController::class, 'index']
 Route::get('timezones', [TimezoneController::class, 'index']);
 
 Route::group(['prefix' => 'businesses'], function () {
+    Route::get('{business}/payment-providers', [BusinessPaymentController::class, 'providers']);
+    Route::post('{business}/orders/{order}/mno-checkout', [BusinessPaymentController::class, 'checkout']);
     Route::get('{business}/orders', [BusinessOrderController::class, 'index']);
     Route::get('{business}/orders/context', [BusinessOrderController::class, 'context']);
     Route::get('{business}/orders/menu-items', [BusinessOrderController::class, 'menuItems']);

@@ -12,6 +12,7 @@ use App\Models\Business\BusinessOpeningHour;
 use App\Models\Business\BusinessPromotion;
 use App\Models\Business\Timezone;
 use App\Models\Business\OrderingChannel;
+use App\Models\Business\BusinessPaymentSetting;
 
 trait BusinessRelationship
 {
@@ -65,5 +66,10 @@ trait BusinessRelationship
         return $this->belongsToMany(OrderingChannel::class, 'business_ordering_channels')
             ->withPivot('is_enabled')
             ->withTimestamps();
+    }
+
+    public function paymentSetting()
+    {
+        return $this->hasOne(BusinessPaymentSetting::class);
     }
 }

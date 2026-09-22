@@ -77,7 +77,12 @@ trait OrderRelationship
 
     public function payment()
     {
-        return $this->hasOne(Payment::class, 'order_id', 'id');
+        return $this->hasOne(Payment::class, 'order_id', 'id')->latestOfMany();
+    }
+
+    public function payments()
+    {
+        return $this->hasMany(Payment::class, 'order_id', 'id');
     }
 
     public function servicePoint()

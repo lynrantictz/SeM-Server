@@ -57,6 +57,7 @@ class BusinessRepository extends BaseRepository
                 'district:id,city_id,name',
                 'district.city:id,country_id,name',
                 'district.city.country:id,name,iso2,phone_code,flag',
+                'paymentSetting:id,business_id,provider,currency,commission_rate,commission_basis,settlement_mode,is_checkout_enabled,is_settlement_enabled',
             ])
             ->withCount('categories')
             ->when((is_owner() || is_vendor()), function ($query) {

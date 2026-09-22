@@ -10,8 +10,9 @@ trait MeTrait
     {
         $user = $request->user()->load([
             'vendors.country',
-            'vendors.businesses',
+            'vendors.businesses.district.city.country',
             'businesses.vendor.country',
+            'businesses.district.city.country',
             'businesses.type',
             'roles',
             'roles.permissions',
