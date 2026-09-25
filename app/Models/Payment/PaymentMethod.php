@@ -9,4 +9,6 @@ use Illuminate\Database\Eloquent\Model;
 class PaymentMethod extends Model
 {
     use PaymentMethodAttribute, PaymentMethodRelationship;
+
+    protected $fillable = ['name'];
 }

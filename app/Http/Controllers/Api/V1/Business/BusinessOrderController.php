@@ -20,6 +20,7 @@ use App\Models\Section\ServicePoint;
 use App\Repositories\Order\OrderItemRepository;
 use App\Repositories\Order\OrderRepository;
 use App\Services\MenuAvailabilityService;
+use App\Services\Order\GuestOrderSessionService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -219,7 +220,7 @@ class BusinessOrderController extends BaseController
         return $this->sendResponse(['order' => $this->orderData($updated)], 'Order updated successfully.');
     }
 
-    public function paymentQr(Business $business, string $order)
+    public function paymentQr(Business $business, string $order, GuestOrderSessionService $guestSessions)
     {
         $role = $this->authorizeBusiness($business);
         abort_unless($this->canGeneratePaymentQr($role), HTTP_FORBIDDEN, 'Your role cannot request payment QR codes.');
@@ -232,7 +233,8 @@ class BusinessOrderController extends BaseController
         abort_unless($record->status?->name === 'Served', HTTP_UNPROCESSABLE_ENTITY, 'Only served orders can be presented for payment.');
         abort_unless($record->paymentStatus?->name === 'Pending', HTTP_UNPROCESSABLE_ENTITY, 'Payment has already been recorded for this order.');
 
-        $url = rtrim((string) config('paperstick.client_url'), '/') . "/orders/{$record->number}";
+        $paymentSession = $guestSessions->issueForOrder($record, 120);
+        $url = rtrim((string) config('paperstick.client_url'), '/') . "/orders/{$record->number}?payment_session=" . rawurlencode($paymentSession['access_token']);
         $svg = QrCode::format('svg')->size(320)->margin(1)->generate($url);
 
         return $this->sendResponse([

@@ -62,6 +62,15 @@ class PaymentWebhookController extends Controller
                 return;
             }
 
+            // A staff member may have corrected the guest's number or provider
+            // and replaced this attempt. Record the callback, but never allow a
+            // late approval for the old prompt to settle the order.
+            if (str_starts_with((string) $payment->failure_reason, 'Superseded by a replacement')) {
+                $event->update(['processed_at' => now()]);
+
+                return;
+            }
+
             $amountMatches = round((float) $payment->amount, 2) === round((float) $data['amount'], 2);
             $successful = strtolower($data['transactionstatus']) === 'success' && $amountMatches;
             $safePayload = Arr::except($request->all(), ['password', 'signature']);

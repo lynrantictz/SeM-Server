@@ -23,6 +23,7 @@ use App\Repositories\Customer\CustomerRepository;
 use App\Repositories\Order\OrderRepository;
 use App\Services\PhoneNumberNormalizer;
 use App\Services\MenuAvailabilityService;
+use App\Services\Order\GuestOrderSessionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
@@ -41,7 +42,11 @@ class OrderController extends BaseController
 
     use PhoneVerificationTrait;
 
-    public function __construct(OrderRepository $orders, CustomerRepository $customers)
+    public function __construct(
+        OrderRepository $orders,
+        CustomerRepository $customers,
+        private readonly GuestOrderSessionService $guestSessions,
+    )
     {
         $this->orders = $orders;
         $this->customers = $customers;
@@ -646,8 +651,26 @@ class OrderController extends BaseController
 
     public function rating(Request $request, Order $order)
     {
-        $this->orders->rating($order, $request->all());
-        $data['order'] = $order;
+        $validated = $request->validate([
+            'rate' => ['required', 'integer', 'min:1', 'max:5'],
+            'comment' => ['nullable', 'string', 'max:1000'],
+            'access_token' => ['required', 'string', 'max:160'],
+        ]);
+        if (! $this->guestSessions->resolveForOrder($order, $validated['access_token'])) {
+            return $this->sendError('Verify your phone to rate this order.', [], HTTP_UNAUTHORIZED);
+        }
+        if ($order->status()->where('name', 'Served')->doesntExist()) {
+            return $this->sendError('You can rate this order after it has been served.', [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+        if ($order->rate !== null) {
+            return $this->sendError('This order has already been rated.', [], 409);
+        }
+
+        $this->orders->rating($order, [
+            'rate' => $validated['rate'],
+            'comment' => $validated['comment'] ?? null,
+        ]);
+        $data['order'] = $order->fresh();
         return $this->sendResponse($data, 'Thanks for your review, It will help us improve', HTTP_OK);
     }
 }

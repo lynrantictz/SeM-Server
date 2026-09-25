@@ -11,8 +11,10 @@ return [
         'client_id' => env('AZAMPAY_SANDBOX_CLIENTID'),
         'client_secret' => env('AZAMPAY_SANDBOX_CLIENTSECRET'),
         'app_name' => env('AZAMPAY_APP_NAME', 'Paperstic'),
-        'timeout_seconds' => (int) env('AZAMPAY_TIMEOUT_SECONDS', 20),
-        'checkout_timeout_seconds' => (int) env('AZAMPAY_CHECKOUT_TIMEOUT_SECONDS', 60),
+        // Keep external gateway calls comfortably below PHP's request deadline.
+        // A timeout must be handled by PaymentCheckoutService, not terminate the API response.
+        'timeout_seconds' => (int) env('AZAMPAY_TIMEOUT_SECONDS', 10),
+        'checkout_timeout_seconds' => (int) env('AZAMPAY_CHECKOUT_TIMEOUT_SECONDS', 18),
         'require_callback_signature' => filter_var(env('AZAMPAY_REQUIRE_CALLBACK_SIGNATURE', true), FILTER_VALIDATE_BOOL),
     ],
 ];

@@ -10,6 +10,7 @@ readonly class PaymentCheckoutResult
         public Payment $payment,
         public bool $promptSent,
         public bool $awaitingGatewayConfirmation = false,
+        public bool $queued = false,
     ) {
     }
 }

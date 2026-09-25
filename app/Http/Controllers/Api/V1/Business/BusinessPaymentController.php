@@ -87,6 +87,7 @@ class BusinessPaymentController extends BaseController
                 'expires_at' => $checkout->payment->expires_at?->toIso8601String(),
                 'prompt_sent' => $checkout->promptSent,
                 'awaiting_gateway_confirmation' => $checkout->awaitingGatewayConfirmation,
+                'queued' => $checkout->queued,
             ],
         ], 'Mobile-money prompt initiated.');
     }

@@ -111,7 +111,13 @@ class AzamPayService implements PaymentGatewayInterface
             ]);
 
             if (! $response->successful()) {
-                throw new RuntimeException("AzamPay token request failed (HTTP {$response->status()}).");
+                $message = data_get($response->json(), 'message')
+                    ?? data_get($response->json(), 'title')
+                    ?? data_get($response->json(), 'error.message')
+                    ?? 'No reason was supplied by AzamPay.';
+                $message = str($message)->squish()->limit(500, '…')->toString();
+
+                throw new RuntimeException("AzamPay token request failed (HTTP {$response->status()}): {$message}");
             }
 
             $token = data_get($response->json(), 'data.accessToken') ?? data_get($response->json(), 'accessToken');
