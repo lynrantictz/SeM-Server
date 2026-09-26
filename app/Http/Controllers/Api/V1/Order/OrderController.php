@@ -19,6 +19,7 @@ use App\Models\Order\OrderCustomerSession;
 use App\Models\Order\OrderStatus;
 use App\Models\Payment\PaymentStatus;
 use App\Models\Section\Code;
+use App\Jobs\WhatsApp\SendOrderCheckoutVerificationWhatsApp;
 use App\Repositories\Customer\CustomerRepository;
 use App\Repositories\Order\OrderRepository;
 use App\Services\PhoneNumberNormalizer;
@@ -95,36 +96,38 @@ class OrderController extends BaseController
             return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        // No WhatsApp/SMS provider is configured in this application yet.
-        // In local development, expose the OTP only through the Laravel log.
-        if (!app()->environment(['local', 'testing'])) {
+        if (! $this->canDeliverCheckoutVerification()) {
             return $this->sendError('Phone verification delivery is not configured. The order was not created.', [], 503);
         }
 
         $otp = (string) random_int(1000, 9999);
-        $checkout = OrderCheckoutVerification::create([
-            'code_id' => $code->id,
-            'channel' => $channel,
-            'phone' => $phone,
-            'checkout_payload' => [
-                'items' => collect($request->input('items'))->map(fn (array $item) => [
-                    'uuid' => $item['uuid'],
-                    'quantity' => $item['quantity'],
-                    'comment' => $item['comment'] ?? null,
-                    'options' => collect($item['options'] ?? [])->map(fn ($option) => [
-                        'uuid' => is_array($option) ? $option['uuid'] : $option,
+        $checkout = DB::transaction(function () use ($code, $channel, $phone, $request, $otp) {
+            $record = OrderCheckoutVerification::query()->create([
+                'code_id' => $code->id,
+                'channel' => $channel,
+                'phone' => $phone,
+                'checkout_payload' => [
+                    'items' => collect($request->input('items'))->map(fn (array $item) => [
+                        'uuid' => $item['uuid'],
+                        'quantity' => $item['quantity'],
+                        'comment' => $item['comment'] ?? null,
+                        'options' => collect($item['options'] ?? [])->map(fn ($option) => [
+                            'uuid' => is_array($option) ? $option['uuid'] : $option,
+                        ])->values()->all(),
                     ])->values()->all(),
-                ])->values()->all(),
-            ],
-            'verification_code' => Hash::make($otp),
-            'code_sent_at' => now(),
-            'expires_at' => now()->addMinutes(self::CHECKOUT_CODE_MINUTES),
-        ]);
+                ],
+                'verification_code' => Hash::make($otp),
+                'code_sent_at' => now(),
+                'whatsapp_send_version' => 1,
+                'whatsapp_status' => 'queued',
+                'expires_at' => now()->addMinutes(self::CHECKOUT_CODE_MINUTES),
+            ]);
 
-        Log::info('Order checkout verification code (local testing only)', [
-            'checkout_uuid' => $checkout->uuid,
-            'otp' => $otp,
-        ]);
+            DB::afterCommit(fn () => SendOrderCheckoutVerificationWhatsApp::dispatch($record->uuid, $otp, 1)
+                ->onQueue(config('whatsapp.queue')));
+
+            return $record;
+        });
 
         return $this->sendResponse([
             'verification' => [
@@ -132,7 +135,7 @@ class OrderController extends BaseController
                 'expires_at' => $checkout->expires_at,
                 'session_expires_at' => $checkout->created_at->copy()->addMinutes(self::CHECKOUT_SESSION_MINUTES),
             ],
-        ], 'Verification code generated. Check the Laravel log during local testing.', HTTP_OK);
+        ], 'Verification code is being sent to your WhatsApp number.', HTTP_OK);
     }
 
     public function confirmCheckoutVerification(PhoneVerifyRequest $request, string $uuid)
@@ -314,46 +317,63 @@ class OrderController extends BaseController
 
     public function resendCheckoutVerification(string $uuid)
     {
-        $checkout = OrderCheckoutVerification::query()->where('uuid', $uuid)->first();
-        if (!$checkout) {
-            return $this->sendError('Checkout verification was not found.', [], HTTP_NOT_FOUND);
-        }
-        if ($checkout->order_id || $checkout->verified_at) {
-            return $this->sendError('This checkout has already been verified.', [], HTTP_UNPROCESSABLE_ENTITY);
-        }
-        $sessionExpiresAt = $checkout->created_at->copy()->addMinutes(self::CHECKOUT_SESSION_MINUTES);
-        if (now()->gte($sessionExpiresAt)) {
-            return $this->sendError('This checkout has expired. Please start checkout again.', [], 410);
-        }
-        $resendAvailableAt = ($checkout->code_sent_at ?? $checkout->created_at)->copy()->addSeconds(20);
-        if (now()->lt($resendAvailableAt)) {
-            $seconds = max(1, $resendAvailableAt->getTimestamp() - now()->getTimestamp());
-            return $this->sendError("Please wait {$seconds} seconds before requesting another code.", [], 429);
-        }
-        if ($checkout->resend_count >= 3) {
-            return $this->sendError('You have reached the resend limit. Please start checkout again later.', [], 429);
+        if (! $this->canDeliverCheckoutVerification()) {
+            return $this->sendError('Phone verification delivery is not configured.', [], 503);
         }
 
-        $otp = (string) random_int(1000, 9999);
-        $codeExpiresAt = now()->addMinutes(self::CHECKOUT_CODE_MINUTES);
-        if ($codeExpiresAt->gt($sessionExpiresAt)) {
-            $codeExpiresAt = $sessionExpiresAt;
+        $result = DB::transaction(function () use ($uuid) {
+            $checkout = OrderCheckoutVerification::query()->where('uuid', $uuid)->lockForUpdate()->first();
+            if (! $checkout) {
+                return ['error' => 'Checkout verification was not found.', 'status' => HTTP_NOT_FOUND];
+            }
+            if ($checkout->order_id || $checkout->verified_at) {
+                return ['error' => 'This checkout has already been verified.', 'status' => HTTP_UNPROCESSABLE_ENTITY];
+            }
+
+            $sessionExpiresAt = $checkout->created_at->copy()->addMinutes(self::CHECKOUT_SESSION_MINUTES);
+            if (now()->gte($sessionExpiresAt)) {
+                return ['error' => 'This checkout has expired. Please start checkout again.', 'status' => 410];
+            }
+
+            $resendAvailableAt = ($checkout->code_sent_at ?? $checkout->created_at)->copy()->addSeconds(20);
+            if (now()->lt($resendAvailableAt)) {
+                $seconds = max(1, $resendAvailableAt->getTimestamp() - now()->getTimestamp());
+                return ['error' => "Please wait {$seconds} seconds before requesting another code.", 'status' => 429];
+            }
+            if ($checkout->resend_count >= 3) {
+                return ['error' => 'You have reached the resend limit. Please start checkout again later.', 'status' => 429];
+            }
+
+            $otp = (string) random_int(1000, 9999);
+            $codeExpiresAt = min(now()->addMinutes(self::CHECKOUT_CODE_MINUTES), $sessionExpiresAt);
+            $sendVersion = $checkout->whatsapp_send_version + 1;
+            $checkout->forceFill([
+                'verification_code' => Hash::make($otp),
+                'code_sent_at' => now(),
+                'attempts' => 0,
+                'resend_count' => $checkout->resend_count + 1,
+                'expires_at' => $codeExpiresAt,
+                'whatsapp_send_version' => $sendVersion,
+                'whatsapp_status' => 'queued',
+                'whatsapp_message_id' => null,
+                'whatsapp_sent_at' => null,
+                'whatsapp_last_attempt_at' => null,
+                'whatsapp_failure_reason' => null,
+            ])->save();
+
+            DB::afterCommit(fn () => SendOrderCheckoutVerificationWhatsApp::dispatch($checkout->uuid, $otp, $sendVersion)
+                ->onQueue(config('whatsapp.queue')));
+
+            return ['checkout' => $checkout];
+        });
+
+        if (isset($result['error'])) {
+            return $this->sendError($result['error'], [], $result['status']);
         }
-        $checkout->update([
-            'verification_code' => Hash::make($otp),
-            'code_sent_at' => now(),
-            'attempts' => 0,
-            'resend_count' => $checkout->resend_count + 1,
-            'expires_at' => $codeExpiresAt,
-        ]);
-        Log::info('Order checkout verification code resent (local testing only)', [
-            'checkout_uuid' => $checkout->uuid,
-            'otp' => $otp,
-        ]);
 
         return $this->sendResponse([
             'resend_available_at' => now()->addSeconds(20),
-        ], 'Verification code generated. Check the Laravel log during local testing.', HTTP_OK);
+        ], 'A new verification code is being sent to your WhatsApp number.', HTTP_OK);
     }
 
     public function resumeCheckoutVerification(string $uuid)
@@ -400,8 +420,18 @@ class OrderController extends BaseController
                 'session_expires_at' => $checkout->created_at->copy()->addMinutes(self::CHECKOUT_SESSION_MINUTES),
                 'code_expired' => $checkout->expires_at->isPast(),
                 'resend_available_at' => ($checkout->code_sent_at ?? $checkout->created_at)->copy()->addSeconds(20),
+                'delivery_status' => $checkout->whatsapp_status,
             ],
         ], 'Pending phone verification restored.', HTTP_OK);
+    }
+
+    private function canDeliverCheckoutVerification(): bool
+    {
+        if (app()->environment(['local', 'testing'])) {
+            return true;
+        }
+
+        return (bool) config('whatsapp.enabled') && config('whatsapp.driver') === 'meta';
     }
 
     private function checkoutUnavailableReason(Code $code, string $channel): ?string

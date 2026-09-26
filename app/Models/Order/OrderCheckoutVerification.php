@@ -14,6 +14,12 @@ class OrderCheckoutVerification extends BaseModel
         'checkout_payload',
         'verification_code',
         'code_sent_at',
+        'whatsapp_send_version',
+        'whatsapp_status',
+        'whatsapp_message_id',
+        'whatsapp_sent_at',
+        'whatsapp_last_attempt_at',
+        'whatsapp_failure_reason',
         'attempts',
         'resend_count',
         'expires_at',
@@ -25,6 +31,8 @@ class OrderCheckoutVerification extends BaseModel
         'checkout_payload' => 'array',
         'expires_at' => 'datetime',
         'code_sent_at' => 'datetime',
+        'whatsapp_sent_at' => 'datetime',
+        'whatsapp_last_attempt_at' => 'datetime',
         'verified_at' => 'datetime',
     ];
 
