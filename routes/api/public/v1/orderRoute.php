@@ -21,4 +21,5 @@ Route::group(['prefix' => 'orders'], function () {
    Route::post('{order}/resend-phone-verification-code', [OrderController::class, 'resendPhoneVerificationCode']);
    Route::put('{order}/change-phone', [OrderController::class, 'changePhone']);
    Route::put('{order}/rating', [OrderController::class, 'rating']);
+   Route::post('{order}/feedback', [OrderController::class, 'feedback'])->middleware('throttle:5,1');
 });

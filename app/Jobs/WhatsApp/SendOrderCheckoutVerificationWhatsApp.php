@@ -45,6 +45,17 @@ class SendOrderCheckoutVerificationWhatsApp implements ShouldQueue, ShouldBeEncr
                 return null;
             }
 
+            // A worker may have been offline when this job was queued. Never
+            // deliver an OTP that the checkout flow can no longer accept.
+            if ($record->expires_at->isPast()) {
+                $record->forceFill([
+                    'whatsapp_status' => 'expired',
+                    'whatsapp_failure_reason' => 'The verification code expired before delivery.',
+                ])->save();
+
+                return null;
+            }
+
             $record->forceFill([
                 'whatsapp_status' => 'sending',
                 'whatsapp_last_attempt_at' => now(),

@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\Order\Trait\PhoneVerificationTrait;
 use App\Http\Controllers\Api\BaseController;
 use App\Models\Business\OrderingChannel;
 use App\Models\Business\Business;
+use App\Models\Customer\Customer;
 use App\Http\Requests\Order\ChangePhoneNumberRequest;
 use App\Http\Requests\Order\OrderRequest;
 use App\Http\Requests\Order\PhoneVerifyRequest;
@@ -16,6 +17,7 @@ use App\Models\Order\Order;
 use App\Models\Order\OrderCheckoutVerification;
 use App\Models\Order\OrderHistoryVerification;
 use App\Models\Order\OrderCustomerSession;
+use App\Models\Order\OrderFeedback;
 use App\Models\Order\OrderStatus;
 use App\Models\Payment\PaymentStatus;
 use App\Models\Section\Code;
@@ -32,6 +34,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Validator;
+use Symfony\Component\HttpFoundation\Response;
 
 class OrderController extends BaseController
 {
@@ -87,6 +90,36 @@ class OrderController extends BaseController
         }
         if ($reason = $this->checkoutUnavailableReason($code, $channel)) {
             return $this->sendError($reason, [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        if ($request->filled('guest_session')) {
+            $session = $this->guestSessions->resolveForBusiness(
+                (int) $code->codable->business->id,
+                $request->string('guest_session')->toString(),
+            );
+            $customer = $session
+                ? Customer::query()->find($session->customer_id)
+                : null;
+
+            if (! $session || ! $customer) {
+                return $this->sendError('Your verified order session has expired. Enter your WhatsApp number to verify again.', [], HTTP_UNAUTHORIZED);
+            }
+
+            try {
+                $order = $this->orders->store(
+                    $code,
+                    ['items' => $request->input('items')],
+                    $channel,
+                    $customer,
+                );
+            } catch (ValidationException $exception) {
+                return $this->sendError('One or more menu items can no longer be ordered.', $exception->errors(), HTTP_UNPROCESSABLE_ENTITY);
+            }
+
+            return $this->sendResponse([
+                'order' => $order->fresh(),
+                'guest_session' => $this->issueGuestOrderSession((int) $customer->id, (int) $order->business_id),
+            ], 'Your verified session was used. The order has been sent to the business.', HTTP_OK);
         }
 
         try {
@@ -490,11 +523,13 @@ class OrderController extends BaseController
             'tax',
             'items.options',
             'items.item',
+            'code',
             'servicePoint.section',
             'servicePoint.subSection',
             'orderingChannel',
             'customerVerification',
             'payment',
+            'feedback',
         ];
         $data['order'] = $order->load($relationship);
         return $this->sendResponse($data, 'Order Retrieved successfully', HTTP_OK);
@@ -702,5 +737,81 @@ class OrderController extends BaseController
         ]);
         $data['order'] = $order->fresh();
         return $this->sendResponse($data, 'Thanks for your review, It will help us improve', HTTP_OK);
+    }
+
+    public function feedback(Request $request, Order $order)
+    {
+        $validated = $request->validate([
+            'type' => ['required', 'string', 'in:service,platform'],
+            'rating' => ['required', 'integer', 'min:1', 'max:5'],
+            'comment' => ['nullable', 'string', 'max:1000'],
+            'access_token' => ['required', 'string', 'max:160'],
+        ]);
+
+        if (! $this->guestSessions->resolveForOrder($order, $validated['access_token'])) {
+            return $this->sendError('Verify your phone to share feedback for this order.', [], HTTP_UNAUTHORIZED);
+        }
+
+        $result = DB::transaction(function () use ($order, $validated) {
+            $lockedOrder = Order::query()
+                ->with(['status', 'paymentStatus'])
+                ->lockForUpdate()
+                ->findOrFail($order->id);
+
+            $isServiceFeedback = $validated['type'] === 'service';
+            if ($isServiceFeedback && $lockedOrder->status?->name !== 'Served') {
+                return ['error' => 'You can rate the business service after your order has been served.', 'status' => HTTP_UNPROCESSABLE_ENTITY];
+            }
+
+            if (! $isServiceFeedback && $lockedOrder->paymentStatus?->name !== 'Completed') {
+                return ['error' => 'You can rate the Paperstic payment experience after payment is completed.', 'status' => HTTP_UNPROCESSABLE_ENTITY];
+            }
+
+            if (OrderFeedback::query()
+                ->where('order_id', $lockedOrder->id)
+                ->where('type', $validated['type'])
+                ->exists()) {
+                return ['error' => 'Feedback for this part of your order has already been submitted.', 'status' => Response::HTTP_CONFLICT];
+            }
+
+            if ($isServiceFeedback && $lockedOrder->rate !== null) {
+                return ['error' => 'Feedback for this business service has already been submitted.', 'status' => Response::HTTP_CONFLICT];
+            }
+
+            $feedback = OrderFeedback::query()->create([
+                'order_id' => $lockedOrder->id,
+                'business_id' => $lockedOrder->business_id,
+                'customer_id' => $lockedOrder->customer_id,
+                'type' => $validated['type'],
+                'rating' => $validated['rating'],
+                'comment' => $validated['comment'] ?? null,
+                'submitted_at' => now(),
+            ]);
+
+            // Preserve the existing business-service rating fields while reports move to order_feedback.
+            if ($isServiceFeedback) {
+                $lockedOrder->forceFill([
+                    'rate' => $validated['rating'],
+                    'comment' => $validated['comment'] ?? null,
+                ])->save();
+            }
+
+            return ['feedback' => $feedback];
+        });
+
+        if (isset($result['error'])) {
+            return $this->sendError($result['error'], [], $result['status']);
+        }
+
+        $data = [
+            'feedback' => $result['feedback'],
+            'order' => $order->fresh(['feedback']),
+        ];
+
+        $message = $validated['type'] === 'service'
+            ? 'Thanks for reviewing this business. Your feedback helps the team improve.'
+            : 'Thanks for reviewing Paperstic. Your feedback helps us improve the ordering experience.';
+
+        return $this->sendResponse($data, $message, HTTP_OK);
     }
 }

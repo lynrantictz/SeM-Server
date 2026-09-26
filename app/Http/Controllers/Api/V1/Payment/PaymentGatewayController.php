@@ -8,6 +8,7 @@ use App\Models\Payment\MobileMoneyProvider;
 use App\Models\Payment\Payment;
 use App\Services\Order\GuestOrderSessionService;
 use App\Services\PaymentGateway\PaymentCheckoutService;
+use App\Services\PaymentGateway\PaymentSettlementService;
 use App\Services\PhoneNumberNormalizer;
 use Illuminate\Http\Request;
 
@@ -16,6 +17,7 @@ class PaymentGatewayController extends BaseController
     public function __construct(
         private readonly PaymentCheckoutService $checkout,
         private readonly GuestOrderSessionService $guestSessions,
+        private readonly PaymentSettlementService $settlements,
     )
     {
     }
@@ -32,6 +34,7 @@ class PaymentGatewayController extends BaseController
         $countryId = $record->business?->district?->city?->country_id;
 
         return $this->sendResponse([
+            'is_sandbox' => config('payments.azampay.environment') === 'sandbox',
             'providers' => MobileMoneyProvider::query()
                 ->where('gateway', 'azampay')
                 ->where('is_active', true)
@@ -114,6 +117,67 @@ class PaymentGatewayController extends BaseController
         $payment = Payment::query()->where('order_id', $record->id)->latest('id')->first();
 
         return $this->sendResponse(['payment' => $payment ? $this->paymentData($payment) : null], 'Payment status retrieved.');
+    }
+
+    public function completeSandboxDemo(Request $request, string $order)
+    {
+        if (config('payments.azampay.environment') !== 'sandbox') {
+            return $this->sendError('Sandbox payment completion is not available in the live environment.', [], HTTP_NOT_FOUND);
+        }
+
+        $validated = $request->validate([
+            'access_token' => ['required', 'string', 'max:160'],
+            'phone' => ['nullable', 'regex:/^[1-9][0-9]{6,14}$/'],
+            'provider' => ['nullable', 'string', 'max:40'],
+        ]);
+        $record = Order::query()->where('number', $order)->firstOrFail();
+        if (! $this->guestSessions->resolveForOrder($record, $validated['access_token'])) {
+            return $this->sendError('Verify your phone to complete this sandbox payment.', [], HTTP_UNAUTHORIZED);
+        }
+
+        $payment = Payment::query()
+            ->where('order_id', $record->id)
+            ->whereIn('status', ['PENDING', 'PROCESSING'])
+            ->latest('id')
+            ->first();
+
+        try {
+            if ($payment) {
+                $completed = $this->settlements->completeSandboxDemo($payment);
+            } else {
+                if (empty($validated['phone']) || empty($validated['provider'])) {
+                    return $this->sendError('Choose a mobile-money provider and number before completing the sandbox demo.', [], HTTP_UNPROCESSABLE_ENTITY);
+                }
+
+                $country = $record->business?->district?->city?->country;
+                $providerExists = MobileMoneyProvider::query()
+                    ->where('gateway', 'azampay')
+                    ->where('is_active', true)
+                    ->where('code', $validated['provider'])
+                    ->where(fn ($query) => $query->where('country_id', $country?->id)->orWhereNull('country_id'))
+                    ->exists();
+                if (! $providerExists) {
+                    return $this->sendError('The selected mobile-money provider is not available for this business.', [], HTTP_UNPROCESSABLE_ENTITY);
+                }
+
+                $phone = (new PhoneNumberNormalizer())->normalize($validated['phone'], $country?->iso2);
+                $completed = $this->settlements->completeSandboxDemoForOrder(
+                    $record,
+                    $phone,
+                    $validated['provider'],
+                    auth()->id(),
+                    auth()->check() ? 'staff' : 'customer',
+                );
+            }
+        } catch (\RuntimeException $exception) {
+            return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
+        } catch (\App\Exceptions\InvalidPhoneNumberException $exception) {
+            return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return $this->sendResponse([
+            'payment' => $this->paymentData($completed),
+        ], 'Sandbox payment completed. No real money was collected.');
     }
 
     private function paymentData(Payment $payment): array

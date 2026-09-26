@@ -3,14 +3,9 @@
 namespace App\Http\Controllers\Api\V1\Payment;
 
 use App\Http\Controllers\Controller;
-use App\Models\Order\Order;
-use App\Models\SystemSetting;
-use App\Models\Business\BusinessPaymentSetting;
 use App\Models\Payment\Payment;
-use App\Models\Payment\PaymentAllocation;
 use App\Models\Payment\PaymentEvent;
-use App\Models\Payment\PaymentMethod;
-use App\Models\Payment\PaymentStatus;
+use App\Services\PaymentGateway\PaymentSettlementService;
 use App\Services\PaymentGateway\Providers\AzamPayService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
@@ -19,7 +14,10 @@ use Illuminate\Validation\ValidationException;
 
 class PaymentWebhookController extends Controller
 {
-    public function __construct(private readonly AzamPayService $azamPay) {}
+    public function __construct(
+        private readonly AzamPayService $azamPay,
+        private readonly PaymentSettlementService $settlements,
+    ) {}
 
     public function handle(Request $request)
     {
@@ -92,47 +90,7 @@ class PaymentWebhookController extends Controller
             ]);
 
             if ($successful) {
-                $order = Order::query()->lockForUpdate()->findOrFail($payment->order_id);
-                $mobileMoney = PaymentMethod::query()->firstOrCreate(['name' => 'Mobile Money']);
-                $completed = PaymentStatus::query()->where('name', 'Completed')->firstOrFail();
-                $order->update([
-                    'payment_method_id' => $mobileMoney->id,
-                    'payment_status_id' => $completed->id,
-                    'paid_amount' => $payment->amount,
-                    'due_amount' => 0,
-                ]);
-
-                $setting = BusinessPaymentSetting::query()->firstOrCreate(
-                    ['business_id' => $order->business_id],
-                    [
-                        'provider' => 'azampay',
-                        'currency' => $payment->currency,
-                        'commission_basis' => 'subtotal_excluding_tax',
-                        'fee_bearer' => 'business',
-                        'settlement_mode' => 'manual_hold',
-                    ],
-                );
-                $commissionBase = $setting->commission_basis === 'subtotal_excluding_tax'
-                    ? (float) $order->total_items_amount
-                    : (float) $payment->amount;
-                $commissionRate = $setting->commission_rate ?? SystemSetting::valueFor('payments.default_commission_rate');
-                $commission = round($commissionBase * ((float) $commissionRate / 100), 2);
-
-                PaymentAllocation::query()->firstOrCreate(['payment_id' => $payment->id], [
-                    'business_id' => $order->business_id,
-                    'gross_amount' => $payment->amount,
-                    'commission_base_amount' => $commissionBase,
-                    'commission_rate' => $commissionRate,
-                    'commission_amount' => $commission,
-                    'gateway_fee_amount' => 0,
-                    'business_payable_amount' => round((float) $payment->amount - $commission, 2),
-                    'currency' => $payment->currency,
-                    'calculation' => [
-                        'basis' => $setting->commission_basis,
-                        'fee_bearer' => $setting->fee_bearer,
-                        'settlement_mode' => $setting->settlement_mode,
-                    ],
-                ]);
+                $this->settlements->completeOrderPayment($payment);
             }
 
             $event->update(['processed_at' => now()]);

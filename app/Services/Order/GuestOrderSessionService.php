@@ -30,6 +30,26 @@ class GuestOrderSessionService
 
     public function resolveForOrder(Order $order, ?string $accessToken): ?OrderCustomerSession
     {
+        $session = $this->resolve($accessToken);
+
+        return $session
+            && (int) $session->business_id === (int) $order->business_id
+            && (int) $session->customer_id === (int) $order->customer_id
+            ? $session
+            : null;
+    }
+
+    public function resolveForBusiness(int $businessId, ?string $accessToken): ?OrderCustomerSession
+    {
+        $session = $this->resolve($accessToken);
+
+        return $session && (int) $session->business_id === $businessId
+            ? $session
+            : null;
+    }
+
+    private function resolve(?string $accessToken): ?OrderCustomerSession
+    {
         [$sessionUuid, $secret] = array_pad(explode('.', (string) $accessToken, 2), 2, null);
         if (! $sessionUuid || ! $secret) {
             return null;
@@ -40,12 +60,7 @@ class GuestOrderSessionService
             ->where('expires_at', '>', now())
             ->first();
 
-        if (! $session || ! Hash::check($secret, $session->token_hash)) {
-            return null;
-        }
-
-        return (int) $session->business_id === (int) $order->business_id
-            && (int) $session->customer_id === (int) $order->customer_id
+        return $session && Hash::check($secret, $session->token_hash)
             ? $session
             : null;
     }

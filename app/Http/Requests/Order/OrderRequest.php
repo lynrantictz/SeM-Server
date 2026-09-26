@@ -26,13 +26,19 @@ class OrderRequest extends FormRequest
                 return [
                     'code' => ['required', 'string', 'max:255'],
                     'phone' => [
-                        'required',
+                        'nullable',
+                        'required_without:guest_session',
                         function (string $attribute, mixed $value, \Closure $fail): void {
+                            if ($value === null) {
+                                return;
+                            }
+
                             if (!is_string($value) && !is_int($value)) {
                                 $fail('The phone field must be a string or integer.');
                             }
                         },
                     ],
+                    'guest_session' => ['nullable', 'string', 'max:160'],
                     'items' => ['required', 'array', 'min:1'],
                     'channel' => ['sometimes', 'string', 'max:24'],
                     'items.*.uuid' => ['required', 'uuid'],

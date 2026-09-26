@@ -9,6 +9,7 @@ use App\Models\Section\Code;
 use App\Models\Section\ServicePoint;
 use App\Models\Business\Business;
 use App\Models\Business\OrderingChannel;
+use App\Models\Customer\Customer;
 use App\Repositories\BaseRepository;
 use App\Repositories\Customer\CustomerRepository;
 use App\Services\TaxCalculatorService;
@@ -24,11 +25,11 @@ class OrderRepository extends BaseRepository
     /**
      * Inputs for storing order
      */
-    public function inputManipulator(Code $code, $inputs): array
+    public function inputManipulator(Code $code, $inputs, ?Customer $verifiedCustomer = null): array
     {
         $business = $code->codable->business;
         $country = $business->district?->city?->country?->iso2;
-        $customer = (new CustomerRepository())->getCustomerByPhone($inputs['phone'], $country);
+        $customer = $verifiedCustomer ?? (new CustomerRepository())->getCustomerByPhone($inputs['phone'], $country);
         $servicePoint = $code->codable instanceof ServicePoint ? $code->codable : null;
         return [
             'business_id' => $business->id,
@@ -44,9 +45,9 @@ class OrderRepository extends BaseRepository
     /**
      * Store new order
      */
-    public function store(Code $code, $inputs, string $channel = 'dine_in'): object
+    public function store(Code $code, $inputs, string $channel = 'dine_in', ?Customer $verifiedCustomer = null): object
     {
-        return DB::transaction(function () use ($code, $inputs, $channel) {
+        return DB::transaction(function () use ($code, $inputs, $channel, $verifiedCustomer) {
             // Lock the business row for update to prevent race conditions
             $business = $code->codable->business()->lockForUpdate()->first();
             // Increment the order number
@@ -61,8 +62,12 @@ class OrderRepository extends BaseRepository
             $business->save();
             //create order
             $order = $code->orders()->create(array_merge(
-                $this->inputManipulator($code, $inputs),
-                ['number' => $orderNumber, 'channel' => $channel]
+                $this->inputManipulator($code, $inputs, $verifiedCustomer),
+                [
+                    'number' => $orderNumber,
+                    'channel' => $channel,
+                    'phone_verified_at' => $verifiedCustomer ? now() : null,
+                ]
             ));
             // create order items
             $business->load('promotions');

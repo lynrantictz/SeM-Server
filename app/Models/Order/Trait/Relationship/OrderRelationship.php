@@ -6,6 +6,7 @@ use App\Models\Business\Business;
 use App\Models\Business\OrderingChannel;
 use App\Models\Customer\Customer;
 use App\Models\Order\OrderCustomerVerification;
+use App\Models\Order\OrderFeedback;
 use App\Models\Order\OrderItem;
 use App\Models\Order\OrderStatus;
 use App\Models\Order\OrderStatusHistory;
@@ -15,6 +16,7 @@ use App\Models\Payment\PaymentMethod;
 use App\Models\Payment\PaymentStatus;
 use App\Models\Auth\User;
 use App\Models\Section\ServicePoint;
+use App\Models\Section\Code;
 use App\Models\Order\OrderStaffNote;
 use App\Models\Order\OrderWorkLock;
 
@@ -90,6 +92,11 @@ trait OrderRelationship
         return $this->belongsTo(ServicePoint::class);
     }
 
+    public function code()
+    {
+        return $this->belongsTo(Code::class);
+    }
+
     public function orderingChannel()
     {
         return $this->belongsTo(OrderingChannel::class, 'channel', 'slug');
@@ -103,5 +110,10 @@ trait OrderRelationship
     public function workLock()
     {
         return $this->hasOne(OrderWorkLock::class);
+    }
+
+    public function feedback()
+    {
+        return $this->hasMany(OrderFeedback::class)->orderBy('submitted_at');
     }
 }
