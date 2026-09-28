@@ -3,21 +3,37 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Welcome to Paperstick</title>
+    <title>Welcome to Paperstic</title>
 </head>
-<body style="margin:0;background:#f8fafc;color:#10233f;font-family:Arial,sans-serif;">
-    <div style="max-width:600px;margin:40px auto;padding:32px;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;">
-        <p style="margin:0 0 24px;color:#ff7619;font-size:13px;font-weight:700;letter-spacing:2px;">PAPERSTICK</p>
-        <h1 style="margin:0 0 16px;font-size:28px;">Welcome{{ $user->name ? ', ' . $user->name : '' }}.</h1>
-        <p style="font-size:16px;line-height:1.6;color:#475569;">
-            Your Paperstick account is ready. Start by creating your vendor and adding your first restaurant, hotel, café, or venue.
-        </p>
-        <p style="margin:28px 0;">
-            <a href="{{ $businessUrl }}" style="display:inline-block;padding:13px 20px;background:#0b4385;color:#ffffff;text-decoration:none;border-radius:999px;font-weight:700;">Continue setup</a>
-        </p>
-        <p style="font-size:14px;line-height:1.6;color:#64748b;">
-            No downloads for your guests. Just scan, order, and pay.
-        </p>
-    </div>
+<body style="margin:0;padding:0;background:#f5f8fc;color:#10233f;font-family:Arial,Helvetica,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f8fc;">
+    <tr>
+        <td align="center" style="padding:32px 16px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:620px;background:#ffffff;border:1px solid #e5eaf1;border-radius:16px;overflow:hidden;">
+                @include('emails.partials.header')
+                <tr>
+                    <td style="padding:42px 36px;background:#0b4385;">
+                        <p style="margin:0 0 14px;color:#ffb27d;font-size:12px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;">Account ready</p>
+                        <h1 style="margin:0;color:#ffffff;font-size:31px;line-height:1.2;">Welcome{{ $user->name ? ', ' . $user->name : '' }}.</h1>
+                        <p style="margin:18px 0 0;color:#dce9f7;font-size:16px;line-height:1.65;">Your Paperstic account is ready for your first business.</p>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding:36px;color:#334155;">
+                        <p style="margin:0;font-size:16px;line-height:1.7;">Start by creating your vendor and adding your first restaurant, hotel, café, or venue. You can then set up your menu, service locations, and team.</p>
+                        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:30px 0 0;">
+                            <tr>
+                                <td style="border-radius:999px;background:#ff7619;">
+                                    <a href="{{ $businessUrl }}" style="display:inline-block;padding:15px 26px;color:#ffffff;text-decoration:none;font-size:15px;font-weight:bold;border-radius:999px;">Continue setup</a>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                @include('emails.partials.footer')
+            </table>
+        </td>
+    </tr>
+</table>
 </body>
 </html>

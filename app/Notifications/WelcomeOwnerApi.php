@@ -19,7 +19,7 @@ class WelcomeOwnerApi extends Notification implements ShouldQueue
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject('Welcome to Paperstick')
+            ->subject('Welcome to Paperstic')
             ->view('emails.welcome-owner', [
                 'user' => $notifiable,
                 'businessUrl' => config('app.business_url'),

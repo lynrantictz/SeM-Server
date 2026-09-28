@@ -53,7 +53,7 @@ class VendorInvitation extends Notification implements ShouldQueue
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject("You're invited to {$this->vendor->name} on Paperstick")
+            ->subject("You're invited to {$this->vendor->name} on Paperstic")
             ->view('emails.vendor-invitation', [
                 'user' => $notifiable,
                 'vendor' => $this->vendor,

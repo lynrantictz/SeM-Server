@@ -23,7 +23,7 @@ class PasswordResetApi extends Notification implements ShouldQueue
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject('Reset your Paperstick password')
+            ->subject('Reset your Paperstic password')
             ->view('emails.password-reset', [
                 'user' => $notifiable,
                 'resetUrl' => $this->resetUrl,
