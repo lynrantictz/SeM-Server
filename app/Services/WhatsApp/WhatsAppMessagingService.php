@@ -26,10 +26,11 @@ class WhatsAppMessagingService
 
         $accessToken = (string) config('whatsapp.access_token');
         $phoneNumberId = (string) config('whatsapp.phone_number_id');
-        $graphVersion = (string) config('whatsapp.graph_version');
+        $graphVersion = trim((string) config('whatsapp.graph_version'));
         if ($accessToken === '' || $phoneNumberId === '' || $graphVersion === '') {
             throw new RuntimeException('Meta WhatsApp credentials are not configured.');
         }
+        $graphVersion = 'v' . ltrim($graphVersion, 'vV');
 
         $response = $this->client()
             ->withToken($accessToken)
