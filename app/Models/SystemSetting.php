@@ -12,7 +12,7 @@ class SystemSetting extends BaseModel
 {
     protected $fillable = ['key', 'value', 'value_type', 'description'];
 
-    public function audits(): HasMany
+    public function systemSettingAudits(): HasMany
     {
         return $this->hasMany(SystemSettingAudit::class);
     }

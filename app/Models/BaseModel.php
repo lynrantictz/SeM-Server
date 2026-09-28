@@ -4,9 +4,11 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class BaseModel extends Model
+class BaseModel extends Model implements Auditable
 {
+    use \OwenIt\Auditing\Auditable;
 
     protected $hidden = [
         'created_at',
@@ -14,6 +16,18 @@ class BaseModel extends Model
     ];
 
     protected $guarded = ['uuid'];
+
+    /**
+     * Auditable events.
+     *
+     * @var array
+     */
+    protected $auditEvents = [
+        'deleted',
+        'restored',
+        'updated',
+        'created'
+    ];
 
     /**
      * Get the route key for the model.
@@ -38,6 +52,5 @@ class BaseModel extends Model
                 $model->uuid = (string) Str::uuid();
             }
         });
-
     }
 }
