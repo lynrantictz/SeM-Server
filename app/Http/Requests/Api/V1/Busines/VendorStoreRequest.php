@@ -42,7 +42,7 @@ class VendorStoreRequest extends FormRequest
         }
 
         $nationalNumber = $phone;
-        while (str_starts_with($nationalNumber, $countryCode)) {
+        while ($countryCode !== '' && str_starts_with($nationalNumber, $countryCode)) {
             $nationalNumber = substr($nationalNumber, strlen($countryCode));
         }
 
@@ -66,7 +66,7 @@ class VendorStoreRequest extends FormRequest
                     'name' => 'required',
                     'email' => 'required|string|email|max:255|unique:users,email',
                     'name' => 'required',
-                    'phone' => ['required', 'string', 'regex:/^\d{8,15}$/', 'unique:vendors,phone'],
+                    'phone' => ['required', 'string', 'regex:/^\d{10,15}$/', 'unique:vendors,phone'],
                     'address' => 'required',
                 ];
                 break;
@@ -92,7 +92,7 @@ class VendorStoreRequest extends FormRequest
                     'phone' => [
                         'sometimes',
                         'string',
-                        'regex:/^\d{8,15}$/',
+                        'regex:/^\d{10,15}$/',
                         Rule::unique('vendors', 'phone')->ignore($this->vendor->id),
                     ],
 
