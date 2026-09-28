@@ -29,6 +29,17 @@ class SystemSetting extends BaseModel
         });
     }
 
+    public static function booleanValueFor(string $key, bool $default = false): bool
+    {
+        return Cache::remember("system-settings.{$key}.boolean", now()->addMinutes(15), function () use ($key, $default): bool {
+            $value = static::query()->where('key', $key)->value('value');
+
+            return is_string($value)
+                ? filter_var($value, FILTER_VALIDATE_BOOLEAN)
+                : $default;
+        });
+    }
+
     public function changeValue(string $value, ?User $user = null, ?string $reason = null): void
     {
         DB::transaction(function () use ($value, $user, $reason): void {
@@ -46,6 +57,7 @@ class SystemSetting extends BaseModel
             ]);
             $setting->update(['value' => $value]);
             Cache::forget("system-settings.{$setting->key}");
+            Cache::forget("system-settings.{$setting->key}.boolean");
         });
     }
 }
