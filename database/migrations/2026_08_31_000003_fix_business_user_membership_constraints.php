@@ -9,7 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('business_user', function (Blueprint $table) {
-            $table->dropUnique('business_users_title_unique');
+            $table->dropUnique('business_user_title_unique');
             $table->unique(['business_id', 'user_id'], 'business_user_business_user_unique');
         });
     }
