@@ -7,4 +7,10 @@ Route::prefix('v1')->group(function () {
     Route::middleware(['auth:api', 'business.context'])->group(function () {
         includeRouteFiles(__DIR__ . '/api/authenticated/v1/');
     });
+
+    Route::fallback(function () {
+        return response()->json([
+            'message' => 'Not Found.',
+        ], 404);
+    });
 });
