@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\BaseController;
 use App\Models\Order\Order;
 use App\Models\Payment\MobileMoneyProvider;
 use App\Models\Payment\Payment;
+use App\Services\Business\BusinessActivationService;
 use App\Services\Order\GuestOrderSessionService;
 use App\Services\PaymentGateway\PaymentCheckoutService;
 use App\Services\PaymentGateway\PaymentSettlementService;
@@ -18,6 +19,7 @@ class PaymentGatewayController extends BaseController
         private readonly PaymentCheckoutService $checkout,
         private readonly GuestOrderSessionService $guestSessions,
         private readonly PaymentSettlementService $settlements,
+        private readonly BusinessActivationService $activation,
     )
     {
     }
@@ -30,6 +32,9 @@ class PaymentGatewayController extends BaseController
             ->firstOrFail();
         if (! $this->guestSessions->resolveForOrder($record, $request->query('access_token'))) {
             return $this->sendError('Verify your phone to access payment options for this order.', [], HTTP_UNAUTHORIZED);
+        }
+        if (! $this->activation->status($record->business)['can_accept_mobile_money']) {
+            return $this->sendError('Mobile-money checkout is not available for this business yet.', [], HTTP_UNPROCESSABLE_ENTITY);
         }
         $countryId = $record->business?->district?->city?->country_id;
 
@@ -72,6 +77,9 @@ class PaymentGatewayController extends BaseController
         }
         if ($record->paymentStatus?->name === 'Completed') {
             return $this->sendError('This order has already been paid.', [], 409);
+        }
+        if (! $this->activation->status($record->business)['can_accept_mobile_money']) {
+            return $this->sendError('Mobile-money checkout is not available for this business yet.', [], HTTP_UNPROCESSABLE_ENTITY);
         }
 
         $country = $record->business?->district?->city?->country;

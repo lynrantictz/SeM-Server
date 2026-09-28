@@ -160,7 +160,7 @@ class ComplianceDocumentController extends BaseController
             $document = $latestByType->get($type);
 
             return $document
-                && $document->status !== 'rejected'
+                && $document->status === 'approved'
                 && !($document->expires_at && $document->expires_at->isPast());
         });
 

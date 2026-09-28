@@ -8,6 +8,7 @@ use App\Http\Requests\Api\V1\Business\BusinessRequest;
 use App\Models\Business\Business;
 use App\Models\Business\Vendor;
 use App\Repositories\Business\BusinessRepository;
+use App\Services\Business\BusinessActivationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 
@@ -17,7 +18,10 @@ class BusinessController extends BaseController
 
     protected BusinessRepository $businesses;
 
-    public function __construct(BusinessRepository $businesses)
+    public function __construct(
+        BusinessRepository $businesses,
+        private readonly BusinessActivationService $activation,
+    )
     {
         $this->businesses = $businesses;
     }
@@ -39,6 +43,9 @@ class BusinessController extends BaseController
             ->orderByDesc('businesses.created_at')
             ->paginate($validated['per_page'] ?? 10)
             ->withQueryString();
+        $paginator->getCollection()->each(
+            fn (Business $business) => $business->setAttribute('activation', $this->activation->status($business))
+        );
 
         return $this->sendResponse([
             'businesses' => $this->businessPaginatorData($paginator),
@@ -68,6 +75,7 @@ class BusinessController extends BaseController
             ->getQuery()
             ->whereKey($business->id)
             ->firstOrFail();
+        $business->setAttribute('activation', $this->activation->status($business));
 
         return $this->sendResponse([
             'business' => $business,

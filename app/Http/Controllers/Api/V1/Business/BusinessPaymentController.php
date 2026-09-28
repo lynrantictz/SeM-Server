@@ -7,6 +7,7 @@ use App\Models\Business\Business;
 use App\Models\Business\BusinessUser;
 use App\Models\Order\Order;
 use App\Models\Payment\MobileMoneyProvider;
+use App\Services\Business\BusinessActivationService;
 use App\Services\PaymentGateway\PaymentCheckoutService;
 use Illuminate\Http\Request;
 
@@ -14,6 +15,7 @@ class BusinessPaymentController extends BaseController
 {
     public function __construct(
         private readonly PaymentCheckoutService $checkout,
+        private readonly BusinessActivationService $activation,
     ) {
     }
 
@@ -114,8 +116,17 @@ class BusinessPaymentController extends BaseController
 
     private function ensureCheckoutEnabled(Business $business): void
     {
-        $setting = $business->paymentSetting;
-        abort_unless($setting?->provider === 'azampay' && $setting->is_checkout_enabled, HTTP_UNPROCESSABLE_ENTITY,
+        $status = $this->activation->status($business);
+
+        if (! $status['business_enabled']) {
+            abort(HTTP_UNPROCESSABLE_ENTITY, 'This business is not active yet.');
+        }
+
+        if (! $status['documents_approved']) {
+            abort(HTTP_UNPROCESSABLE_ENTITY, 'Required compliance documents must be approved before mobile-money checkout can be enabled.');
+        }
+
+        abort_unless($status['payment_checkout_enabled'], HTTP_UNPROCESSABLE_ENTITY,
             'Mobile-money checkout is not enabled for this business yet.');
     }
 }
