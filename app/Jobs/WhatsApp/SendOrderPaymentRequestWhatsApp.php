@@ -25,11 +25,12 @@ class SendOrderPaymentRequestWhatsApp implements ShouldQueue, ShouldBeEncrypted
     public function handle(WhatsAppMessagingService $whatsApp): void
     {
         $link = OrderPaymentLink::query()->with('order.customer', 'order.business')->where('uuid', $this->paymentLinkUuid)->first();
-        if (! $link || $link->revoked_at || $link->expires_at->isPast() || ! $link->order?->customer?->phone_e164) return;
+        $recipientPhone = $link?->recipient_phone_e164 ?: $link?->order?->customer?->phone_e164;
+        if (! $link || $link->revoked_at || $link->expires_at->isPast() || ! $recipientPhone) return;
 
         try {
             $result = $whatsApp->sendOrderPaymentRequest(
-                $link->order->customer->phone_e164,
+                $recipientPhone,
                 $link->order->business->name,
                 $link->order->number,
                 $link->order->business->currency ?? 'TZS',

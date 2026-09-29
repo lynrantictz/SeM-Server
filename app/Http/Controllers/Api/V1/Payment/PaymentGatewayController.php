@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\BaseController;
 use App\Models\Order\Order;
 use App\Models\Payment\MobileMoneyProvider;
 use App\Models\Payment\Payment;
+use App\Jobs\WhatsApp\SendOrderPaymentRequestWhatsApp;
 use App\Services\Business\BusinessActivationService;
 use App\Services\Order\GuestOrderSessionService;
 use App\Services\Order\GuestCustomerSessionService;
@@ -63,12 +64,26 @@ class PaymentGatewayController extends BaseController
 
     public function paymentLink(string $token)
     {
-        $link = $this->paymentLinks->resolve($token);
-        if (! $link) return $this->sendError('This payment link has expired or is no longer available.', [], HTTP_GONE);
+        $resolution = $this->paymentLinks->resolveWithStatus($token);
+        $link = $resolution['link'];
+        if (! $link) {
+            $code = match ($resolution['status']) {
+                'expired' => 'PAYMENT_LINK_EXPIRED',
+                'revoked' => 'PAYMENT_LINK_REVOKED',
+                default => 'PAYMENT_LINK_INVALID',
+            };
+            return $this->sendError('This payment link is no longer available. It may have expired or been replaced.', ['code' => $code], HTTP_GONE);
+        }
 
-        $order = Order::query()->with(['status', 'paymentStatus'])->findOrFail($link->order_id);
-        if (in_array($order->status?->name, ['Cancelled', 'Refunded', 'Completed'], true) || $order->paymentStatus?->name === 'Completed') {
-            return $this->sendError('This order is no longer available for payment.', [], HTTP_GONE);
+        $order = Order::query()->with(['status', 'paymentStatus', 'business'])->find($link->order_id);
+        if (! $order) {
+            return $this->sendError('This payment link is no longer available.', ['code' => 'PAYMENT_LINK_INVALID'], HTTP_GONE);
+        }
+        if ($order->paymentStatus?->name === 'Completed') {
+            return $this->sendError('This order has already been paid. Thank you.', ['code' => 'ORDER_ALREADY_PAID'], HTTP_GONE);
+        }
+        if (in_array($order->status?->name, ['Cancelled', 'Refunded', 'Completed'], true)) {
+            return $this->sendError('This order is no longer available for payment.', ['code' => 'ORDER_NOT_PAYABLE'], HTTP_GONE);
         }
 
         $minutes = max(1, now()->diffInMinutes($link->expires_at, false));
@@ -77,12 +92,23 @@ class PaymentGatewayController extends BaseController
             'order_number' => $order->number,
             'payment_session' => $session['access_token'],
             'expires_at' => $link->expires_at,
+            'business_name' => $order->business?->name,
+            'business_logo_url' => $order->business?->logo_url,
+            'total_amount' => $order->total_amount,
+            'currency' => $order->business?->currency ?? 'TZS',
         ], 'Payment link verified.');
     }
 
     public function createSharePaymentLink(Request $request, string $order)
     {
-        $record = Order::query()->with(['status', 'paymentStatus'])->where('number', $order)->firstOrFail();
+        $validated = $request->validate([
+            'access_token' => ['nullable', 'string', 'max:160'],
+            'phone' => ['required', 'string', 'max:30'],
+        ]);
+        $record = Order::query()
+            ->with(['status', 'paymentStatus', 'customer', 'business.district.city.country'])
+            ->where('number', $order)
+            ->firstOrFail();
         if (! $this->canAccessOrder($request, $record, $request->input('access_token'))) {
             return $this->sendError('Verify your phone to share this payment link.', [], HTTP_UNAUTHORIZED);
         }
@@ -90,11 +116,31 @@ class PaymentGatewayController extends BaseController
             return $this->sendError('This order is not available for payment sharing.', [], HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $issued = $this->paymentLinks->issue($record);
+        try {
+            $recipient = (new PhoneNumberNormalizer())->normalize(
+                $validated['phone'],
+                $record->business?->district?->city?->country?->iso2,
+            );
+        } catch (\App\Exceptions\InvalidPhoneNumberException $exception) {
+            return $this->sendError($exception->getMessage(), ['phone' => [$exception->getMessage()]], HTTP_UNPROCESSABLE_ENTITY);
+        }
+        if ($recipient === $record->customer?->phone_e164) {
+            return $this->sendError('Please enter a different mobile number. This payment link is for someone else to pay.', ['phone' => ['Enter a number different from the customer on this order.']], HTTP_UNPROCESSABLE_ENTITY);
+        }
+        $limit = max(1, (int) config('payments.customer_payment_link_send_limit', 2));
+        $used = $this->paymentLinks->customerShareCount($record);
+        if ($used >= $limit) {
+            return $this->sendError('This order has reached its payment-link sharing limit.', ['code' => 'PAYMENT_LINK_SHARE_LIMIT_REACHED'], HTTP_TOO_MANY_REQUESTS);
+        }
+
+        $issued = $this->paymentLinks->issue($record, null, $recipient, 'customer', false);
+        \Illuminate\Support\Facades\DB::afterCommit(fn () => SendOrderPaymentRequestWhatsApp::dispatch($issued['link']->uuid, $issued['token'])->onQueue(config('whatsapp.queue')));
+        $used++;
         return $this->sendResponse([
-            'url' => $this->paymentLinks->url($issued['token']),
             'expires_at' => $issued['link']->expires_at,
-        ], 'Payment link created.');
+            'remaining_sends' => max(0, $limit - $used),
+            'share_activity' => $this->paymentLinks->customerShareActivity($record),
+        ], 'Secure payment link queued for WhatsApp delivery.');
     }
 
     public function checkout(Request $request, string $order)

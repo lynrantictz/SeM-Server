@@ -233,7 +233,7 @@ class BusinessOrderController extends BaseController
         // one, notify its verified customer. Staff-created orders deliberately
         // stay manual so the counter can choose cash, link, or QR payment.
         if ($validated['action'] === 'approve' && ! $updated->user_id && $updated->customer?->phone_e164 && app(BusinessActivationService::class)->status($business)['can_accept_mobile_money']) {
-            $issued = $paymentLinks->issue($updated, auth()->id());
+            $issued = $paymentLinks->issue($updated, auth()->id(), $updated->customer->phone_e164, 'staff');
             SendOrderPaymentRequestWhatsApp::dispatch($issued['link']->uuid, $issued['token'])->onQueue(config('whatsapp.queue'));
         }
 
@@ -272,7 +272,7 @@ class BusinessOrderController extends BaseController
         abort_unless($record->paymentStatus?->name === 'Pending', HTTP_UNPROCESSABLE_ENTITY, 'Payment has already been recorded for this order.');
         abort_unless(app(BusinessActivationService::class)->status($business)['can_accept_mobile_money'], HTTP_UNPROCESSABLE_ENTITY, 'Mobile-money checkout is not available for this business yet.');
 
-        $issued = $paymentLinks->issue($record, auth()->id());
+        $issued = $paymentLinks->issue($record, auth()->id(), $record->customer?->phone_e164, 'staff');
         $url = $paymentLinks->url($issued['token']);
         if ($record->customer?->phone_e164) {
             DB::afterCommit(fn () => SendOrderPaymentRequestWhatsApp::dispatch($issued['link']->uuid, $issued['token'])->onQueue(config('whatsapp.queue')));
