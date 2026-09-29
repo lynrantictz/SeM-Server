@@ -75,7 +75,15 @@ class PaymentGatewayController extends BaseController
             return $this->sendError('This payment link is no longer available. It may have expired or been replaced.', ['code' => $code], HTTP_GONE);
         }
 
-        $order = Order::query()->with(['status', 'paymentStatus', 'business'])->find($link->order_id);
+        $order = Order::query()->with([
+            'status',
+            'paymentStatus',
+            'business.contacts',
+            'business.district.city.country',
+            'items.item',
+            'orderingChannel',
+            'tax',
+        ])->find($link->order_id);
         if (! $order) {
             return $this->sendError('This payment link is no longer available.', ['code' => 'PAYMENT_LINK_INVALID'], HTTP_GONE);
         }
@@ -94,6 +102,19 @@ class PaymentGatewayController extends BaseController
             'expires_at' => $link->expires_at,
             'business_name' => $order->business?->name,
             'business_logo_url' => $order->business?->logo_url,
+            'business_location' => $order->business?->location,
+            'business_city' => $order->business?->district?->city?->name,
+            'business_country' => $order->business?->district?->city?->country?->name,
+            'business_contacts' => $order->business?->contacts->pluck('contact')->values()->all() ?? [],
+            'order_type' => $order->orderingChannel?->name ?? $order->channel,
+            'items' => $order->items->map(fn ($item) => [
+                'name' => $item->item?->name ?? 'Menu item',
+                'quantity' => $item->quantity,
+                'total_amount' => $item->total_amount,
+            ])->values()->all(),
+            'subtotal_amount' => $order->total_items_amount,
+            'tax_amount' => $order->tax_amount,
+            'tax_percent' => $order->tax?->percent,
             'total_amount' => $order->total_amount,
             'currency' => $order->business?->currency ?? 'TZS',
         ], 'Payment link verified.');
