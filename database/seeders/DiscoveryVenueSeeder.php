@@ -16,7 +16,7 @@ class DiscoveryVenueSeeder extends Seeder
     {
         $vendor = Vendor::firstOrCreate(
             ['email' => 'discovery-demo@paperstick.co.tz'],
-            ['country_id' => 1, 'name' => 'Paperstick Discovery Demo', 'phone' => '255700000100', 'address' => 'Dar es Salaam, Tanzania']
+            ['country_id' => 1, 'name' => 'Paperstic Discovery Demo', 'phone' => '255700000100', 'address' => 'Dar es Salaam, Tanzania']
         );
 
         $types = BusinessType::query()->whereIn('name', ['Restaurant', 'Coffee Shop', 'Hotel'])->pluck('id', 'name');

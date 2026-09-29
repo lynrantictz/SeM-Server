@@ -237,7 +237,7 @@ class VendorUserController extends BaseController
 
         return $this->sendResponse([], $invitation->requires_password_setup
             ? 'Invitation accepted. You can now sign in with your new password.'
-            : 'Invitation accepted. Your existing Paperstick account now has access.');
+            : 'Invitation accepted. Your existing Paperstic account now has access.');
     }
 
     public function showInvitation(Request $request)

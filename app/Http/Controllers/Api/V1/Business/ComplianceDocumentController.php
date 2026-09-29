@@ -133,7 +133,7 @@ class ComplianceDocumentController extends BaseController
             $scope . '_id' => $owner->id,
             'compliance_document_type_id' => $definition['id'],
             // Keep immutable key/name snapshots so historical records remain
-            // intelligible if Paperstick later renames or retires a type.
+            // intelligible if Paperstic later renames or retires a type.
             'document_type' => $definition['key'],
             'document_type_name' => $definition['name'],
             'document_number' => $validated['document_number'] ?? null,

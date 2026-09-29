@@ -33,6 +33,6 @@ class ForgotPasswordController extends BaseController
         }
 
         // Deliberately generic: this endpoint must not reveal which emails are registered.
-        return $this->sendResponse([], 'If an active Paperstick email account matches, we have sent password reset instructions.');
+        return $this->sendResponse([], 'If an active Paperstic email account matches, we have sent password reset instructions.');
     }
 }
