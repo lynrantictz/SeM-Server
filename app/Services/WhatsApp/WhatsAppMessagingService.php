@@ -9,10 +9,10 @@ use RuntimeException;
 
 class WhatsAppMessagingService
 {
-    public function sendOrderPaymentRequest(string $phone, string $businessName, string $orderNumber, string $amount, string $paymentToken): WhatsAppMessageResult
+    public function sendOrderPaymentRequest(string $phone, string $businessName, string $orderNumber, string $currency, string $amount, string $paymentToken): WhatsAppMessageResult
     {
         if (config('whatsapp.driver') === 'log') {
-            Log::info('Order payment request (local testing only)', compact('phone', 'businessName', 'orderNumber', 'amount', 'paymentToken'));
+            Log::info('Order payment request (local testing only)', compact('phone', 'businessName', 'orderNumber', 'currency', 'amount', 'paymentToken'));
             return new WhatsAppMessageResult("local-payment-{$orderNumber}");
         }
 
@@ -28,6 +28,7 @@ class WhatsAppMessagingService
                     ['type' => 'body', 'parameters' => [
                         ['type' => 'text', 'text' => $businessName],
                         ['type' => 'text', 'text' => $orderNumber],
+                        ['type' => 'text', 'text' => $currency],
                         ['type' => 'text', 'text' => $amount],
                     ]],
                     ['type' => 'button', 'sub_type' => 'url', 'index' => '0', 'parameters' => [
@@ -56,27 +57,27 @@ class WhatsAppMessagingService
         }
 
         $response = $this->metaClient()->post(sprintf('/%s/%s/messages', $this->graphVersion(), config('whatsapp.phone_number_id')), [
-                'messaging_product' => 'whatsapp',
-                'recipient_type' => 'individual',
-                'to' => $phone,
-                'type' => 'template',
-                'template' => [
-                    'name' => config('whatsapp.order_verification_template'),
-                    'language' => ['code' => config('whatsapp.template_language')],
-                    'components' => [
-                        [
-                            'type' => 'body',
-                            'parameters' => [['type' => 'text', 'text' => $code]],
-                        ],
-                        [
-                            'type' => 'button',
-                            'sub_type' => 'url',
-                            'index' => '0',
-                            'parameters' => [['type' => 'text', 'text' => $code]],
-                        ],
+            'messaging_product' => 'whatsapp',
+            'recipient_type' => 'individual',
+            'to' => $phone,
+            'type' => 'template',
+            'template' => [
+                'name' => config('whatsapp.order_verification_template'),
+                'language' => ['code' => config('whatsapp.template_language')],
+                'components' => [
+                    [
+                        'type' => 'body',
+                        'parameters' => [['type' => 'text', 'text' => $code]],
+                    ],
+                    [
+                        'type' => 'button',
+                        'sub_type' => 'url',
+                        'index' => '0',
+                        'parameters' => [['type' => 'text', 'text' => $code]],
                     ],
                 ],
-            ]);
+            ],
+        ]);
 
         return $this->result($response);
     }

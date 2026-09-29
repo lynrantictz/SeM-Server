@@ -80,6 +80,23 @@ class PaymentGatewayController extends BaseController
         ], 'Payment link verified.');
     }
 
+    public function createSharePaymentLink(Request $request, string $order)
+    {
+        $record = Order::query()->with(['status', 'paymentStatus'])->where('number', $order)->firstOrFail();
+        if (! $this->canAccessOrder($request, $record, $request->input('access_token'))) {
+            return $this->sendError('Verify your phone to share this payment link.', [], HTTP_UNAUTHORIZED);
+        }
+        if (! in_array($record->status?->name, ['Processing', 'Served'], true) || $record->paymentStatus?->name === 'Completed') {
+            return $this->sendError('This order is not available for payment sharing.', [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $issued = $this->paymentLinks->issue($record);
+        return $this->sendResponse([
+            'url' => $this->paymentLinks->url($issued['token']),
+            'expires_at' => $issued['link']->expires_at,
+        ], 'Payment link created.');
+    }
+
     public function checkout(Request $request, string $order)
     {
         $validated = $request->validate([

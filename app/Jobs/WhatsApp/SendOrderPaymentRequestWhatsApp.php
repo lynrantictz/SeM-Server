@@ -32,6 +32,7 @@ class SendOrderPaymentRequestWhatsApp implements ShouldQueue, ShouldBeEncrypted
                 $link->order->customer->phone_e164,
                 $link->order->business->name,
                 $link->order->number,
+                $link->order->business->currency ?? 'TZS',
                 number_format((float) $link->order->total_amount),
                 $this->token,
             );
