@@ -13,6 +13,7 @@ use App\Models\Customer\Customer;
 use App\Repositories\BaseRepository;
 use App\Repositories\Customer\CustomerRepository;
 use App\Services\TaxCalculatorService;
+use App\Models\Payment\PaymentStatus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
@@ -35,8 +36,8 @@ class OrderRepository extends BaseRepository
             'business_id' => $business->id,
             'user_id' => null, //TODO:: update later when a registered user is making order
             'customer_id' => $customer->id,
-            'order_status_id' => config('constants.order_status.PENDING'),
-            'payment_status_id' => config('constants.payment_status.PENDING'),
+            'order_status_id' => $this->statusId('Pending'),
+            'payment_status_id' => $this->paymentStatusId('Pending'),
             'service_point_id' => $servicePoint?->id,
             'service_point_label' => $servicePoint?->display_name,
         ];
@@ -121,7 +122,7 @@ class OrderRepository extends BaseRepository
                 'user_id' => $userId,
                 'customer_id' => $customer?->id,
                 'order_status_id' => $processingStatus->id,
-                'payment_status_id' => config('constants.payment_status.PENDING'),
+                'payment_status_id' => $this->paymentStatusId('Pending'),
                 'approver_id' => $userId,
                 'assigned_to_user_id' => $userId,
                 'approved_at' => now(),
@@ -149,6 +150,16 @@ class OrderRepository extends BaseRepository
     public function totalsFor(Business $business, float|int $itemsTotal): array
     {
         return $this->calculateTax($business->district->city->country, $itemsTotal);
+    }
+
+    private function statusId(string $name): int
+    {
+        return OrderStatus::query()->where('name', $name)->firstOrFail()->id;
+    }
+
+    private function paymentStatusId(string $name): int
+    {
+        return PaymentStatus::query()->where('name', $name)->firstOrFail()->id;
     }
 
     public function verifyPhone(Order $order)
