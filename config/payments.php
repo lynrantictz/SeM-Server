@@ -1,6 +1,7 @@
 <?php
 
 return [
+    'payment_link_lifetime_hours' => (int) env('PAYMENT_LINK_LIFETIME_HOURS', 24),
     'azampay' => [
         'environment' => env('AZAMPAY_ENV', 'sandbox'),
         'base_url' => env('AZAMPAY_SANDBOX_BASEURL') ?: 'https://sandbox.azampay.co.tz',

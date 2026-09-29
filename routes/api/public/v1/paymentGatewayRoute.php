@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 
 
 Route::group(['prefix' => 'payment-gateways'], function () {
+    Route::get('links/{token}', [PaymentGatewayController::class, 'paymentLink'])->middleware('throttle:30,1');
     Route::get('{order}/providers', [PaymentGatewayController::class, 'providers'])->middleware('throttle:30,1');
     Route::post('{order}/mno-checkout', [PaymentGatewayController::class, 'checkout'])->middleware('throttle:3,1');
     // Demo reviewers may retry after a simulated gateway timeout. The endpoint

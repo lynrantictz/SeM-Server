@@ -12,6 +12,7 @@ return [
     'verify_token' => env('META_WHATSAPP_VERIFY_TOKEN'),
     'verify_webhook_signature' => (bool) env('META_WHATSAPP_VERIFY_WEBHOOK_SIGNATURE', true),
     'order_verification_template' => env('META_WHATSAPP_ORDER_VERIFICATION_TEMPLATE', 'paperstic_order_verification'),
+    'order_payment_template' => env('META_WHATSAPP_ORDER_PAYMENT_TEMPLATE', 'paperstic_payment_request'),
     'template_language' => env('META_WHATSAPP_TEMPLATE_LANGUAGE', 'en_US'),
     'timeout_seconds' => (int) env('META_WHATSAPP_TIMEOUT_SECONDS', 15),
 ];

@@ -9,6 +9,37 @@ use RuntimeException;
 
 class WhatsAppMessagingService
 {
+    public function sendOrderPaymentRequest(string $phone, string $businessName, string $orderNumber, string $amount, string $paymentToken): WhatsAppMessageResult
+    {
+        if (config('whatsapp.driver') === 'log') {
+            Log::info('Order payment request (local testing only)', compact('phone', 'businessName', 'orderNumber', 'amount', 'paymentToken'));
+            return new WhatsAppMessageResult("local-payment-{$orderNumber}");
+        }
+
+        $response = $this->metaClient()->post(sprintf('/%s/%s/messages', $this->graphVersion(), config('whatsapp.phone_number_id')), [
+            'messaging_product' => 'whatsapp',
+            'recipient_type' => 'individual',
+            'to' => $phone,
+            'type' => 'template',
+            'template' => [
+                'name' => config('whatsapp.order_payment_template'),
+                'language' => ['code' => config('whatsapp.template_language')],
+                'components' => [
+                    ['type' => 'body', 'parameters' => [
+                        ['type' => 'text', 'text' => $businessName],
+                        ['type' => 'text', 'text' => $orderNumber],
+                        ['type' => 'text', 'text' => $amount],
+                    ]],
+                    ['type' => 'button', 'sub_type' => 'url', 'index' => '0', 'parameters' => [
+                        ['type' => 'text', 'text' => $paymentToken],
+                    ]],
+                ],
+            ],
+        ]);
+
+        return $this->result($response);
+    }
+
     public function sendOrderVerificationCode(string $phone, string $code, string $checkoutUuid): WhatsAppMessageResult
     {
         if (config('whatsapp.driver') === 'log') {
@@ -24,17 +55,7 @@ class WhatsAppMessagingService
             throw new RuntimeException('The configured WhatsApp delivery driver is not supported.');
         }
 
-        $accessToken = (string) config('whatsapp.access_token');
-        $phoneNumberId = (string) config('whatsapp.phone_number_id');
-        $graphVersion = trim((string) config('whatsapp.graph_version'));
-        if ($accessToken === '' || $phoneNumberId === '' || $graphVersion === '') {
-            throw new RuntimeException('Meta WhatsApp credentials are not configured.');
-        }
-        $graphVersion = 'v' . ltrim($graphVersion, 'vV');
-
-        $response = $this->client()
-            ->withToken($accessToken)
-            ->post(sprintf('/%s/%s/messages', $graphVersion, $phoneNumberId), [
+        $response = $this->metaClient()->post(sprintf('/%s/%s/messages', $this->graphVersion(), config('whatsapp.phone_number_id')), [
                 'messaging_product' => 'whatsapp',
                 'recipient_type' => 'individual',
                 'to' => $phone,
@@ -57,6 +78,11 @@ class WhatsAppMessagingService
                 ],
             ]);
 
+        return $this->result($response);
+    }
+
+    private function result($response): WhatsAppMessageResult
+    {
         if (! $response->successful()) {
             $reason = data_get($response->json(), 'error.message')
                 ?? data_get($response->json(), 'message')
@@ -71,6 +97,21 @@ class WhatsAppMessagingService
         }
 
         return new WhatsAppMessageResult($messageId);
+    }
+
+    private function metaClient(): PendingRequest
+    {
+        $accessToken = (string) config('whatsapp.access_token');
+        $phoneNumberId = (string) config('whatsapp.phone_number_id');
+        if ($accessToken === '' || $phoneNumberId === '') throw new RuntimeException('Meta WhatsApp credentials are not configured.');
+        return $this->client()->withToken($accessToken);
+    }
+
+    private function graphVersion(): string
+    {
+        $version = trim((string) config('whatsapp.graph_version'));
+        if ($version === '') throw new RuntimeException('Meta WhatsApp credentials are not configured.');
+        return 'v' . ltrim($version, 'vV');
     }
 
     private function client(): PendingRequest

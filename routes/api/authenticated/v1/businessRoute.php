@@ -30,6 +30,7 @@ Route::group(['prefix' => 'businesses'], function () {
     Route::delete('{business}/orders/{order}/lock', [BusinessOrderController::class, 'releaseLock']);
     Route::post('{business}/orders/{order}/actions', [BusinessOrderController::class, 'action']);
     Route::post('{business}/orders/{order}/payment-qr', [BusinessOrderController::class, 'paymentQr']);
+    Route::post('{business}/orders/{order}/payment-link', [BusinessOrderController::class, 'paymentLink']);
     Route::get('{business}/menu-management', [MenuManagementController::class, 'index']);
     Route::post('{business}/menu-management/categories', [MenuManagementController::class, 'storeCategory']);
     Route::put('{business}/menu-management/categories/{category}', [MenuManagementController::class, 'updateCategory']);

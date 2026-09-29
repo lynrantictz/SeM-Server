@@ -9,6 +9,7 @@ use App\Models\Payment\Payment;
 use App\Services\Business\BusinessActivationService;
 use App\Services\Order\GuestOrderSessionService;
 use App\Services\Order\GuestCustomerSessionService;
+use App\Services\Order\OrderPaymentLinkService;
 use App\Services\PaymentGateway\PaymentCheckoutService;
 use App\Services\PaymentGateway\PaymentSettlementService;
 use App\Services\PhoneNumberNormalizer;
@@ -20,6 +21,7 @@ class PaymentGatewayController extends BaseController
         private readonly PaymentCheckoutService $checkout,
         private readonly GuestOrderSessionService $guestSessions,
         private readonly GuestCustomerSessionService $guestCustomerSessions,
+        private readonly OrderPaymentLinkService $paymentLinks,
         private readonly PaymentSettlementService $settlements,
         private readonly BusinessActivationService $activation,
     )
@@ -57,6 +59,25 @@ class PaymentGatewayController extends BaseController
                     'logo_url' => $provider->logo_url,
                 ]),
         ], 'Mobile-money providers retrieved successfully.');
+    }
+
+    public function paymentLink(string $token)
+    {
+        $link = $this->paymentLinks->resolve($token);
+        if (! $link) return $this->sendError('This payment link has expired or is no longer available.', [], HTTP_GONE);
+
+        $order = Order::query()->with(['status', 'paymentStatus'])->findOrFail($link->order_id);
+        if (in_array($order->status?->name, ['Cancelled', 'Refunded', 'Completed'], true) || $order->paymentStatus?->name === 'Completed') {
+            return $this->sendError('This order is no longer available for payment.', [], HTTP_GONE);
+        }
+
+        $minutes = max(1, now()->diffInMinutes($link->expires_at, false));
+        $session = $this->guestSessions->issueForOrder($order, $minutes);
+        return $this->sendResponse([
+            'order_number' => $order->number,
+            'payment_session' => $session['access_token'],
+            'expires_at' => $link->expires_at,
+        ], 'Payment link verified.');
     }
 
     public function checkout(Request $request, string $order)
