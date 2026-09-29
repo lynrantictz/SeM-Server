@@ -9,6 +9,7 @@ use App\Models\Business\BusinessUser;
 use App\Models\Menu\Category;
 use App\Models\Menu\Item;
 use App\Models\Order\Order;
+use App\Models\Order\OrderPaymentLink;
 use App\Models\Order\OrderStaffNote;
 use App\Models\Order\OrderStatus;
 use App\Models\Order\OrderStatusHistory;
@@ -176,6 +177,14 @@ class BusinessOrderController extends BaseController
             }
             $record->save();
 
+            if (in_array($validated['action'], ['mark_paid', 'confirm_cash'], true)) {
+                OrderPaymentLink::query()
+                    ->where('order_id', $record->id)
+                    ->whereNull('revoked_at')
+                    ->where('expires_at', '>', now())
+                    ->update(['revoked_at' => now()]);
+            }
+
             if ($validated['action'] === 'confirm_cash') {
                 $cash = PaymentMethod::query()->firstOrCreate(['name' => 'Cash']);
                 $record->payment_method_id = $cash->id;
@@ -220,7 +229,10 @@ class BusinessOrderController extends BaseController
             ]);
         });
 
-        if ($validated['action'] === 'approve' && $updated->customer?->phone_e164 && app(BusinessActivationService::class)->status($business)['can_accept_mobile_money']) {
+        // Public QR orders have no staff creator. Once a staff member accepts
+        // one, notify its verified customer. Staff-created orders deliberately
+        // stay manual so the counter can choose cash, link, or QR payment.
+        if ($validated['action'] === 'approve' && ! $updated->user_id && $updated->customer?->phone_e164 && app(BusinessActivationService::class)->status($business)['can_accept_mobile_money']) {
             $issued = $paymentLinks->issue($updated, auth()->id());
             SendOrderPaymentRequestWhatsApp::dispatch($issued['link']->uuid, $issued['token'])->onQueue(config('whatsapp.queue'));
         }
@@ -331,17 +343,12 @@ class BusinessOrderController extends BaseController
         ], 'Available menu items retrieved successfully.');
     }
 
-    public function store(Request $request, Business $business, OrderPaymentLinkService $paymentLinks)
+    public function store(Request $request, Business $business)
     {
         $role = $this->authorizeBusiness($business);
         abort_unless($this->canCreateOrEdit($role), HTTP_FORBIDDEN, 'Your role cannot create orders.');
         $data = $this->orderPayload($request, $business);
         $order = (new OrderRepository())->storeForStaff($business, $data, auth()->id());
-        $order->load('customer');
-        if ($order->customer?->phone_e164 && app(BusinessActivationService::class)->status($business)['can_accept_mobile_money']) {
-            $issued = $paymentLinks->issue($order, auth()->id());
-            SendOrderPaymentRequestWhatsApp::dispatch($issued['link']->uuid, $issued['token'])->onQueue(config('whatsapp.queue'));
-        }
         return $this->sendResponse(['order' => $this->orderData($this->loadOrder($order))], 'Order created and sent to the kitchen.', HTTP_CREATED);
     }
 

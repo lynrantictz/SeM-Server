@@ -4,6 +4,7 @@ namespace App\Services\PaymentGateway;
 
 use App\Models\Business\BusinessPaymentSetting;
 use App\Models\Order\Order;
+use App\Models\Order\OrderPaymentLink;
 use App\Models\Payment\Payment;
 use App\Models\Payment\PaymentAllocation;
 use App\Models\Payment\PaymentEvent;
@@ -131,6 +132,11 @@ class PaymentSettlementService
             'paid_amount' => $payment->amount,
             'due_amount' => 0,
         ]);
+        OrderPaymentLink::query()
+            ->where('order_id', $order->id)
+            ->whereNull('revoked_at')
+            ->where('expires_at', '>', now())
+            ->update(['revoked_at' => now()]);
 
         $setting = BusinessPaymentSetting::query()->firstOrCreate(
             ['business_id' => $order->business_id],
