@@ -27,6 +27,7 @@ use App\Repositories\Order\OrderRepository;
 use App\Services\PhoneNumberNormalizer;
 use App\Services\MenuAvailabilityService;
 use App\Services\Order\GuestOrderSessionService;
+use App\Services\Order\GuestCustomerSessionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
@@ -50,6 +51,7 @@ class OrderController extends BaseController
         OrderRepository $orders,
         CustomerRepository $customers,
         private readonly GuestOrderSessionService $guestSessions,
+        private readonly GuestCustomerSessionService $guestCustomerSessions,
     )
     {
         $this->orders = $orders;
@@ -92,8 +94,9 @@ class OrderController extends BaseController
             return $this->sendError($reason, [], HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        if ($request->filled('guest_session')) {
-            $session = $this->guestSessions->resolveForBusiness(
+        $persistentSession = $this->guestCustomerSessions->resolveFromRequest($request);
+        if ($persistentSession || $request->filled('guest_session')) {
+            $session = $persistentSession ?: $this->guestSessions->resolveForBusiness(
                 (int) $code->codable->business->id,
                 $request->string('guest_session')->toString(),
             );
@@ -118,8 +121,12 @@ class OrderController extends BaseController
 
             return $this->sendResponse([
                 'order' => $order->fresh(),
-                'guest_session' => $this->issueGuestOrderSession((int) $customer->id, (int) $order->business_id),
-            ], 'Your verified session was used. The order has been sent to the business.', HTTP_OK);
+            ], 'Your verified session was used. The order has been sent to the business.', HTTP_OK)
+                ->withCookie($this->guestSessionCookie($this->guestCustomerSessions->issue($customer)));
+        }
+
+        if (! $request->filled('phone')) {
+            return $this->sendError('Enter the WhatsApp mobile number to continue.', ['phone' => ['The phone field is required.']], HTTP_UNPROCESSABLE_ENTITY);
         }
 
         try {
@@ -188,7 +195,7 @@ class OrderController extends BaseController
                 if ($checkout->order_id && Hash::check($request->input('otp'), $checkout->verification_code)) {
                     $completedOrder = Order::query()->find($checkout->order_id);
                     return $completedOrder
-                        ? ['order' => $completedOrder, 'guest_session' => $this->issueGuestOrderSession((int) $completedOrder->customer_id, (int) $completedOrder->business_id)]
+                        ? ['order' => $completedOrder, 'customer' => Customer::query()->findOrFail($completedOrder->customer_id)]
                         : ['error' => 'The order linked to this verification could not be found.', 'status' => HTTP_NOT_FOUND];
                 }
                 if ($checkout->created_at->copy()->addMinutes(self::CHECKOUT_SESSION_MINUTES)->isPast()) {
@@ -232,7 +239,7 @@ class OrderController extends BaseController
 
                 return [
                     'order' => $order->fresh(),
-                    'guest_session' => $this->issueGuestOrderSession((int) $order->customer_id, (int) $order->business_id),
+                    'customer' => Customer::query()->findOrFail($order->customer_id),
                 ];
             });
         } catch (InvalidPhoneNumberException $exception) {
@@ -246,10 +253,10 @@ class OrderController extends BaseController
         }
 
         return $this->sendResponse(
-            ['order' => $result['order'], 'guest_session' => $result['guest_session']],
+            ['order' => $result['order']],
             'Phone verified. Your order has been sent to the business and is waiting for approval.',
             HTTP_OK
-        );
+        )->withCookie($this->guestSessionCookie($this->guestCustomerSessions->issue($result['customer'])));
     }
 
     /**
@@ -259,17 +266,18 @@ class OrderController extends BaseController
     {
         $validator = Validator::make($request->all(), [
             'business_uuid' => ['required', 'uuid'],
-            'access_token' => ['required', 'string', 'max:160'],
+            'access_token' => ['nullable', 'string', 'max:160'],
         ]);
         if ($validator->fails()) {
             return $this->sendError('Valid business and verified session are required.', $validator->errors(), HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        [$sessionUuid, $secret] = array_pad(explode('.', $request->input('access_token'), 2), 2, null);
+        $persistentSession = $this->guestCustomerSessions->resolveFromRequest($request);
+        [$sessionUuid, $secret] = array_pad(explode('.', (string) $request->input('access_token'), 2), 2, null);
         $session = $secret
             ? OrderCustomerSession::query()->where('uuid', $sessionUuid)->where('expires_at', '>', now())->first()
             : null;
-        if (!$session || !Hash::check($secret, $session->token_hash)) {
+        if (! $persistentSession && (!$session || !Hash::check($secret, $session->token_hash))) {
             return $this->sendError('Your order session has expired. Verify your phone again to view active orders.', [], HTTP_UNAUTHORIZED);
         }
 
@@ -277,7 +285,7 @@ class OrderController extends BaseController
         if (!$business) {
             return $this->sendError('Business not found.', [], HTTP_NOT_FOUND);
         }
-        if ((int) $session->business_id !== (int) $business->id) {
+        if (! $persistentSession && (int) $session->business_id !== (int) $business->id) {
             return $this->sendError('This verified order session belongs to a different business.', [], HTTP_FORBIDDEN);
         }
 
@@ -300,7 +308,7 @@ class OrderController extends BaseController
         $orders = Order::query()
             ->with(['items.item'])
             ->where('business_id', $business->id)
-            ->where('customer_id', $session->customer_id)
+            ->where('customer_id', $persistentSession?->customer_id ?? $session->customer_id)
             ->where(function ($query) use ($activeStatusIds, $terminalStatusIds, $pendingPaymentStatusId) {
                 $query->whereIn('order_status_id', $activeStatusIds);
                 if ($pendingPaymentStatusId !== null) {
@@ -346,6 +354,65 @@ class OrderController extends BaseController
             'access_token' => $session->uuid . '.' . $secret,
             'expires_at' => $session->expires_at,
         ];
+    }
+
+    public function guestSession(Request $request)
+    {
+        $session = $this->guestCustomerSessions->resolveFromRequest($request);
+        if (! $session) {
+            return $this->sendResponse(['guest_session' => null], 'No verified guest session found.', HTTP_OK);
+        }
+
+        $customer = Customer::query()->find($session->customer_id);
+        if (! $customer) {
+            return $this->sendResponse(['guest_session' => null], 'No verified guest session found.', HTTP_OK);
+        }
+
+        return $this->sendResponse(['guest_session' => [
+            'masked_phone' => $this->maskedPhone($customer->phone_e164 ?? $customer->phone),
+            'expires_at' => $session->expires_at,
+        ]], 'Verified guest session restored.', HTTP_OK);
+    }
+
+    public function forgetGuestSession(Request $request)
+    {
+        $this->guestCustomerSessions->forgetFromRequest($request);
+
+        return $this->sendResponse([], 'Verified guest session cleared.', HTTP_OK)
+            ->withoutCookie(config('guest-session.cookie'), '/', config('guest-session.domain'));
+    }
+
+    private function guestSessionCookie(array $issued)
+    {
+        return cookie(
+            config('guest-session.cookie'),
+            $issued['access_token'],
+            max(1, now()->diffInMinutes($issued['session']->expires_at, false)),
+            '/',
+            config('guest-session.domain') ?: null,
+            (bool) config('guest-session.secure'),
+            true,
+            false,
+            config('guest-session.same_site'),
+        );
+    }
+
+    private function maskedPhone(?string $phone): ?string
+    {
+        $digits = preg_replace('/\D+/', '', (string) $phone);
+        return strlen($digits) > 6
+            ? '+' . substr($digits, 0, 3) . str_repeat('•', strlen($digits) - 6) . substr($digits, -3)
+            : null;
+    }
+
+    private function canAccessGuestOrder(Request $request, Order $order, ?string $legacyToken): bool
+    {
+        $session = $this->guestCustomerSessions->resolveFromRequest($request);
+        if ($session && (int) $session->customer_id === (int) $order->customer_id) {
+            return true;
+        }
+
+        return (bool) $this->guestSessions->resolveForOrder($order, $legacyToken);
     }
 
     public function resendCheckoutVerification(string $uuid)
@@ -423,14 +490,14 @@ class OrderController extends BaseController
         if ($checkout->order_id) {
             $order = Order::query()->find($checkout->order_id);
             if ($order) {
+                $issued = $this->guestCustomerSessions->issue(Customer::query()->findOrFail($order->customer_id));
                 return $this->sendResponse([
                     'verification' => [
                         'completed' => true,
                         'order_number' => $order->number,
                         'business_uuid' => $businessUuid,
                     ],
-                    'guest_session' => $this->issueGuestOrderSession((int) $order->customer_id, (int) $order->business_id),
-                ], 'This checkout was already completed.', HTTP_OK);
+                ], 'This checkout was already completed.', HTTP_OK)->withCookie($this->guestSessionCookie($issued));
             }
         }
         if ($checkout->verified_at) {
@@ -719,9 +786,9 @@ class OrderController extends BaseController
         $validated = $request->validate([
             'rate' => ['required', 'integer', 'min:1', 'max:5'],
             'comment' => ['nullable', 'string', 'max:1000'],
-            'access_token' => ['required', 'string', 'max:160'],
+            'access_token' => ['nullable', 'string', 'max:160'],
         ]);
-        if (! $this->guestSessions->resolveForOrder($order, $validated['access_token'])) {
+        if (! $this->canAccessGuestOrder($request, $order, $validated['access_token'] ?? null)) {
             return $this->sendError('Verify your phone to rate this order.', [], HTTP_UNAUTHORIZED);
         }
         if ($order->status()->where('name', 'Served')->doesntExist()) {
@@ -745,10 +812,10 @@ class OrderController extends BaseController
             'type' => ['required', 'string', 'in:service,platform'],
             'rating' => ['required', 'integer', 'min:1', 'max:5'],
             'comment' => ['nullable', 'string', 'max:1000'],
-            'access_token' => ['required', 'string', 'max:160'],
+            'access_token' => ['nullable', 'string', 'max:160'],
         ]);
 
-        if (! $this->guestSessions->resolveForOrder($order, $validated['access_token'])) {
+        if (! $this->canAccessGuestOrder($request, $order, $validated['access_token'] ?? null)) {
             return $this->sendError('Verify your phone to share feedback for this order.', [], HTTP_UNAUTHORIZED);
         }
 

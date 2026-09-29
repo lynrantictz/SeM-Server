@@ -8,6 +8,7 @@ use App\Models\Payment\MobileMoneyProvider;
 use App\Models\Payment\Payment;
 use App\Services\Business\BusinessActivationService;
 use App\Services\Order\GuestOrderSessionService;
+use App\Services\Order\GuestCustomerSessionService;
 use App\Services\PaymentGateway\PaymentCheckoutService;
 use App\Services\PaymentGateway\PaymentSettlementService;
 use App\Services\PhoneNumberNormalizer;
@@ -18,6 +19,7 @@ class PaymentGatewayController extends BaseController
     public function __construct(
         private readonly PaymentCheckoutService $checkout,
         private readonly GuestOrderSessionService $guestSessions,
+        private readonly GuestCustomerSessionService $guestCustomerSessions,
         private readonly PaymentSettlementService $settlements,
         private readonly BusinessActivationService $activation,
     )
@@ -30,7 +32,7 @@ class PaymentGatewayController extends BaseController
             ->with('business.district.city')
             ->where('number', $order)
             ->firstOrFail();
-        if (! $this->guestSessions->resolveForOrder($record, $request->query('access_token'))) {
+        if (! $this->canAccessOrder($request, $record, $request->query('access_token'))) {
             return $this->sendError('Verify your phone to access payment options for this order.', [], HTTP_UNAUTHORIZED);
         }
         if (! $this->activation->status($record->business)['can_accept_mobile_money']) {
@@ -62,14 +64,14 @@ class PaymentGatewayController extends BaseController
         $validated = $request->validate([
             'phone' => ['required', 'regex:/^[1-9][0-9]{6,14}$/'],
             'provider' => ['required', 'string', 'max:40'],
-            'access_token' => ['required', 'string', 'max:160'],
+            'access_token' => ['nullable', 'string', 'max:160'],
         ]);
 
         $record = Order::query()
             ->with(['business.district.city.country', 'status', 'paymentStatus'])
             ->where('number', $order)
             ->firstOrFail();
-        if (! $this->guestSessions->resolveForOrder($record, $validated['access_token'])) {
+        if (! $this->canAccessOrder($request, $record, $validated['access_token'] ?? null)) {
             return $this->sendError('Verify your phone to request payment for this order.', [], HTTP_UNAUTHORIZED);
         }
         if (! in_array($record->status?->name, ['Processing', 'Served'], true)) {
@@ -119,7 +121,7 @@ class PaymentGatewayController extends BaseController
     public function status(Request $request, string $order)
     {
         $record = Order::query()->where('number', $order)->firstOrFail();
-        if (! $this->guestSessions->resolveForOrder($record, $request->query('access_token'))) {
+        if (! $this->canAccessOrder($request, $record, $request->query('access_token'))) {
             return $this->sendError('Verify your phone to view payment status for this order.', [], HTTP_UNAUTHORIZED);
         }
         $payment = Payment::query()->where('order_id', $record->id)->latest('id')->first();
@@ -134,12 +136,12 @@ class PaymentGatewayController extends BaseController
         }
 
         $validated = $request->validate([
-            'access_token' => ['required', 'string', 'max:160'],
+            'access_token' => ['nullable', 'string', 'max:160'],
             'phone' => ['nullable', 'regex:/^[1-9][0-9]{6,14}$/'],
             'provider' => ['nullable', 'string', 'max:40'],
         ]);
         $record = Order::query()->where('number', $order)->firstOrFail();
-        if (! $this->guestSessions->resolveForOrder($record, $validated['access_token'])) {
+        if (! $this->canAccessOrder($request, $record, $validated['access_token'] ?? null)) {
             return $this->sendError('Verify your phone to complete this sandbox payment.', [], HTTP_UNAUTHORIZED);
         }
 
@@ -198,5 +200,15 @@ class PaymentGatewayController extends BaseController
             'expires_at' => $payment->expires_at?->toIso8601String(),
             'failure_reason' => $payment->failure_reason,
         ];
+    }
+
+    private function canAccessOrder(Request $request, Order $order, ?string $legacyToken): bool
+    {
+        $persistentSession = $this->guestCustomerSessions->resolveFromRequest($request);
+        if ($persistentSession && (int) $persistentSession->customer_id === (int) $order->customer_id) {
+            return true;
+        }
+
+        return (bool) $this->guestSessions->resolveForOrder($order, $legacyToken);
     }
 }

@@ -12,6 +12,8 @@ Route::get('phone/{phone}/verify', [OrderController::class, 'getOrdersByPhone'])
 
 Route::group(['prefix' => 'orders'], function () {
    Route::post('', [OrderController::class, 'store'])->middleware('throttle:5,1');
+   Route::get('guest-session', [OrderController::class, 'guestSession'])->middleware('throttle:30,1');
+   Route::delete('guest-session', [OrderController::class, 'forgetGuestSession'])->middleware('throttle:10,1');
    Route::post('active', [OrderController::class, 'activeGuestOrders'])->middleware('throttle:30,1');
    Route::get('checkout-verifications/{uuid}', [OrderController::class, 'resumeCheckoutVerification'])->middleware('throttle:10,1');
    Route::post('checkout-verifications/{uuid}/confirm', [OrderController::class, 'confirmCheckoutVerification'])->middleware('throttle:10,1');

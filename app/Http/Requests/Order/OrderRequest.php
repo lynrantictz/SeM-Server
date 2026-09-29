@@ -27,7 +27,6 @@ class OrderRequest extends FormRequest
                     'code' => ['required', 'string', 'max:255'],
                     'phone' => [
                         'nullable',
-                        'required_without:guest_session',
                         function (string $attribute, mixed $value, \Closure $fail): void {
                             if ($value === null) {
                                 return;
