@@ -13,6 +13,8 @@ use App\Models\Business\BusinessPromotion;
 use App\Models\Business\Timezone;
 use App\Models\Business\OrderingChannel;
 use App\Models\Business\BusinessPaymentSetting;
+use App\Models\Business\BusinessPayout;
+use App\Models\Business\BusinessPayoutAccount;
 
 trait BusinessRelationship
 {
@@ -71,5 +73,15 @@ trait BusinessRelationship
     public function paymentSetting()
     {
         return $this->hasOne(BusinessPaymentSetting::class);
+    }
+
+    public function payoutAccounts()
+    {
+        return $this->hasMany(BusinessPayoutAccount::class);
+    }
+
+    public function payouts()
+    {
+        return $this->hasMany(BusinessPayout::class);
     }
 }

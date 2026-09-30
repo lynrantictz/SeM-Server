@@ -159,9 +159,27 @@ class PaymentGatewayController extends BaseController
         $used++;
         return $this->sendResponse([
             'expires_at' => $issued['link']->expires_at,
+            'send_limit' => $limit,
             'remaining_sends' => max(0, $limit - $used),
             'share_activity' => $this->paymentLinks->customerShareActivity($record),
         ], 'Secure payment link queued for WhatsApp delivery.');
+    }
+
+    public function sharePaymentLinkActivity(Request $request, string $order)
+    {
+        $record = Order::query()->with(['status', 'paymentStatus'])->where('number', $order)->firstOrFail();
+        if (! $this->canAccessOrder($request, $record, $request->query('access_token'))) {
+            return $this->sendError('Verify your phone to view payment-link activity for this order.', [], HTTP_UNAUTHORIZED);
+        }
+
+        $limit = max(1, (int) config('payments.customer_payment_link_send_limit', 2));
+        $used = $this->paymentLinks->customerShareCount($record);
+
+        return $this->sendResponse([
+            'send_limit' => $limit,
+            'remaining_sends' => max(0, $limit - $used),
+            'share_activity' => $this->paymentLinks->customerShareActivity($record),
+        ], 'Payment-link activity retrieved.');
     }
 
     public function checkout(Request $request, string $order)

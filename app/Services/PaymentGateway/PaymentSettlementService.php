@@ -154,8 +154,8 @@ class PaymentSettlementService
         $commissionRate = $setting->commission_rate ?? SystemSetting::valueFor('payments.default_commission_rate');
         $commission = round($commissionBase * ((float) $commissionRate / 100), 2);
 
-        PaymentAllocation::query()->firstOrCreate(['payment_id' => $payment->id], [
-            'business_id' => $order->business_id,
+            $allocation = PaymentAllocation::query()->firstOrCreate(['payment_id' => $payment->id], [
+                'business_id' => $order->business_id,
             'gross_amount' => $payment->amount,
             'commission_base_amount' => $commissionBase,
             'commission_rate' => $commissionRate,
@@ -167,7 +167,9 @@ class PaymentSettlementService
                 'basis' => $setting->commission_basis,
                 'fee_bearer' => $setting->fee_bearer,
                 'settlement_mode' => $setting->settlement_mode,
-            ],
-        ]);
+                ],
+            ]);
+
+            app(BusinessPayoutLedgerService::class)->createFromAllocation($payment, $allocation);
     }
 }

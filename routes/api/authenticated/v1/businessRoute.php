@@ -18,6 +18,10 @@ Route::get('business-staff-roles', [BusinessStaffRoleController::class, 'index']
 Route::get('timezones', [TimezoneController::class, 'index']);
 
 Route::group(['prefix' => 'businesses'], function () {
+    Route::get('{business}/payout-settings', [BusinessPaymentController::class, 'payoutSettings']);
+    Route::post('{business}/payout-accounts', [BusinessPaymentController::class, 'storePayoutAccount']);
+    Route::put('{business}/payout-accounts/{payoutAccount}', [BusinessPaymentController::class, 'updatePayoutAccount']);
+    Route::post('{business}/payout-accounts/{payoutAccount}/default', [BusinessPaymentController::class, 'makeDefaultPayoutAccount']);
     Route::get('{business}/payment-providers', [BusinessPaymentController::class, 'providers']);
     Route::post('{business}/orders/{order}/mno-checkout', [BusinessPaymentController::class, 'checkout']);
     Route::get('{business}/orders', [BusinessOrderController::class, 'index']);

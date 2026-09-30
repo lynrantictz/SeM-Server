@@ -5,10 +5,13 @@ namespace App\Http\Controllers\Api\V1\Business;
 use App\Http\Controllers\Api\BaseController;
 use App\Models\Business\Business;
 use App\Models\Business\BusinessUser;
+use App\Models\Business\BusinessPayoutAccount;
 use App\Models\Order\Order;
 use App\Models\Payment\MobileMoneyProvider;
 use App\Services\Business\BusinessActivationService;
 use App\Services\PaymentGateway\PaymentCheckoutService;
+use App\Services\PhoneNumberNormalizer;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 
 class BusinessPaymentController extends BaseController
@@ -42,6 +45,138 @@ class BusinessPaymentController extends BaseController
                     'logo_url' => $provider->logo_url,
                 ]),
         ], 'Payment providers retrieved successfully.');
+    }
+
+    public function payoutSettings(Business $business)
+    {
+        $this->authorizePayoutSettings($business);
+        $business->loadMissing(['district.city.country', 'paymentSetting']);
+
+        $accounts = $business->payoutAccounts()
+            ->with('country:id,name,iso2,phone_code')
+            ->latest('is_default')
+            ->latest('id')
+            ->get();
+        $activation = $this->activation->status($business);
+        $default = $accounts->first(fn (BusinessPayoutAccount $account) =>
+            $account->is_default && $account->status === 'active' && $account->verification_status === 'verified'
+        );
+        $settlementEnabled = (bool) $business->paymentSetting?->is_settlement_enabled;
+
+        return $this->sendResponse([
+            'business' => [
+                'uuid' => $business->uuid,
+                'name' => $business->name,
+                'country' => $business->district?->city?->country?->name,
+                'currency' => $business->paymentSetting?->currency ?: 'TZS',
+            ],
+            'payment_setting' => $business->paymentSetting,
+            'payout_accounts' => $accounts->map(fn (BusinessPayoutAccount $account) => $this->payoutAccountData($account))->values(),
+            'payout_readiness' => [
+                'business_active' => $activation['business_enabled'],
+                'documents_approved' => $activation['documents_approved'],
+                'checkout_enabled' => $activation['payment_checkout_enabled'],
+                'settlement_enabled' => $settlementEnabled,
+                'verified_default_account' => (bool) $default,
+                'ready_for_payout_review' => $activation['business_enabled'] && $activation['documents_approved'] && $activation['payment_checkout_enabled'],
+                'ready_for_automatic_payout' => $activation['business_enabled'] && $activation['documents_approved'] && $activation['payment_checkout_enabled'] && $settlementEnabled && (bool) $default,
+            ],
+        ], 'Payout settings retrieved successfully.');
+    }
+
+    public function storePayoutAccount(Request $request, Business $business)
+    {
+        $this->authorizePayoutSettings($business);
+        $validated = $request->validate([
+            'destination_type' => ['required', 'in:mobile_money'],
+            'provider' => ['required', 'string', 'max:80'],
+            'account_number' => ['required', 'regex:/^[1-9][0-9]{6,14}$/'],
+            'account_holder_name' => ['required', 'string', 'max:160'],
+            'currency' => ['nullable', 'string', 'size:3'],
+        ]);
+
+        $business->loadMissing('district.city.country');
+        $country = $business->district?->city?->country;
+        $provider = MobileMoneyProvider::query()
+            ->where('gateway', 'azampay')
+            ->where('code', $validated['provider'])
+            ->where('is_active', true)
+            ->when($country?->id, fn ($query) => $query->where(fn ($countryQuery) => $countryQuery
+                ->where('country_id', $country->id)->orWhereNull('country_id')))
+            ->first();
+        abort_unless($provider, HTTP_UNPROCESSABLE_ENTITY, 'Select an active mobile-money provider for this country.');
+
+        try {
+            $accountNumber = app(PhoneNumberNormalizer::class)->normalize($validated['account_number'], $country?->iso2);
+        } catch (\App\Exceptions\InvalidPhoneNumberException $exception) {
+            return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $account = $business->payoutAccounts()->create([
+            'gateway' => 'azampay',
+            'destination_type' => 'mobile_money',
+            'provider' => $provider->code,
+            'account_number' => $accountNumber,
+            'account_holder_name' => trim($validated['account_holder_name']),
+            'currency' => strtoupper($validated['currency'] ?? $business->paymentSetting?->currency ?? 'TZS'),
+            'country_id' => $country?->id,
+            'verification_status' => 'pending',
+            'status' => 'pending',
+            'is_default' => false,
+        ]);
+
+        return $this->sendResponse(['payout_account' => $this->payoutAccountData($account)], 'Payout account submitted for Paperstic verification.', 201);
+    }
+
+    public function updatePayoutAccount(Request $request, Business $business, BusinessPayoutAccount $payoutAccount)
+    {
+        $this->authorizePayoutSettings($business);
+        abort_unless((int) $payoutAccount->business_id === (int) $business->id, HTTP_NOT_FOUND, 'Payout account not found.');
+
+        $validated = $request->validate([
+            'provider' => ['required', 'string', 'max:80'],
+            'account_number' => ['required', 'regex:/^[1-9][0-9]{6,14}$/'],
+            'account_holder_name' => ['required', 'string', 'max:160'],
+            'currency' => ['nullable', 'string', 'size:3'],
+        ]);
+        $business->loadMissing('district.city.country');
+        $country = $business->district?->city?->country;
+        $provider = MobileMoneyProvider::query()->where('gateway', 'azampay')->where('code', $validated['provider'])->where('is_active', true)->first();
+        abort_unless($provider, HTTP_UNPROCESSABLE_ENTITY, 'Select an active mobile-money provider.');
+        try {
+            $accountNumber = app(PhoneNumberNormalizer::class)->normalize($validated['account_number'], $country?->iso2);
+        } catch (\App\Exceptions\InvalidPhoneNumberException $exception) {
+            return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $payoutAccount->update([
+            'provider' => $provider->code,
+            'account_number' => $accountNumber,
+            'account_holder_name' => trim($validated['account_holder_name']),
+            'currency' => strtoupper($validated['currency'] ?? $business->paymentSetting?->currency ?? 'TZS'),
+            'verification_status' => 'pending',
+            'status' => 'pending',
+            'is_default' => false,
+            'verified_by' => null,
+            'verified_at' => null,
+            'rejection_reason' => null,
+        ]);
+
+        return $this->sendResponse(['payout_account' => $this->payoutAccountData($payoutAccount->fresh())], 'Payout account updated and returned for verification.');
+    }
+
+    public function makeDefaultPayoutAccount(Business $business, BusinessPayoutAccount $payoutAccount)
+    {
+        $this->authorizePayoutSettings($business);
+        abort_unless((int) $payoutAccount->business_id === (int) $business->id, HTTP_NOT_FOUND, 'Payout account not found.');
+        abort_unless($payoutAccount->status === 'active' && $payoutAccount->verification_status === 'verified', HTTP_UNPROCESSABLE_ENTITY, 'Only a verified active payout account can be made default.');
+
+        DB::transaction(function () use ($business, $payoutAccount) {
+            $business->payoutAccounts()->update(['is_default' => false]);
+            $payoutAccount->update(['is_default' => true]);
+        });
+
+        return $this->sendResponse(['payout_account' => $this->payoutAccountData($payoutAccount->fresh())], 'Default payout account updated.');
     }
 
     public function checkout(Request $request, Business $business, string $order)
@@ -128,5 +263,28 @@ class BusinessPaymentController extends BaseController
 
         abort_unless($status['payment_checkout_enabled'], HTTP_UNPROCESSABLE_ENTITY,
             'Mobile-money checkout is not enabled for this business yet.');
+    }
+
+    private function authorizePayoutSettings(Business $business): void
+    {
+        $role = $this->authorizePaymentAccess($business, false);
+        abort_unless(in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager'], true), HTTP_FORBIDDEN, 'Only business management can manage payout information.');
+    }
+
+    private function payoutAccountData(BusinessPayoutAccount $account): array
+    {
+        return [
+            'uuid' => $account->uuid,
+            'destination_type' => $account->destination_type,
+            'provider' => $account->provider,
+            'account_number' => $account->maskedAccountNumber(),
+            'account_holder_name' => $account->account_holder_name,
+            'currency' => $account->currency,
+            'verification_status' => $account->verification_status,
+            'status' => $account->status,
+            'is_default' => (bool) $account->is_default,
+            'verified_at' => $account->verified_at?->toIso8601String(),
+            'rejection_reason' => $account->rejection_reason,
+        ];
     }
 }
