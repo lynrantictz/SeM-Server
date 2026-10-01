@@ -15,6 +15,11 @@ class LoginController extends BaseController
      */
     public function __invoke(Request $request)
     {
+        return $this->authenticateForType($request);
+    }
+
+    protected function authenticateForType(Request $request, ?string $requiredType = null)
+    {
         $validated = $request->validate([
             'login' => ['nullable', 'string', 'max:255'],
             // Retained temporarily for existing clients during the transition.
@@ -43,7 +48,21 @@ class LoginController extends BaseController
             );
         }
 
-        if (!$user->email_verified_at && in_array($user->type, [UserType::OWNER->value, UserType::VENDOR->value], true)) {
+        if ($requiredType && $user->type !== $requiredType) {
+            return $this->sendError(
+                'Operations access denied.',
+                ['account' => ['This account is not authorized to access the Paperstic Operations portal.']]
+            );
+        }
+
+        if (!$requiredType && $user->type === UserType::PAPERSTIC->value) {
+            return $this->sendError(
+                'Use the Operations portal.',
+                ['account' => ['Paperstic operations accounts must sign in through the Operations portal.']]
+            );
+        }
+
+        if (!$user->email_verified_at && in_array($user->type, [UserType::OWNER->value, UserType::VENDOR->value, UserType::PAPERSTIC->value], true)) {
             return $this->sendError(
                 'Email Not verified.',
                 ['account' => ['Your email has not been verified.']]

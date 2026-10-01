@@ -54,6 +54,7 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
     'business_url' => env('BUSINESS_URL', env('FRONTEND_URL', env('APP_URL', 'http://localhost'))),
+    'operations_url' => env('OPERATIONS_URL', env('BUSINESS_URL', env('APP_URL', 'http://localhost'))),
 
     /*
     |--------------------------------------------------------------------------

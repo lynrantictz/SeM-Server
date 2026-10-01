@@ -12,6 +12,11 @@ class ResetForgottenPasswordController extends BaseController
 {
     public function __invoke(Request $request)
     {
+        return $this->resetPassword($request);
+    }
+
+    protected function resetPassword(Request $request, ?string $requiredType = null)
+    {
         $validated = $request->validate([
             'email' => ['required', 'email:rfc', 'max:255'],
             'token' => ['required', 'string'],
@@ -20,11 +25,13 @@ class ResetForgottenPasswordController extends BaseController
         ]);
 
         $email = mb_strtolower(trim($validated['email']));
-        $eligible = User::query()
+        $query = User::query()
             ->whereRaw('LOWER(email) = ?', [$email])
-            ->whereIn('type', [UserType::OWNER->value, UserType::VENDOR->value])
-            ->where('is_active', true)
-            ->exists();
+            ->where('is_active', true);
+
+        $eligible = ($requiredType
+            ? $query->where('type', $requiredType)
+            : $query->whereIn('type', [UserType::OWNER->value, UserType::VENDOR->value]))->exists();
 
         if (!$eligible) {
             return $this->sendError('This password reset link is invalid or has expired.', [], HTTP_UNPROCESSABLE_ENTITY);
