@@ -4,11 +4,14 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Api\BaseController;
 use App\Models\Business\Business;
+use App\Models\Business\BusinessType;
 use App\Models\Business\ComplianceDocument;
+use App\Models\Location\City;
 use App\Models\Location\Country;
 use App\Services\Business\BusinessActivationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 
 class OperationsBusinessController extends BaseController
@@ -23,10 +26,13 @@ class OperationsBusinessController extends BaseController
             'search' => ['nullable', 'string', 'max:100'],
             'status' => ['nullable', 'in:all,active,inactive'],
             'country_id' => ['nullable', 'integer', 'exists:countries,id'],
-            'per_page' => ['nullable', 'integer', 'in:10,25,50'],
+            'business_type_id' => ['nullable', 'integer', 'exists:business_types,id'],
+            'city_id' => ['nullable', 'integer', 'exists:cities,id'],
+            'per_page' => ['nullable', 'in:10,25,50,75,100,all'],
         ]);
 
-        $businesses = Business::query()
+        $businessQuery = Business::query()
+            ->select(['id', 'uuid', 'name', 'vendor_id', 'business_type_id', 'tin', 'location', 'district_id', 'is_active', 'created_at'])
             ->with(['vendor:id,name', 'type:id,name', 'district:id,name,city_id', 'district.city:id,name,country_id', 'district.city.country:id,name,iso2'])
             ->withCount('complianceDocuments')
             ->withCount(['complianceDocuments as pending_documents_count' => fn ($query) => $query->whereIn('status', ['pending', 'in_review', 'needs_review'])])
@@ -40,20 +46,52 @@ class OperationsBusinessController extends BaseController
             })
             ->when(($filters['status'] ?? 'all') !== 'all', fn ($query) => $query->where('is_active', ($filters['status'] ?? null) === 'active'))
             ->when(!empty($filters['country_id']), fn ($query) => $query->whereHas('district.city', fn ($city) => $city->where('country_id', $filters['country_id'])))
-            ->orderByDesc('created_at')
-            ->paginate($filters['per_page'] ?? 25)
-            ->withQueryString();
+            ->when(!empty($filters['business_type_id']), fn ($query) => $query->where('business_type_id', $filters['business_type_id']))
+            ->when(!empty($filters['city_id']), fn ($query) => $query->whereHas('district.city', fn ($city) => $city->whereKey($filters['city_id'])))
+            ->orderByDesc('created_at');
+
+        $perPage = $filters['per_page'] ?? '10';
+        if ($perPage === 'all') {
+            $businessCollection = $businessQuery->get();
+            $businesses = [
+                'data' => $businessCollection->map(fn (Business $business) => $this->businessData($business)),
+                'current_page' => 1,
+                'last_page' => 1,
+                'total' => $businessCollection->count(),
+            ];
+        } else {
+            $paginatedBusinesses = $businessQuery->paginate((int) $perPage)->withQueryString();
+            $businesses = $paginatedBusinesses->through(fn (Business $business) => $this->businessData($business));
+        }
 
         return $this->sendResponse([
-            'businesses' => $businesses->through(fn (Business $business) => $this->businessData($business)),
-            'countries' => Country::query()->select(['id', 'name', 'iso2'])->orderBy('name')->get(),
+            'businesses' => $businesses,
+            ...Cache::remember('operations.business-directory.filter-options', now()->addMinutes(10), fn () => [
+                'countries' => Country::query()->select(['id', 'name', 'iso2'])->orderBy('name')->get(),
+                'business_types' => BusinessType::query()->select(['id', 'name'])->orderBy('name')->get(),
+                'cities' => City::query()->select(['id', 'name'])->orderBy('name')->get(),
+            ]),
         ], 'Operations businesses retrieved successfully.');
     }
 
     public function show(Request $request, string $uuid): JsonResponse
     {
         $business = Business::query()
-            ->with(['vendor:id,name', 'type:id,name', 'district:id,name,city_id', 'district.city:id,name,country_id', 'district.city.country:id,name,iso2', 'contacts:id,business_id,contact,is_active'])
+            ->with([
+                'vendor:id,name',
+                'vendor.users:id,name,email,phone,is_active,type',
+                'type:id,name',
+                'district:id,name,city_id',
+                'district.city:id,name,country_id',
+                'district.city.country:id,name,iso2',
+                'timezoneDefinition:id,identifier,name',
+                'contacts:id,business_id,contact,is_active',
+                'orderingChannels:id,slug,name',
+                'openingHours:id,business_id,day_of_week,sort_order,opens_at,closes_at,is_closed',
+                'paymentSetting',
+                'payoutAccounts:id,uuid,business_id,destination_type,provider,account_number,account_holder_name,currency,verification_status,status,is_default,verified_at,rejection_reason,country_id',
+                'payoutAccounts.country:id,name,iso2',
+            ])
             ->withCount(['complianceDocuments as pending_documents_count' => fn ($query) => $query->whereIn('status', ['pending', 'in_review', 'needs_review'])])
             ->where('uuid', $uuid)
             ->firstOrFail();
@@ -143,6 +181,21 @@ class OperationsBusinessController extends BaseController
         ], 'Compliance document decision recorded.');
     }
 
+    public function updateStatus(Request $request, string $uuid): JsonResponse
+    {
+        $validated = $request->validate(['is_active' => ['required', 'boolean']]);
+        $permission = $validated['is_active'] ? 'operations.businesses.approve' : 'operations.businesses.suspend';
+        abort_unless($request->user()->can($permission), 403, 'You do not have permission to change this business status.');
+
+        $business = Business::query()->where('uuid', $uuid)->firstOrFail();
+        $business->update(['is_active' => $validated['is_active']]);
+
+        return $this->sendResponse([
+            'business' => $this->businessData($business->fresh()->load(['vendor:id,name', 'type:id,name', 'district.city.country', 'contacts:id,business_id,contact,is_active'])),
+            'activation' => $this->activation->status($business),
+        ], $validated['is_active'] ? 'Business activated successfully.' : 'Business suspended successfully.');
+    }
+
     private function businessData(Business $business): array
     {
         return [
@@ -152,6 +205,14 @@ class OperationsBusinessController extends BaseController
             'business_type' => $business->type?->name,
             'tin' => $business->tin,
             'location' => $business->location,
+            'google_location' => $business->google_location,
+            'latitude' => $business->latitude,
+            'longitude' => $business->longitude,
+            'order_prefix' => $business->order_prefix,
+            'code_prefix' => $business->code_prefix,
+            'current_order_number' => $business->current_order_number,
+            'tax_allowed' => (bool) $business->tax_allowed,
+            'timezone' => $business->timezoneDefinition?->identifier ?: $business->timezone,
             'district' => $business->district?->name,
             'city' => $business->district?->city?->name,
             'country' => $business->district?->city?->country?->name,
@@ -160,7 +221,58 @@ class OperationsBusinessController extends BaseController
             'created_at' => $business->created_at?->toIso8601String(),
             'document_count' => (int) ($business->compliance_documents_count ?? 0),
             'pending_documents_count' => (int) ($business->pending_documents_count ?? 0),
-            'contacts' => $business->relationLoaded('contacts') ? $business->contacts->where('is_active', true)->pluck('contact')->values() : [],
+            'contacts' => $business->relationLoaded('contacts') ? $business->contacts->map(fn ($contact) => [
+                'id' => $contact->id,
+                'contact' => $contact->contact,
+                'is_active' => (bool) $contact->is_active,
+            ])->values() : [],
+            'vendor_team' => $business->relationLoaded('vendor') && $business->vendor?->relationLoaded('users')
+                ? $business->vendor->users->map(fn ($user) => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'phone' => $user->phone,
+                    'type' => $user->type,
+                    'is_active' => (bool) $user->is_active,
+                    'is_primary' => (bool) $user->pivot->is_primary,
+                    'role' => $user->pivot->role,
+                    'access_scope' => $user->pivot->access_scope,
+                ])->values()
+                : [],
+            'ordering_channels' => $business->relationLoaded('orderingChannels') ? $business->orderingChannels->map(fn ($channel) => [
+                'slug' => $channel->slug,
+                'name' => $channel->name,
+                'is_enabled' => (bool) $channel->pivot->is_enabled,
+            ])->values() : [],
+            'opening_hours' => $business->relationLoaded('openingHours') ? $business->openingHours->sortBy(fn ($hour) => sprintf('%02d-%04d', $hour->day_of_week, $hour->sort_order))->map(fn ($hour) => [
+                'day_of_week' => (int) $hour->day_of_week,
+                'opens_at' => $hour->opens_at ? substr((string) $hour->opens_at, 0, 5) : null,
+                'closes_at' => $hour->closes_at ? substr((string) $hour->closes_at, 0, 5) : null,
+                'is_closed' => (bool) $hour->is_closed,
+            ])->values() : [],
+            'payment_setting' => $business->relationLoaded('paymentSetting') && $business->paymentSetting ? [
+                'provider' => $business->paymentSetting->provider,
+                'currency' => $business->paymentSetting->currency,
+                'commission_rate' => $business->paymentSetting->commission_rate,
+                'commission_basis' => $business->paymentSetting->commission_basis,
+                'settlement_mode' => $business->paymentSetting->settlement_mode,
+                'is_checkout_enabled' => (bool) $business->paymentSetting->is_checkout_enabled,
+                'is_settlement_enabled' => (bool) $business->paymentSetting->is_settlement_enabled,
+            ] : null,
+            'payout_accounts' => $business->relationLoaded('payoutAccounts') ? $business->payoutAccounts->map(fn ($account) => [
+                'uuid' => $account->uuid,
+                'destination_type' => $account->destination_type,
+                'provider' => $account->provider,
+                'account_holder_name' => $account->account_holder_name,
+                'account_number' => $account->maskedAccountNumber(),
+                'currency' => $account->currency,
+                'verification_status' => $account->verification_status,
+                'status' => $account->status,
+                'is_default' => (bool) $account->is_default,
+                'verified_at' => $account->verified_at?->toIso8601String(),
+                'rejection_reason' => $account->rejection_reason,
+                'country' => $account->country?->name,
+            ])->values() : [],
         ];
     }
 

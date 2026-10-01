@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\V1\Operations\OperationsDashboardController;
 use App\Http\Controllers\Api\V1\Operations\OperationsBusinessController;
+use App\Http\Controllers\Api\V1\Operations\OperationsVendorController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('operations')->group(function (): void {
@@ -9,8 +10,12 @@ Route::prefix('operations')->group(function (): void {
         ->middleware('permission:operations.dashboard.view');
 
     Route::middleware('permission:operations.businesses.view')->group(function (): void {
+        Route::get('vendors', [OperationsVendorController::class, 'index']);
+        Route::get('vendors/{uuid}', [OperationsVendorController::class, 'show']);
         Route::get('businesses', [OperationsBusinessController::class, 'index']);
         Route::get('businesses/{uuid}', [OperationsBusinessController::class, 'show']);
+        Route::patch('businesses/{uuid}/status', [OperationsBusinessController::class, 'updateStatus'])
+            ->middleware('permission:operations.businesses.manage');
     });
 
     Route::middleware('permission:operations.kyc.view')->group(function (): void {
