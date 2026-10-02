@@ -8,6 +8,7 @@ use App\Models\Business\BusinessType;
 use App\Models\Business\ComplianceDocument;
 use App\Models\Location\City;
 use App\Models\Location\Country;
+use App\Models\Order\Order;
 use App\Models\Section\Section;
 use App\Models\Section\ServicePoint;
 use App\Services\Business\BusinessActivationService;
@@ -225,6 +226,71 @@ class OperationsBusinessController extends BaseController
         ], 'Business sections and service points retrieved successfully.');
     }
 
+    public function orders(Request $request, string $uuid): JsonResponse
+    {
+        $filters = $request->validate([
+            'search' => ['nullable', 'string', 'max:100'],
+            'status' => ['nullable', 'in:all,pending,processing,ready,served,completed,cancelled,refunded'],
+            'date_from' => ['nullable', 'date_format:Y-m-d'],
+            'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
+            'per_page' => ['nullable', 'in:10,25,50,75,100,all'],
+        ]);
+
+        $business = Business::query()->where('uuid', $uuid)->firstOrFail();
+        $query = Order::query()
+            ->where('business_id', $business->id)
+            ->with([
+                'status:id,name',
+                'paymentStatus:id,name',
+                'paymentMethod:id,name',
+                'customer:id,phone,phone_e164',
+                'servicePoint:id,type,label,display_name,section_id,sub_section_id',
+                'servicePoint.section:id,name',
+                'servicePoint.subSection:id,name',
+            ])
+            ->withCount('items')
+            ->when(!empty($filters['search']), function ($query) use ($filters): void {
+                $term = '%' . trim($filters['search']) . '%';
+                $query->where(function ($search) use ($term): void {
+                    $search->where('number', 'ilike', $term)
+                        ->orWhereHas('customer', fn ($customer) => $customer
+                            ->where('phone_e164', 'ilike', $term)
+                            ->orWhere('phone', 'ilike', $term));
+                });
+            })
+            ->when(($filters['status'] ?? 'all') !== 'all', fn ($query) => $query->whereHas('status', fn ($status) => $status->whereRaw('LOWER(name) = ?', [$filters['status']])))
+            ->when(!empty($filters['date_from']), fn ($query) => $query->whereDate('created_at', '>=', $filters['date_from']))
+            ->when(!empty($filters['date_to']), fn ($query) => $query->whereDate('created_at', '<=', $filters['date_to']))
+            ->orderByDesc('created_at');
+
+        $perPage = $filters['per_page'] ?? '10';
+        if ($perPage === 'all') {
+            $orders = $query->get();
+            $orderData = [
+                'data' => $orders->map(fn (Order $order) => $this->operationsOrderData($order))->values(),
+                'current_page' => 1,
+                'last_page' => 1,
+                'per_page' => $orders->count(),
+                'total' => $orders->count(),
+                'from' => $orders->isEmpty() ? null : 1,
+                'to' => $orders->count() ?: null,
+            ];
+        } else {
+            $orders = $query->paginate((int) $perPage)->withQueryString();
+            $orderData = [
+                'data' => $orders->getCollection()->map(fn (Order $order) => $this->operationsOrderData($order))->values(),
+                'current_page' => $orders->currentPage(),
+                'last_page' => $orders->lastPage(),
+                'per_page' => $orders->perPage(),
+                'total' => $orders->total(),
+                'from' => $orders->firstItem(),
+                'to' => $orders->lastItem(),
+            ];
+        }
+
+        return $this->sendResponse(['orders' => $orderData], 'Business orders retrieved successfully.');
+    }
+
     public function documents(Request $request): JsonResponse
     {
         $filters = $request->validate([
@@ -408,6 +474,43 @@ class OperationsBusinessController extends BaseController
                 'orderingChannels:id,slug,name',
             ])
             ->orderBy('label');
+    }
+
+    private function operationsOrderData(Order $order): array
+    {
+        $point = $order->servicePoint;
+
+        return [
+            'uuid' => $order->uuid,
+            'number' => $order->number,
+            'channel' => $order->channel,
+            'status' => $order->status?->name,
+            'payment_status' => $order->paymentStatus?->name,
+            'payment_method' => $order->paymentMethod?->name,
+            'customer_phone' => $order->customer?->phone_e164 ?: $order->customer?->phone,
+            'service_point' => $point ? [
+                'type' => $point->type,
+                'label' => $point->label,
+                'name' => $point->display_name,
+                'section' => $point->section?->name,
+                'subsection' => $point->subSection?->name,
+            ] : null,
+            'items_count' => (int) $order->items_count,
+            'total_items_amount' => (float) ($order->total_items_amount ?? 0),
+            'tax_amount' => (float) ($order->tax_amount ?? 0),
+            'total_amount' => (float) ($order->total_amount ?? 0),
+            'paid_amount' => (float) ($order->paid_amount ?? 0),
+            'due_amount' => (float) ($order->due_amount ?? 0),
+            'approved_at' => $this->isoDate($order->approved_at),
+            'created_at' => $this->isoDate($order->created_at),
+            'updated_at' => $this->isoDate($order->updated_at),
+        ];
+    }
+
+    private function isoDate(mixed $value): ?string
+    {
+        if ($value === null || $value === '') return null;
+        return $value instanceof \DateTimeInterface ? $value->format(DATE_ATOM) : (string) $value;
     }
 
     private function servicePointData(ServicePoint $servicePoint): array
