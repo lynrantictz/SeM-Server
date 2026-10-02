@@ -15,6 +15,7 @@ Route::prefix('operations')->group(function (): void {
         Route::get('businesses', [OperationsBusinessController::class, 'index']);
         Route::get('businesses/{uuid}', [OperationsBusinessController::class, 'show']);
         Route::get('businesses/{uuid}/team', [OperationsBusinessController::class, 'team']);
+        Route::get('businesses/{uuid}/sections', [OperationsBusinessController::class, 'sections']);
         Route::patch('businesses/{uuid}/status', [OperationsBusinessController::class, 'updateStatus'])
             ->middleware('permission:operations.businesses.manage');
     });

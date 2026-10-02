@@ -8,6 +8,8 @@ use App\Models\Business\BusinessType;
 use App\Models\Business\ComplianceDocument;
 use App\Models\Location\City;
 use App\Models\Location\Country;
+use App\Models\Section\Section;
+use App\Models\Section\ServicePoint;
 use App\Services\Business\BusinessActivationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -176,6 +178,51 @@ class OperationsBusinessController extends BaseController
         }
 
         return $this->sendResponse(['team' => $team], 'Business team retrieved successfully.');
+    }
+
+    public function sections(string $uuid): JsonResponse
+    {
+        $business = Business::query()->where('uuid', $uuid)->firstOrFail();
+
+        $sections = Section::query()
+            ->where('business_id', $business->id)
+            ->withCount(['subs', 'servicePoints'])
+            ->with([
+                'servicePoints' => fn ($query) => $this->servicePointQuery($query),
+                'subs' => function ($query): void {
+                    $query->withCount('servicePoints')
+                        ->with(['servicePoints' => fn ($servicePointQuery) => $this->servicePointQuery($servicePointQuery)])
+                        ->orderBy('name');
+                },
+            ])
+            ->orderBy('name')
+            ->get();
+
+        return $this->sendResponse([
+            'sections' => $sections->map(function (Section $section): array {
+                $subsections = $section->subs->map(fn ($subSection) => [
+                    'uuid' => $subSection->uuid,
+                    'name' => $subSection->name,
+                    'description' => $subSection->description,
+                    'is_active' => (bool) $subSection->is_active,
+                    'service_point_count' => (int) $subSection->service_points_count,
+                    'service_points' => $subSection->servicePoints->map(fn (ServicePoint $servicePoint) => $this->servicePointData($servicePoint))->values(),
+                ])->values();
+
+                $directServicePoints = $section->servicePoints->map(fn (ServicePoint $servicePoint) => $this->servicePointData($servicePoint))->values();
+
+                return [
+                    'uuid' => $section->uuid,
+                    'name' => $section->name,
+                    'description' => $section->description,
+                    'is_active' => (bool) $section->is_active,
+                    'subsection_count' => (int) $section->subs_count,
+                    'service_point_count' => $directServicePoints->count() + $subsections->sum('service_point_count'),
+                    'direct_service_points' => $directServicePoints,
+                    'subsections' => $subsections,
+                ];
+            })->values(),
+        ], 'Business sections and service points retrieved successfully.');
     }
 
     public function documents(Request $request): JsonResponse
@@ -350,6 +397,34 @@ class OperationsBusinessController extends BaseController
                 'rejection_reason' => $account->rejection_reason,
                 'country' => $account->country?->name,
             ])->values() : [],
+        ];
+    }
+
+    private function servicePointQuery($query): void
+    {
+        $query->select(['id', 'uuid', 'section_id', 'sub_section_id', 'type', 'label', 'display_name', 'capacity', 'is_active', 'updated_at'])
+            ->with([
+                'activeCode:id,codable_id,codable_type,code,is_active',
+                'orderingChannels:id,slug,name',
+            ])
+            ->orderBy('label');
+    }
+
+    private function servicePointData(ServicePoint $servicePoint): array
+    {
+        return [
+            'uuid' => $servicePoint->uuid,
+            'type' => $servicePoint->type,
+            'label' => $servicePoint->label,
+            'display_name' => $servicePoint->display_name,
+            'capacity' => $servicePoint->capacity,
+            'is_active' => (bool) $servicePoint->is_active,
+            'qr_code' => $servicePoint->activeCode?->code,
+            'ordering_channels' => $servicePoint->orderingChannels->map(fn ($channel) => [
+                'slug' => $channel->slug,
+                'name' => $channel->name,
+            ])->values(),
+            'updated_at' => $servicePoint->updated_at?->toIso8601String(),
         ];
     }
 
