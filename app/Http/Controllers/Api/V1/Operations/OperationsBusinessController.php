@@ -233,6 +233,8 @@ class OperationsBusinessController extends BaseController
             'status' => ['nullable', 'in:all,pending,processing,ready,served,completed,cancelled,refunded'],
             'date_from' => ['nullable', 'date_format:Y-m-d'],
             'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
+            'sort_by' => ['nullable', 'in:created_at,total_amount'],
+            'sort_direction' => ['nullable', 'in:asc,desc'],
             'per_page' => ['nullable', 'in:10,25,50,75,100,all'],
         ]);
 
@@ -243,10 +245,20 @@ class OperationsBusinessController extends BaseController
                 'status:id,name',
                 'paymentStatus:id,name',
                 'paymentMethod:id,name',
+                'payment:payments.id,payments.order_id,payments.account_number,payments.provider,payments.operator,payments.msisdn,payments.amount,payments.currency,payments.status,payments.confirmed_at,payments.paid_at',
                 'customer:id,phone,phone_e164',
+                'approver:id,name',
+                'assignee:id,name',
                 'servicePoint:id,type,label,display_name,section_id,sub_section_id',
                 'servicePoint.section:id,name',
                 'servicePoint.subSection:id,name',
+                'items:id,order_id,item_id,quantity,unit_price,final_price,total_amount,comment',
+                'items.item:id,uuid,name',
+                'items.options:id,order_item_id,name,price_adjustment',
+                'items.options.itemOption:id,uuid',
+                'statusHistories.fromStatus:id,name',
+                'statusHistories.toStatus:id,name',
+                'statusHistories.changedBy:id,name',
             ])
             ->withCount('items')
             ->when(!empty($filters['search']), function ($query) use ($filters): void {
@@ -261,7 +273,7 @@ class OperationsBusinessController extends BaseController
             ->when(($filters['status'] ?? 'all') !== 'all', fn ($query) => $query->whereHas('status', fn ($status) => $status->whereRaw('LOWER(name) = ?', [$filters['status']])))
             ->when(!empty($filters['date_from']), fn ($query) => $query->whereDate('created_at', '>=', $filters['date_from']))
             ->when(!empty($filters['date_to']), fn ($query) => $query->whereDate('created_at', '<=', $filters['date_to']))
-            ->orderByDesc('created_at');
+            ->orderBy($filters['sort_by'] ?? 'created_at', $filters['sort_direction'] ?? 'desc');
 
         $perPage = $filters['per_page'] ?? '10';
         if ($perPage === 'all') {
@@ -479,6 +491,8 @@ class OperationsBusinessController extends BaseController
     private function operationsOrderData(Order $order): array
     {
         $point = $order->servicePoint;
+        $paymentMethod = $order->paymentMethod?->name;
+        $isCash = str_contains(strtolower((string) $paymentMethod), 'cash');
 
         return [
             'uuid' => $order->uuid,
@@ -486,7 +500,13 @@ class OperationsBusinessController extends BaseController
             'channel' => $order->channel,
             'status' => $order->status?->name,
             'payment_status' => $order->paymentStatus?->name,
-            'payment_method' => $order->paymentMethod?->name,
+            'payment_method' => $paymentMethod,
+            'payment_type' => $isCash ? 'Cash' : ($order->payment ? 'Mobile money' : ($paymentMethod ?: 'Not recorded')),
+            'payment_phone' => $order->payment?->msisdn ?: ($order->payment?->account_number ?: null),
+            'payment_provider' => $order->payment?->operator ?: ($order->payment?->provider ?: null),
+            'payment_paid_at' => $this->isoDate($order->payment?->paid_at ?: $order->payment?->confirmed_at),
+            'approved_by' => $order->approver?->name,
+            'assigned_to' => $order->assignee?->name,
             'customer_phone' => $order->customer?->phone_e164 ?: $order->customer?->phone,
             'service_point' => $point ? [
                 'type' => $point->type,
@@ -501,6 +521,25 @@ class OperationsBusinessController extends BaseController
             'total_amount' => (float) ($order->total_amount ?? 0),
             'paid_amount' => (float) ($order->paid_amount ?? 0),
             'due_amount' => (float) ($order->due_amount ?? 0),
+            'comment' => $order->comment,
+            'items' => $order->items->map(fn ($item) => [
+                'name' => $item->item?->name ?? 'Menu item',
+                'quantity' => (int) $item->quantity,
+                'unit_price' => (float) ($item->unit_price ?? 0),
+                'total' => (float) ($item->total_amount ?? 0),
+                'comment' => $item->comment,
+                'options' => $item->options->map(fn ($option) => [
+                    'name' => $option->name,
+                    'price_adjustment' => (float) ($option->price_adjustment ?? 0),
+                ])->values(),
+            ])->values(),
+            'history' => $order->statusHistories->map(fn ($entry) => [
+                'from' => $entry->fromStatus?->name,
+                'to' => $entry->toStatus?->name,
+                'by' => $entry->changedBy?->name,
+                'at' => $this->isoDate($entry->created_at),
+                'note' => $entry->note,
+            ])->values(),
             'approved_at' => $this->isoDate($order->approved_at),
             'created_at' => $this->isoDate($order->created_at),
             'updated_at' => $this->isoDate($order->updated_at),
