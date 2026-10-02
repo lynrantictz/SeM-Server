@@ -12,6 +12,7 @@ use App\Services\Business\BusinessActivationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 class OperationsBusinessController extends BaseController
@@ -106,6 +107,75 @@ class OperationsBusinessController extends BaseController
             'documents' => $documents,
             'activation' => $activation,
         ], 'Operations business details retrieved successfully.');
+    }
+
+    public function team(Request $request, string $uuid): JsonResponse
+    {
+        $filters = $request->validate([
+            'search' => ['nullable', 'string', 'max:100'],
+            'per_page' => ['nullable', 'in:10,25,50,75,100,all'],
+        ]);
+
+        $business = Business::query()->where('uuid', $uuid)->firstOrFail();
+
+        $vendorMembers = DB::table('vendor_user as membership')
+            ->join('users as team_user', 'team_user.id', '=', 'membership.user_id')
+            ->where('membership.vendor_id', $business->vendor_id)
+            ->select([
+                'team_user.uuid', 'team_user.name', 'team_user.code', 'team_user.email', 'team_user.phone', 'team_user.last_login_at', 'team_user.last_login_portal',
+                'team_user.type as user_type', DB::raw("'vendor' as source"),
+                'membership.role', DB::raw('NULL::varchar as title'), 'membership.access_scope',
+                'membership.is_primary', 'membership.is_active as membership_active', 'team_user.is_active as user_active',
+                'membership.invited_at', 'membership.accepted_at', DB::raw('NULL::timestamp as activated_at'),
+                DB::raw('NULL::timestamp as deactivated_at'), 'membership.revoked_at',
+            ]);
+
+        $businessMembers = DB::table('business_user as membership')
+            ->join('users as team_user', 'team_user.id', '=', 'membership.user_id')
+            ->leftJoin('business_staff_roles as staff_role', 'staff_role.id', '=', 'membership.business_staff_role_id')
+            ->where('membership.business_id', $business->id)
+            ->select([
+                'team_user.uuid', 'team_user.name', 'team_user.code', 'team_user.email', 'team_user.phone', 'team_user.last_login_at', 'team_user.last_login_portal',
+                'team_user.type as user_type', DB::raw("'business' as source"),
+                'membership.business_role as role', 'membership.title', DB::raw("'this_business' as access_scope"),
+                DB::raw('false as is_primary'), 'membership.is_active as membership_active', 'team_user.is_active as user_active',
+                DB::raw('NULL::timestamp as invited_at'), DB::raw('NULL::timestamp as accepted_at'),
+                'membership.activated_at', 'membership.deactivated_at', DB::raw('NULL::timestamp as revoked_at'),
+            ]);
+
+        $query = DB::query()->fromSub($vendorMembers->unionAll($businessMembers), 'team_members')
+            ->when($filters['search'] ?? null, function ($query, string $search): void {
+                $term = '%' . trim($search) . '%';
+                $query->where(function ($searchQuery) use ($term): void {
+                    $searchQuery->where('name', 'ilike', $term)
+                        ->orWhere('code', 'ilike', $term)
+                        ->orWhere('email', 'ilike', $term)
+                        ->orWhere('phone', 'ilike', $term)
+                        ->orWhere('role', 'ilike', $term)
+                        ->orWhere('title', 'ilike', $term);
+                });
+            })
+            ->orderByDesc('membership_active')
+            ->orderBy('name');
+
+        $perPage = $filters['per_page'] ?? '10';
+        if ($perPage === 'all') {
+            $members = $query->get();
+            $team = [
+                'data' => $members->map(fn ($member) => $this->teamMemberData($member))->values(),
+                'current_page' => 1,
+                'last_page' => 1,
+                'per_page' => $members->count(),
+                'total' => $members->count(),
+                'from' => $members->isEmpty() ? null : 1,
+                'to' => $members->count() ?: null,
+            ];
+        } else {
+            $members = $query->paginate((int) $perPage)->withQueryString();
+            $team = $members->through(fn ($member) => $this->teamMemberData($member));
+        }
+
+        return $this->sendResponse(['team' => $team], 'Business team retrieved successfully.');
     }
 
     public function documents(Request $request): JsonResponse
@@ -208,6 +278,12 @@ class OperationsBusinessController extends BaseController
             'google_location' => $business->google_location,
             'latitude' => $business->latitude,
             'longitude' => $business->longitude,
+            'location_verified_at' => $business->location_verified_at?->toIso8601String(),
+            'logo_url' => $business->logo_url,
+            'image_url' => $business->image_url,
+            'discovery_description' => $business->discovery_description,
+            'rating' => $business->rating,
+            'review_count' => (int) ($business->review_count ?? 0),
             'order_prefix' => $business->order_prefix,
             'code_prefix' => $business->code_prefix,
             'current_order_number' => $business->current_order_number,
@@ -219,6 +295,7 @@ class OperationsBusinessController extends BaseController
             'country_iso2' => $business->district?->city?->country?->iso2,
             'is_active' => (bool) $business->is_active,
             'created_at' => $business->created_at?->toIso8601String(),
+            'updated_at' => $business->updated_at?->toIso8601String(),
             'document_count' => (int) ($business->compliance_documents_count ?? 0),
             'pending_documents_count' => (int) ($business->pending_documents_count ?? 0),
             'contacts' => $business->relationLoaded('contacts') ? $business->contacts->map(fn ($contact) => [
@@ -273,6 +350,32 @@ class OperationsBusinessController extends BaseController
                 'rejection_reason' => $account->rejection_reason,
                 'country' => $account->country?->name,
             ])->values() : [],
+        ];
+    }
+
+    private function teamMemberData(object $member): array
+    {
+        return [
+            'uuid' => $member->uuid,
+            'name' => $member->name,
+            'code' => $member->code,
+            'email' => $member->email,
+            'phone' => $member->phone,
+            'last_login_at' => $member->last_login_at,
+            'last_login_portal' => $member->last_login_portal,
+            'user_type' => $member->user_type,
+            'source' => $member->source,
+            'role' => $member->role,
+            'title' => $member->title,
+            'access_scope' => $member->access_scope,
+            'is_primary' => (bool) $member->is_primary,
+            'membership_active' => (bool) $member->membership_active,
+            'user_active' => (bool) $member->user_active,
+            'invited_at' => $member->invited_at,
+            'accepted_at' => $member->accepted_at,
+            'activated_at' => $member->activated_at,
+            'deactivated_at' => $member->deactivated_at,
+            'revoked_at' => $member->revoked_at,
         ];
     }
 

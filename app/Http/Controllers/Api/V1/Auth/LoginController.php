@@ -90,6 +90,14 @@ class LoginController extends BaseController
             }
         }
 
+        $user->forceFill([
+            'last_login_at' => now(),
+            'last_login_ip' => $request->ip(),
+            'last_login_user_agent' => $request->userAgent(),
+            'last_login_portal' => $requiredType === UserType::PAPERSTIC->value ? 'operations' : 'business',
+            'login_count' => ((int) $user->login_count) + 1,
+        ])->save();
+
         // Optional: revoke old tokens
         $user->tokens()->delete();
 
