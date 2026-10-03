@@ -26,6 +26,20 @@ Route::prefix('operations')->group(function (): void {
         Route::get('businesses/{uuid}/onboarding-payment/proof', [OperationsBusinessController::class, 'downloadOnboardingProof']);
         Route::patch('businesses/{uuid}/payment-setting', [OperationsBusinessController::class, 'updatePaymentSetting'])
             ->middleware('permission:operations.settlements.manage');
+        Route::post('businesses/{uuid}/payout-accounts', [OperationsBusinessController::class, 'storePayoutAccount'])
+            ->middleware('permission:operations.settlements.manage');
+        Route::put('businesses/{uuid}/payout-accounts/{accountUuid}', [OperationsBusinessController::class, 'updatePayoutAccount'])
+            ->middleware('permission:operations.settlements.manage');
+        Route::post('businesses/{uuid}/payout-accounts/{accountUuid}/review', [OperationsBusinessController::class, 'reviewPayoutAccount'])
+            ->middleware('permission:operations.settlements.manage');
+        Route::post('businesses/{uuid}/payout-accounts/{accountUuid}/default', [OperationsBusinessController::class, 'makeDefaultPayoutAccount'])
+            ->middleware('permission:operations.settlements.manage');
+        Route::get('businesses/{uuid}/payout-accounts/{accountUuid}/history', [OperationsBusinessController::class, 'payoutAccountHistory'])
+            ->middleware('permission:operations.settlements.view');
+        Route::post('businesses/{uuid}/payout-accounts/{accountUuid}/verification-document', [OperationsBusinessController::class, 'uploadPayoutVerificationDocument'])
+            ->middleware('permission:operations.settlements.manage');
+        Route::get('businesses/{uuid}/payout-accounts/{accountUuid}/verification-document', [OperationsBusinessController::class, 'downloadPayoutVerificationDocument'])
+            ->middleware('permission:operations.settlements.view');
     });
 
     Route::middleware('permission:operations.kyc.view')->group(function (): void {

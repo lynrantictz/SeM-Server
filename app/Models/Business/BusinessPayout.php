@@ -11,7 +11,7 @@ class BusinessPayout extends BaseModel
 {
     protected $fillable = [
         'business_id', 'payment_id', 'payment_allocation_id', 'payout_account_id', 'gateway',
-        'gross_amount', 'commission_amount', 'gateway_fee_amount', 'net_amount', 'currency',
+        'gross_amount', 'commission_amount', 'collection_fee_amount', 'disbursement_fee_amount', 'gateway_fee_amount', 'net_amount', 'currency',
         'status', 'idempotency_key', 'external_reference', 'provider_reference', 'hold_reason',
         'failure_reason', 'request_payload', 'response_payload', 'submitted_at', 'completed_at',
         'failed_at', 'reversed_at',
@@ -20,6 +20,8 @@ class BusinessPayout extends BaseModel
     protected $casts = [
         'gross_amount' => 'decimal:2',
         'commission_amount' => 'decimal:2',
+        'collection_fee_amount' => 'decimal:2',
+        'disbursement_fee_amount' => 'decimal:2',
         'gateway_fee_amount' => 'decimal:2',
         'net_amount' => 'decimal:2',
         'request_payload' => 'array',

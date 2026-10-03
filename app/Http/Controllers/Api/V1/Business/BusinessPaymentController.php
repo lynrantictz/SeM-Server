@@ -69,6 +69,7 @@ class BusinessPaymentController extends BaseController
                 'uuid' => $business->uuid,
                 'name' => $business->name,
                 'country' => $business->district?->city?->country?->name,
+                'country_phone_code' => $business->district?->city?->country?->phone_code,
                 'currency' => $business->paymentSetting?->currency ?: 'TZS',
             ],
             'payment_setting' => $business->paymentSetting,
@@ -91,6 +92,7 @@ class BusinessPaymentController extends BaseController
         $validated = $request->validate([
             'destination_type' => ['required', 'in:mobile_money'],
             'provider' => ['required', 'string', 'max:80'],
+            'wallet_id' => ['nullable', 'string', 'max:160'],
             'account_number' => ['required', 'regex:/^[1-9][0-9]{6,14}$/'],
             'account_holder_name' => ['required', 'string', 'max:160'],
             'currency' => ['nullable', 'string', 'size:3'],
@@ -112,19 +114,32 @@ class BusinessPaymentController extends BaseController
         } catch (\App\Exceptions\InvalidPhoneNumberException $exception) {
             return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
         }
+        abort_if(
+            BusinessPayoutAccount::query()->where('account_number', $accountNumber)->exists(),
+            HTTP_UNPROCESSABLE_ENTITY,
+            'This settlement phone or account number is already registered.',
+        );
+        $walletId = filled($validated['wallet_id'] ?? null) ? trim($validated['wallet_id']) : null;
+        abort_if(
+            $walletId && BusinessPayoutAccount::query()->where('wallet_id', $walletId)->exists(),
+            HTTP_UNPROCESSABLE_ENTITY,
+            'This AzamPay wallet ID is already registered.',
+        );
 
-        $account = $business->payoutAccounts()->create([
+        $account = DB::transaction(fn () => $business->payoutAccounts()->create([
             'gateway' => 'azampay',
+            'wallet_id' => $walletId,
             'destination_type' => 'mobile_money',
             'provider' => $provider->code,
             'account_number' => $accountNumber,
+            'phone_number' => $accountNumber,
             'account_holder_name' => trim($validated['account_holder_name']),
             'currency' => strtoupper($validated['currency'] ?? $business->paymentSetting?->currency ?? 'TZS'),
             'country_id' => $country?->id,
             'verification_status' => 'pending',
             'status' => 'pending',
             'is_default' => false,
-        ]);
+        ]));
 
         return $this->sendResponse(['payout_account' => $this->payoutAccountData($account)], 'Payout account submitted for Paperstic verification.', 201);
     }
@@ -136,6 +151,7 @@ class BusinessPaymentController extends BaseController
 
         $validated = $request->validate([
             'provider' => ['required', 'string', 'max:80'],
+            'wallet_id' => ['nullable', 'string', 'max:160'],
             'account_number' => ['required', 'regex:/^[1-9][0-9]{6,14}$/'],
             'account_holder_name' => ['required', 'string', 'max:160'],
             'currency' => ['nullable', 'string', 'size:3'],
@@ -149,19 +165,40 @@ class BusinessPaymentController extends BaseController
         } catch (\App\Exceptions\InvalidPhoneNumberException $exception) {
             return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
         }
+        abort_if(
+            BusinessPayoutAccount::query()
+                ->where('account_number', $accountNumber)
+                ->whereKeyNot($payoutAccount->getKey())
+                ->exists(),
+            HTTP_UNPROCESSABLE_ENTITY,
+            'This settlement phone or account number is already registered.',
+        );
+        $walletId = filled($validated['wallet_id'] ?? null) ? trim($validated['wallet_id']) : null;
+        abort_if(
+            $walletId && BusinessPayoutAccount::query()
+                ->where('wallet_id', $walletId)
+                ->whereKeyNot($payoutAccount->getKey())
+                ->exists(),
+            HTTP_UNPROCESSABLE_ENTITY,
+            'This AzamPay wallet ID is already registered.',
+        );
 
-        $payoutAccount->update([
-            'provider' => $provider->code,
-            'account_number' => $accountNumber,
-            'account_holder_name' => trim($validated['account_holder_name']),
-            'currency' => strtoupper($validated['currency'] ?? $business->paymentSetting?->currency ?? 'TZS'),
-            'verification_status' => 'pending',
-            'status' => 'pending',
-            'is_default' => false,
-            'verified_by' => null,
-            'verified_at' => null,
-            'rejection_reason' => null,
-        ]);
+        DB::transaction(function () use ($payoutAccount, $provider, $validated, $accountNumber, $business): void {
+            $payoutAccount->update([
+                'provider' => $provider->code,
+                'wallet_id' => filled($validated['wallet_id'] ?? null) ? trim($validated['wallet_id']) : null,
+                'account_number' => $accountNumber,
+                'phone_number' => $accountNumber,
+                'account_holder_name' => trim($validated['account_holder_name']),
+                'currency' => strtoupper($validated['currency'] ?? $business->paymentSetting?->currency ?? 'TZS'),
+                'verification_status' => 'pending',
+                'status' => 'pending',
+                'is_default' => false,
+                'verified_by' => null,
+                'verified_at' => null,
+                'rejection_reason' => null,
+            ]);
+        });
 
         return $this->sendResponse(['payout_account' => $this->payoutAccountData($payoutAccount->fresh())], 'Payout account updated and returned for verification.');
     }
@@ -189,12 +226,14 @@ class BusinessPaymentController extends BaseController
             Storage::disk('local')->delete($payment->proof_path);
         }
         $file = $validated['file'];
-        $payment->update([
-            'proof_path' => $file->store("onboarding-payments/{$business->uuid}", 'local'),
-            'proof_filename' => $file->getClientOriginalName(),
-            'uploaded_by' => $request->user()->id,
-            'status' => $payment->status === 'paid' ? 'paid' : 'submitted',
-        ]);
+        DB::transaction(function () use ($payment, $file, $business, $request): void {
+            $payment->update([
+                'proof_path' => $file->store("onboarding-payments/{$business->uuid}", 'local'),
+                'proof_filename' => $file->getClientOriginalName(),
+                'uploaded_by' => $request->user()->id,
+                'status' => $payment->status === 'paid' ? 'paid' : 'submitted',
+            ]);
+        });
 
         return $this->sendResponse(['proof_filename' => $payment->proof_filename], 'Onboarding payment proof uploaded.');
     }
@@ -295,9 +334,11 @@ class BusinessPaymentController extends BaseController
     {
         return [
             'uuid' => $account->uuid,
+            'wallet_id' => $account->maskedWalletId(),
             'destination_type' => $account->destination_type,
             'provider' => $account->provider,
             'account_number' => $account->maskedAccountNumber(),
+            'phone_number' => $account->maskedPhoneNumber(),
             'account_holder_name' => $account->account_holder_name,
             'currency' => $account->currency,
             'verification_status' => $account->verification_status,

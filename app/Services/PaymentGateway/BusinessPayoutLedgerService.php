@@ -6,6 +6,7 @@ use App\Models\Business\BusinessPayout;
 use App\Models\Business\BusinessPayoutAccount;
 use App\Models\Payment\Payment;
 use App\Models\Payment\PaymentAllocation;
+use Illuminate\Support\Facades\DB;
 
 class BusinessPayoutLedgerService
 {
@@ -18,7 +19,7 @@ class BusinessPayoutLedgerService
             ->where('verification_status', 'verified')
             ->first();
 
-        return BusinessPayout::query()->firstOrCreate(
+        return DB::transaction(fn () => BusinessPayout::query()->firstOrCreate(
             ['payment_id' => $payment->id, 'business_id' => $allocation->business_id],
             [
                 'payment_allocation_id' => $allocation->id,
@@ -26,6 +27,8 @@ class BusinessPayoutLedgerService
                 'gateway' => 'azampay',
                 'gross_amount' => $allocation->gross_amount,
                 'commission_amount' => $allocation->commission_amount,
+                'collection_fee_amount' => 0,
+                'disbursement_fee_amount' => 0,
                 'gateway_fee_amount' => $allocation->gateway_fee_amount,
                 'net_amount' => $allocation->business_payable_amount,
                 'currency' => $allocation->currency,
@@ -35,6 +38,6 @@ class BusinessPayoutLedgerService
                     ? 'Awaiting Paperstic payout processing.'
                     : 'Awaiting a verified default business payout account.',
             ],
-        );
+        ));
     }
 }

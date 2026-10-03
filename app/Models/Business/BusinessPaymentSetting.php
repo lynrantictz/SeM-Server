@@ -9,7 +9,7 @@ class BusinessPaymentSetting extends BaseModel
 {
     protected $fillable = [
         'business_id', 'provider', 'currency', 'commission_rate', 'commission_basis', 'fee_bearer',
-        'settlement_mode', 'is_checkout_enabled', 'is_settlement_enabled', 'payout_provider',
+        'settlement_mode', 'settlement_requirement', 'is_checkout_enabled', 'is_settlement_enabled', 'payout_provider',
         'payout_account_number', 'payout_recipient_reference',
     ];
 

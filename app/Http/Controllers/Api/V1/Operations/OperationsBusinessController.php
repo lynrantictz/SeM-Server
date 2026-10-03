@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Api\BaseController;
 use App\Models\Business\Business;
+use App\Models\Business\BusinessPayoutAccount;
 use App\Models\Business\BusinessType;
 use App\Models\Business\ComplianceDocument;
 use App\Models\Business\ComplianceDocumentType;
@@ -13,12 +14,15 @@ use App\Models\Location\Country;
 use App\Models\Order\Order;
 use App\Models\Section\Section;
 use App\Models\Section\ServicePoint;
+use App\Models\Payment\MobileMoneyProvider;
 use App\Services\Business\BusinessActivationService;
+use App\Services\PhoneNumberNormalizer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use OwenIt\Auditing\Models\Audit;
 
 class OperationsBusinessController extends BaseController
 {
@@ -96,7 +100,7 @@ class OperationsBusinessController extends BaseController
                 'openingHours:id,business_id,day_of_week,sort_order,opens_at,closes_at,is_closed',
                 'paymentSetting',
                 'onboardingPayment.onboardingPackage',
-                'payoutAccounts:id,uuid,business_id,destination_type,provider,account_number,account_holder_name,currency,verification_status,status,is_default,verified_at,rejection_reason,country_id',
+                'payoutAccounts:id,uuid,business_id,gateway,wallet_id,destination_type,provider,account_number,phone_number,account_holder_name,currency,verification_status,status,is_default,verified_at,rejection_reason,verification_document_filename,verification_document_uploaded_at,country_id',
                 'payoutAccounts.country:id,name,iso2',
             ])
             ->withCount(['complianceDocuments as pending_documents_count' => fn ($query) => $query->whereIn('status', ['pending', 'in_review', 'needs_review'])])
@@ -135,10 +139,10 @@ class OperationsBusinessController extends BaseController
         ]);
         $package = \App\Models\Business\OnboardingPackage::query()->where('is_active', true)->findOrFail($validated['package_id']);
 
-        $payment = $business->onboardingPayment()->updateOrCreate(
+        $payment = DB::transaction(fn () => $business->onboardingPayment()->updateOrCreate(
             ['business_id' => $business->id],
             [...$validated, 'package' => $package->name, 'amount_paid' => $validated['amount_paid'] ?? 0, 'currency' => strtoupper($validated['currency'])],
-        );
+        ));
 
         return $this->sendResponse(['onboarding_payment' => $this->onboardingPaymentData($payment)], 'One-time onboarding payment updated.');
     }
@@ -153,6 +157,7 @@ class OperationsBusinessController extends BaseController
             'commission_basis' => ['required', 'in:subtotal_excluding_tax'],
             'fee_bearer' => ['required', 'in:business'],
             'settlement_mode' => ['required', 'in:manual_hold,manual_payout,automatic_payout'],
+            'settlement_requirement' => ['required', 'in:required,not_required,alternative_method'],
             'is_checkout_enabled' => ['required', 'boolean'],
             'is_settlement_enabled' => ['required', 'boolean'],
         ]);
@@ -173,20 +178,195 @@ class OperationsBusinessController extends BaseController
             ], HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        if ($validated['is_settlement_enabled'] && (! $validated['is_checkout_enabled'] || ! $defaultAccount)) {
+        if ($validated['is_settlement_enabled'] && ($validated['settlement_requirement'] === 'not_required' || ! $validated['is_checkout_enabled'] || ! $defaultAccount)) {
             return $this->sendError('Settlement cannot be enabled until checkout is enabled and a verified active default settlement account exists.', [
                 'verified_default_account' => $defaultAccount,
+                'settlement_requirement' => $validated['settlement_requirement'],
             ], HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $setting = $business->paymentSetting()->updateOrCreate(
+        $setting = DB::transaction(fn () => $business->paymentSetting()->updateOrCreate(
             ['business_id' => $business->id],
             [...$validated, 'currency' => strtoupper($validated['currency'])],
-        );
+        ));
 
         return $this->sendResponse([
             'payment_setting' => $this->paymentSettingData($setting),
         ], 'Payment configuration updated successfully.');
+    }
+
+    public function storePayoutAccount(Request $request, string $uuid): JsonResponse
+    {
+        $business = Business::query()->with('district.city.country')->where('uuid', $uuid)->firstOrFail();
+        $validated = $request->validate([
+            'provider' => ['required', 'string', 'max:80'],
+            'wallet_id' => ['nullable', 'string', 'max:160'],
+            'account_number' => ['required', 'regex:/^[1-9][0-9]{6,14}$/'],
+            'account_holder_name' => ['required', 'string', 'max:160'],
+            'currency' => ['nullable', 'string', 'size:3'],
+        ]);
+        $country = $business->district?->city?->country;
+        $provider = MobileMoneyProvider::query()->where('gateway', 'azampay')->where('code', $validated['provider'])->where('is_active', true)->when($country?->id, fn ($query) => $query->where(fn ($countryQuery) => $countryQuery->where('country_id', $country->id)->orWhereNull('country_id')))->firstOrFail();
+        $accountNumber = app(PhoneNumberNormalizer::class)->normalize($validated['account_number'], $country?->iso2);
+        abort_if(BusinessPayoutAccount::query()->where('account_number', $accountNumber)->exists(), HTTP_UNPROCESSABLE_ENTITY, 'This settlement phone or account number is already registered.');
+        $walletId = filled($validated['wallet_id'] ?? null) ? trim($validated['wallet_id']) : null;
+        abort_if($walletId && BusinessPayoutAccount::query()->where('wallet_id', $walletId)->exists(), HTTP_UNPROCESSABLE_ENTITY, 'This AzamPay wallet ID is already registered.');
+        $account = DB::transaction(fn () => $business->payoutAccounts()->create([
+            'gateway' => 'azampay',
+            'wallet_id' => $walletId,
+            'destination_type' => 'mobile_money',
+            'provider' => $provider->code,
+            'account_number' => $accountNumber,
+            'phone_number' => $accountNumber,
+            'account_holder_name' => trim($validated['account_holder_name']),
+            'currency' => strtoupper($validated['currency'] ?? $business->paymentSetting?->currency ?? 'TZS'),
+            'country_id' => $country?->id,
+            'verification_status' => 'verified',
+            'status' => 'active',
+            'is_default' => false,
+            'verified_by' => $request->user()->id,
+            'verified_at' => now(),
+            'metadata' => ['created_by_operations' => true],
+        ]));
+
+        return $this->sendResponse(['payout_account' => $this->payoutAccountData($account)], 'Settlement account created and activated.', 201);
+    }
+
+    public function updatePayoutAccount(Request $request, string $uuid, string $accountUuid): JsonResponse
+    {
+        $business = Business::query()->with('district.city.country')->where('uuid', $uuid)->firstOrFail();
+        $account = $business->payoutAccounts()->where('uuid', $accountUuid)->firstOrFail();
+        $validated = $request->validate([
+            'provider' => ['required', 'string', 'max:80'],
+            'wallet_id' => ['nullable', 'string', 'max:160'],
+            'account_number' => ['required', 'regex:/^[1-9][0-9]{6,14}$/'],
+            'account_holder_name' => ['required', 'string', 'max:160'],
+            'currency' => ['nullable', 'string', 'size:3'],
+        ]);
+        $country = $business->district?->city?->country;
+        $provider = MobileMoneyProvider::query()->where('gateway', 'azampay')->where('code', $validated['provider'])->where('is_active', true)->when($country?->id, fn ($query) => $query->where(fn ($countryQuery) => $countryQuery->where('country_id', $country->id)->orWhereNull('country_id')))->firstOrFail();
+        $accountNumber = app(PhoneNumberNormalizer::class)->normalize($validated['account_number'], $country?->iso2);
+        abort_if(BusinessPayoutAccount::query()->where('account_number', $accountNumber)->whereKeyNot($account->getKey())->exists(), HTTP_UNPROCESSABLE_ENTITY, 'This settlement phone or account number is already registered.');
+        $walletId = filled($validated['wallet_id'] ?? null) ? trim($validated['wallet_id']) : null;
+        abort_if($walletId && BusinessPayoutAccount::query()->where('wallet_id', $walletId)->whereKeyNot($account->getKey())->exists(), HTTP_UNPROCESSABLE_ENTITY, 'This AzamPay wallet ID is already registered.');
+        DB::transaction(function () use ($account, $provider, $validated, $accountNumber, $business, $request): void {
+            $account->update([
+            'provider' => $provider->code,
+            'wallet_id' => filled($validated['wallet_id'] ?? null) ? trim($validated['wallet_id']) : null,
+            'account_number' => $accountNumber,
+            'phone_number' => $accountNumber,
+            'account_holder_name' => trim($validated['account_holder_name']),
+            'currency' => strtoupper($validated['currency'] ?? $business->paymentSetting?->currency ?? 'TZS'),
+            'verification_status' => 'verified',
+            'status' => 'active',
+            'verified_by' => $request->user()->id,
+            'verified_at' => now(),
+            'rejection_reason' => null,
+            'metadata' => ['updated_by_operations' => true],
+            ]);
+        });
+
+        return $this->sendResponse(['payout_account' => $this->payoutAccountData($account->fresh())], 'Settlement account updated and activated.');
+    }
+
+    public function uploadPayoutVerificationDocument(Request $request, string $uuid, string $accountUuid): JsonResponse
+    {
+        $business = Business::query()->where('uuid', $uuid)->firstOrFail();
+        $account = $business->payoutAccounts()->where('uuid', $accountUuid)->firstOrFail();
+        $validated = $request->validate(['file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240']]);
+        if ($account->verification_document_path) {
+            Storage::disk('local')->delete($account->verification_document_path);
+        }
+        $file = $validated['file'];
+        DB::transaction(function () use ($account, $file, $business, $request): void {
+            $account->update([
+            'verification_document_path' => $file->store("payout-verification/{$business->uuid}", 'local'),
+            'verification_document_filename' => $file->getClientOriginalName(),
+            'verification_document_uploaded_by' => $request->user()->id,
+            'verification_document_uploaded_at' => now(),
+            ]);
+        });
+        return $this->sendResponse(['payout_account' => $this->payoutAccountData($account->fresh())], 'AzamPay verification document uploaded.');
+    }
+
+    public function downloadPayoutVerificationDocument(string $uuid, string $accountUuid)
+    {
+        $business = Business::query()->where('uuid', $uuid)->firstOrFail();
+        $account = $business->payoutAccounts()->where('uuid', $accountUuid)->firstOrFail();
+        abort_unless($account->verification_document_path, 404, 'No verification document has been uploaded.');
+        abort_unless(Storage::disk('local')->exists($account->verification_document_path), 404, 'The verification document is no longer available.');
+        return Storage::disk('local')->response($account->verification_document_path, $account->verification_document_filename);
+    }
+
+    public function reviewPayoutAccount(Request $request, string $uuid, string $accountUuid): JsonResponse
+    {
+        $business = Business::query()->where('uuid', $uuid)->firstOrFail();
+        $account = $business->payoutAccounts()->where('uuid', $accountUuid)->firstOrFail();
+        $validated = $request->validate(['decision' => ['required', 'in:approved,returned,suspended,reactivated'], 'reason' => ['nullable', 'string', 'max:2000']]);
+        $approved = in_array($validated['decision'], ['approved', 'reactivated'], true);
+        $suspended = $validated['decision'] === 'suspended';
+        DB::transaction(function () use ($account, $approved, $suspended, $validated, $request): void {
+            $account->update([
+            'verification_status' => $approved ? 'verified' : ($suspended ? 'verified' : 'needs_update'),
+            'status' => $approved ? 'active' : ($suspended ? 'suspended' : 'pending'),
+            'is_default' => $approved ? $account->is_default : false,
+            'verified_by' => $approved ? $request->user()->id : $account->verified_by,
+            'verified_at' => $approved ? now() : $account->verified_at,
+            'rejection_reason' => $approved ? null : ($validated['reason'] ?? 'Settlement account requires correction.'),
+            ]);
+        });
+
+        return $this->sendResponse(['payout_account' => $this->payoutAccountData($account->fresh())], 'Settlement account status updated.');
+    }
+
+    public function makeDefaultPayoutAccount(string $uuid, string $accountUuid): JsonResponse
+    {
+        $business = Business::query()->where('uuid', $uuid)->firstOrFail();
+        $account = $business->payoutAccounts()->where('uuid', $accountUuid)->firstOrFail();
+        abort_unless($account->status === 'active' && $account->verification_status === 'verified', HTTP_UNPROCESSABLE_ENTITY, 'Only a verified active account can be made default.');
+        DB::transaction(function () use ($business, $account): void {
+            $business->payoutAccounts()->update(['is_default' => false]);
+            $account->update(['is_default' => true]);
+        });
+        return $this->sendResponse(['payout_account' => $this->payoutAccountData($account->fresh())], 'Default settlement account updated.');
+    }
+
+    public function payoutAccountHistory(string $uuid, string $accountUuid): JsonResponse
+    {
+        $business = Business::query()->where('uuid', $uuid)->firstOrFail();
+        $account = $business->payoutAccounts()->where('uuid', $accountUuid)->firstOrFail();
+        $audits = Audit::query()
+            ->where('auditable_type', BusinessPayoutAccount::class)
+            ->where('auditable_id', $account->getKey())
+            ->with('user:id,name,email')
+            ->latest()
+            ->paginate(25);
+
+        return $this->sendResponse([
+            'history' => $audits->through(fn (Audit $audit) => [
+                'id' => $audit->id,
+                'event' => $audit->event,
+                'user' => $audit->user ? [
+                    'id' => $audit->user->id,
+                    'name' => $audit->user->name,
+                    'email' => $audit->user->email,
+                ] : null,
+                'performed_by' => $audit->user ? [
+                    'id' => $audit->user->id,
+                    'name' => $audit->user->name,
+                    'email' => $audit->user->email,
+                ] : [
+                    'id' => null,
+                    'name' => 'System',
+                    'email' => null,
+                ],
+                'old_values' => $audit->old_values,
+                'new_values' => $audit->new_values,
+                'url' => $audit->url,
+                'ip_address' => $audit->ip_address,
+                'created_at' => $audit->created_at?->toIso8601String(),
+            ]),
+        ], 'Settlement account history retrieved successfully.');
     }
 
     public function uploadOnboardingProof(Request $request, string $uuid): JsonResponse
@@ -201,12 +381,14 @@ class OperationsBusinessController extends BaseController
             Storage::disk('local')->delete($payment->proof_path);
         }
         $file = $validated['file'];
-        $payment->update([
-            'proof_path' => $file->store("onboarding-payments/{$business->uuid}", 'local'),
-            'proof_filename' => $file->getClientOriginalName(),
-            'uploaded_by' => $request->user()->id,
-            'status' => $payment->status === 'paid' ? 'paid' : 'submitted',
-        ]);
+        DB::transaction(function () use ($payment, $file, $business, $request): void {
+            $payment->update([
+                'proof_path' => $file->store("onboarding-payments/{$business->uuid}", 'local'),
+                'proof_filename' => $file->getClientOriginalName(),
+                'uploaded_by' => $request->user()->id,
+                'status' => $payment->status === 'paid' ? 'paid' : 'submitted',
+            ]);
+        });
 
         return $this->sendResponse(['onboarding_payment' => $this->onboardingPaymentData($payment->fresh('onboardingPackage'))], 'Onboarding payment proof uploaded.');
     }
@@ -491,12 +673,14 @@ class OperationsBusinessController extends BaseController
         $effectiveStatus = $document->status === 'approved' && $document->expires_at?->isPast() ? 'expired' : $document->status;
         abort_unless(in_array($effectiveStatus, ['pending', 'in_review', 'needs_review', 'needs_update', 'approved'], true), 409, 'This document is not available for an operations decision.');
 
-        $document->update([
-            'status' => $validated['decision'] === 'approved' ? 'approved' : 'needs_update',
-            'reviewed_by' => $request->user()->id,
-            'reviewed_at' => now(),
-            'rejection_reason' => $validated['decision'] === 'returned' ? trim($validated['reason']) : null,
-        ]);
+        DB::transaction(function () use ($document, $validated, $request): void {
+            $document->update([
+                'status' => $validated['decision'] === 'approved' ? 'approved' : 'needs_update',
+                'reviewed_by' => $request->user()->id,
+                'reviewed_at' => now(),
+                'rejection_reason' => $validated['decision'] === 'returned' ? trim($validated['reason']) : null,
+            ]);
+        });
 
         return $this->sendResponse([
             'document' => $this->documentData($document->fresh()->load(['business:id,uuid,name', 'uploader:id,name', 'reviewer:id,name'])),
@@ -512,7 +696,9 @@ class OperationsBusinessController extends BaseController
         abort_unless($request->user()->can($permission), 403, 'You do not have permission to change this business status.');
 
         $business = Business::query()->where('uuid', $uuid)->firstOrFail();
-        $business->update(['is_active' => $validated['is_active']]);
+        DB::transaction(function () use ($business, $validated): void {
+            $business->update(['is_active' => $validated['is_active']]);
+        });
 
         return $this->sendResponse([
             'business' => $this->businessData($business->fresh()->load(['vendor:id,name', 'type:id,name', 'district.city.country', 'contacts:id,business_id,contact,is_active'])),
@@ -547,6 +733,7 @@ class OperationsBusinessController extends BaseController
             'city' => $business->district?->city?->name,
             'country' => $business->district?->city?->country?->name,
             'country_iso2' => $business->district?->city?->country?->iso2,
+            'country_phone_code' => $business->district?->city?->country?->phone_code,
             'is_active' => (bool) $business->is_active,
             'created_at' => $business->created_at?->toIso8601String(),
             'updated_at' => $business->updated_at?->toIso8601String(),
@@ -588,6 +775,7 @@ class OperationsBusinessController extends BaseController
                 'commission_basis' => $business->paymentSetting->commission_basis,
                 'fee_bearer' => $business->paymentSetting->fee_bearer,
                 'settlement_mode' => $business->paymentSetting->settlement_mode,
+                'settlement_requirement' => $business->paymentSetting->settlement_requirement ?? 'required',
                 'is_checkout_enabled' => (bool) $business->paymentSetting->is_checkout_enabled,
                 'is_settlement_enabled' => (bool) $business->paymentSetting->is_settlement_enabled,
             ] : null,
@@ -595,14 +783,18 @@ class OperationsBusinessController extends BaseController
                 'uuid' => $account->uuid,
                 'destination_type' => $account->destination_type,
                 'provider' => $account->provider,
+                'wallet_id' => $account->wallet_id,
                 'account_holder_name' => $account->account_holder_name,
                 'account_number' => $account->maskedAccountNumber(),
+                'phone_number' => $account->phone_number,
                 'currency' => $account->currency,
                 'verification_status' => $account->verification_status,
                 'status' => $account->status,
                 'is_default' => (bool) $account->is_default,
                 'verified_at' => $account->verified_at?->toIso8601String(),
                 'rejection_reason' => $account->rejection_reason,
+                'verification_document_filename' => $account->verification_document_filename,
+                'verification_document_uploaded_at' => $account->verification_document_uploaded_at?->toIso8601String(),
                 'country' => $account->country?->name,
             ])->values() : [],
         ];
@@ -788,8 +980,30 @@ class OperationsBusinessController extends BaseController
             'commission_basis' => $setting->commission_basis,
             'fee_bearer' => $setting->fee_bearer,
             'settlement_mode' => $setting->settlement_mode,
+            'settlement_requirement' => $setting->settlement_requirement ?? 'required',
             'is_checkout_enabled' => (bool) $setting->is_checkout_enabled,
             'is_settlement_enabled' => (bool) $setting->is_settlement_enabled,
+        ];
+    }
+
+    private function payoutAccountData($account): array
+    {
+        return [
+            'uuid' => $account->uuid,
+            'destination_type' => $account->destination_type,
+            'provider' => $account->provider,
+            'wallet_id' => $account->wallet_id,
+            'account_holder_name' => $account->account_holder_name,
+            'account_number' => $account->maskedAccountNumber(),
+            'phone_number' => $account->phone_number,
+            'currency' => $account->currency,
+            'verification_status' => $account->verification_status,
+            'status' => $account->status,
+            'is_default' => (bool) $account->is_default,
+            'verified_at' => $account->verified_at?->toIso8601String(),
+            'rejection_reason' => $account->rejection_reason,
+            'verification_document_filename' => $account->verification_document_filename,
+            'verification_document_uploaded_at' => $account->verification_document_uploaded_at?->toIso8601String(),
         ];
     }
 
