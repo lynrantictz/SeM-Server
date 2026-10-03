@@ -20,8 +20,11 @@ Route::prefix('operations')->group(function (): void {
         Route::patch('businesses/{uuid}/status', [OperationsBusinessController::class, 'updateStatus'])
             ->middleware('permission:operations.businesses.manage');
         Route::patch('businesses/{uuid}/onboarding-payment', [OperationsBusinessController::class, 'updateOnboardingPayment'])
-            ->middleware('permission:operations.settlements.manage');
+            ->middleware('permission:operations.businesses.manage');
         Route::post('businesses/{uuid}/onboarding-payment/proof', [OperationsBusinessController::class, 'uploadOnboardingProof'])
+            ->middleware('permission:operations.businesses.manage');
+        Route::get('businesses/{uuid}/onboarding-payment/proof', [OperationsBusinessController::class, 'downloadOnboardingProof']);
+        Route::patch('businesses/{uuid}/payment-setting', [OperationsBusinessController::class, 'updatePaymentSetting'])
             ->middleware('permission:operations.settlements.manage');
     });
 

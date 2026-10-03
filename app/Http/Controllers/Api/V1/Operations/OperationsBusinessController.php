@@ -143,6 +143,52 @@ class OperationsBusinessController extends BaseController
         return $this->sendResponse(['onboarding_payment' => $this->onboardingPaymentData($payment)], 'One-time onboarding payment updated.');
     }
 
+    public function updatePaymentSetting(Request $request, string $uuid): JsonResponse
+    {
+        $business = Business::query()->with(['paymentSetting', 'onboardingPayment'])->where('uuid', $uuid)->firstOrFail();
+        $validated = $request->validate([
+            'provider' => ['required', 'in:azampay'],
+            'currency' => ['required', 'string', 'size:3'],
+            'commission_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'commission_basis' => ['required', 'in:subtotal_excluding_tax'],
+            'fee_bearer' => ['required', 'in:business'],
+            'settlement_mode' => ['required', 'in:manual_hold,manual_payout,automatic_payout'],
+            'is_checkout_enabled' => ['required', 'boolean'],
+            'is_settlement_enabled' => ['required', 'boolean'],
+        ]);
+
+        $readiness = $this->activation->status($business);
+        $onboardingPaid = in_array($business->onboardingPayment?->status, ['paid', 'waived'], true);
+        $defaultAccount = $business->payoutAccounts()
+            ->where('is_default', true)
+            ->where('status', 'active')
+            ->where('verification_status', 'verified')
+            ->exists();
+
+        if ($validated['is_checkout_enabled'] && (! $business->is_active || ! $readiness['documents_approved'] || ! $onboardingPaid)) {
+            return $this->sendError('Checkout cannot be enabled until the business is active, mandatory documents are approved, and the onboarding payment is verified or waived.', [
+                'business_active' => (bool) $business->is_active,
+                'documents_approved' => $readiness['documents_approved'],
+                'onboarding_payment_verified' => $onboardingPaid,
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        if ($validated['is_settlement_enabled'] && (! $validated['is_checkout_enabled'] || ! $defaultAccount)) {
+            return $this->sendError('Settlement cannot be enabled until checkout is enabled and a verified active default settlement account exists.', [
+                'verified_default_account' => $defaultAccount,
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $setting = $business->paymentSetting()->updateOrCreate(
+            ['business_id' => $business->id],
+            [...$validated, 'currency' => strtoupper($validated['currency'])],
+        );
+
+        return $this->sendResponse([
+            'payment_setting' => $this->paymentSettingData($setting),
+        ], 'Payment configuration updated successfully.');
+    }
+
     public function uploadOnboardingProof(Request $request, string $uuid): JsonResponse
     {
         $business = Business::query()->where('uuid', $uuid)->firstOrFail();
@@ -163,6 +209,19 @@ class OperationsBusinessController extends BaseController
         ]);
 
         return $this->sendResponse(['onboarding_payment' => $this->onboardingPaymentData($payment->fresh('onboardingPackage'))], 'Onboarding payment proof uploaded.');
+    }
+
+    public function downloadOnboardingProof(string $uuid)
+    {
+        $business = Business::query()->where('uuid', $uuid)->firstOrFail();
+        $payment = $business->onboardingPayment()->firstOrFail();
+        abort_unless($payment->proof_path && Storage::disk('local')->exists($payment->proof_path), HTTP_NOT_FOUND, 'No onboarding payment proof has been uploaded.');
+
+        return Storage::disk('local')->response(
+            $payment->proof_path,
+            $payment->proof_filename ?: 'onboarding-payment-proof.pdf',
+            ['Content-Type' => 'application/pdf', 'Content-Disposition' => 'inline'],
+        );
     }
 
     public function team(Request $request, string $uuid): JsonResponse
@@ -527,6 +586,7 @@ class OperationsBusinessController extends BaseController
                 'currency' => $business->paymentSetting->currency,
                 'commission_rate' => $business->paymentSetting->commission_rate,
                 'commission_basis' => $business->paymentSetting->commission_basis,
+                'fee_bearer' => $business->paymentSetting->fee_bearer,
                 'settlement_mode' => $business->paymentSetting->settlement_mode,
                 'is_checkout_enabled' => (bool) $business->paymentSetting->is_checkout_enabled,
                 'is_settlement_enabled' => (bool) $business->paymentSetting->is_settlement_enabled,
@@ -716,6 +776,20 @@ class OperationsBusinessController extends BaseController
             'proof_filename' => $payment->proof_filename,
             'verified_at' => $payment->verified_at?->toIso8601String(),
             'notes' => $payment->notes,
+        ];
+    }
+
+    private function paymentSettingData($setting): array
+    {
+        return [
+            'provider' => $setting->provider,
+            'currency' => $setting->currency,
+            'commission_rate' => $setting->commission_rate,
+            'commission_basis' => $setting->commission_basis,
+            'fee_bearer' => $setting->fee_bearer,
+            'settlement_mode' => $setting->settlement_mode,
+            'is_checkout_enabled' => (bool) $setting->is_checkout_enabled,
+            'is_settlement_enabled' => (bool) $setting->is_settlement_enabled,
         ];
     }
 
