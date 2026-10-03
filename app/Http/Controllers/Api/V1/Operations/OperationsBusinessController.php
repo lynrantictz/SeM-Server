@@ -6,6 +6,8 @@ use App\Http\Controllers\Api\BaseController;
 use App\Models\Business\Business;
 use App\Models\Business\BusinessType;
 use App\Models\Business\ComplianceDocument;
+use App\Models\Business\ComplianceDocumentType;
+use App\Models\Business\OnboardingPackage;
 use App\Models\Location\City;
 use App\Models\Location\Country;
 use App\Models\Order\Order;
@@ -93,6 +95,7 @@ class OperationsBusinessController extends BaseController
                 'orderingChannels:id,slug,name',
                 'openingHours:id,business_id,day_of_week,sort_order,opens_at,closes_at,is_closed',
                 'paymentSetting',
+                'onboardingPayment.onboardingPackage',
                 'payoutAccounts:id,uuid,business_id,destination_type,provider,account_number,account_holder_name,currency,verification_status,status,is_default,verified_at,rejection_reason,country_id',
                 'payoutAccounts.country:id,name,iso2',
             ])
@@ -101,15 +104,65 @@ class OperationsBusinessController extends BaseController
             ->firstOrFail();
 
         $documents = $request->user()->can('operations.kyc.view')
-            ? $business->complianceDocuments()->latest()->get()->map(fn (ComplianceDocument $document) => $this->documentData($document))
+            ? $business->complianceDocuments()->with(['reviewer:id,name'])->latest()->get()->map(fn (ComplianceDocument $document) => $this->documentData($document))
             : collect();
+        $documentRequirements = $this->documentRequirements($business, $documents);
         $activation = $this->activation->status($business);
 
         return $this->sendResponse([
             'business' => $this->businessData($business),
             'documents' => $documents,
+            'document_requirements' => $documentRequirements,
+            'onboarding_payment' => $this->onboardingPaymentData($business->onboardingPayment),
+            'onboarding_packages' => OnboardingPackage::query()->where('is_active', true)->orderBy('sort_order')->get(['id', 'name', 'price', 'currency']),
             'activation' => $activation,
         ], 'Operations business details retrieved successfully.');
+    }
+
+    public function updateOnboardingPayment(Request $request, string $uuid): JsonResponse
+    {
+        $business = Business::query()->with('onboardingPayment')->where('uuid', $uuid)->firstOrFail();
+        $validated = $request->validate([
+            'package_id' => ['required', 'integer', 'exists:onboarding_packages,id'],
+            'amount_due' => ['required', 'numeric', 'min:0'],
+            'amount_paid' => ['nullable', 'numeric', 'min:0'],
+            'currency' => ['required', 'string', 'max:10'],
+            'status' => ['required', 'in:pending,submitted,partially_paid,paid,waived,refunded'],
+            'payment_method' => ['nullable', 'string', 'max:50'],
+            'payment_reference' => ['nullable', 'string', 'max:160'],
+            'paid_at' => ['nullable', 'date'],
+            'notes' => ['nullable', 'string', 'max:2000'],
+        ]);
+        $package = \App\Models\Business\OnboardingPackage::query()->where('is_active', true)->findOrFail($validated['package_id']);
+
+        $payment = $business->onboardingPayment()->updateOrCreate(
+            ['business_id' => $business->id],
+            [...$validated, 'package' => $package->name, 'amount_paid' => $validated['amount_paid'] ?? 0, 'currency' => strtoupper($validated['currency'])],
+        );
+
+        return $this->sendResponse(['onboarding_payment' => $this->onboardingPaymentData($payment)], 'One-time onboarding payment updated.');
+    }
+
+    public function uploadOnboardingProof(Request $request, string $uuid): JsonResponse
+    {
+        $business = Business::query()->where('uuid', $uuid)->firstOrFail();
+        $payment = $business->onboardingPayment()->firstOrFail();
+        $validated = $request->validate([
+            'file' => ['required', 'file', 'mimes:pdf', 'max:10240'],
+        ]);
+
+        if ($payment->proof_path) {
+            Storage::disk('local')->delete($payment->proof_path);
+        }
+        $file = $validated['file'];
+        $payment->update([
+            'proof_path' => $file->store("onboarding-payments/{$business->uuid}", 'local'),
+            'proof_filename' => $file->getClientOriginalName(),
+            'uploaded_by' => $request->user()->id,
+            'status' => $payment->status === 'paid' ? 'paid' : 'submitted',
+        ]);
+
+        return $this->sendResponse(['onboarding_payment' => $this->onboardingPaymentData($payment->fresh('onboardingPackage'))], 'Onboarding payment proof uploaded.');
     }
 
     public function team(Request $request, string $uuid): JsonResponse
@@ -307,15 +360,29 @@ class OperationsBusinessController extends BaseController
     {
         $filters = $request->validate([
             'search' => ['nullable', 'string', 'max:100'],
-            'status' => ['nullable', 'in:all,pending,in_review,approved,rejected,expired'],
+            'status' => ['nullable', 'in:all,pending,in_review,needs_review,needs_update,approved,rejected,expired'],
             'country_id' => ['nullable', 'integer', 'exists:countries,id'],
             'per_page' => ['nullable', 'integer', 'in:10,25,50'],
         ]);
 
         $documents = ComplianceDocument::query()
             ->whereNotNull('business_id')
-            ->with(['business:id,uuid,name,vendor_id,district_id,is_active', 'business.vendor:id,name', 'business.district:id,name,city_id', 'business.district.city:id,name,country_id', 'business.district.city.country:id,name,iso2', 'uploader:id,name'])
-            ->when(($filters['status'] ?? 'pending') !== 'all', fn ($query) => $query->where('status', $filters['status'] ?? 'pending'))
+            ->with(['business:id,uuid,name,vendor_id,district_id,is_active', 'business.vendor:id,name', 'business.district:id,name,city_id', 'business.district.city:id,name,country_id', 'business.district.city.country:id,name,iso2', 'uploader:id,name', 'reviewer:id,name'])
+            ->when(($filters['status'] ?? 'pending') !== 'all', function ($query) use ($filters): void {
+                $status = $filters['status'] ?? 'pending';
+                if ($status === 'expired') {
+                    $query->where(function ($expired) {
+                        $expired->where('status', 'expired')
+                            ->orWhere(fn ($approved) => $approved->where('status', 'approved')->whereNotNull('expires_at')->whereDate('expires_at', '<', today()));
+                    });
+                } elseif ($status === 'approved') {
+                    $query->where('status', 'approved')->where(fn ($approved) => $approved->whereNull('expires_at')->orWhereDate('expires_at', '>=', today()));
+                } elseif ($status === 'pending') {
+                    $query->whereIn('status', ['pending', 'in_review', 'needs_review', 'needs_update']);
+                } else {
+                    $query->where('status', $status);
+                }
+            })
             ->when(!empty($filters['search']), function ($query) use ($filters): void {
                 $term = '%' . trim($filters['search']) . '%';
                 $query->where(function ($search) use ($term): void {
@@ -326,7 +393,7 @@ class OperationsBusinessController extends BaseController
                 });
             })
             ->when(!empty($filters['country_id']), fn ($query) => $query->whereHas('business.district.city', fn ($city) => $city->where('country_id', $filters['country_id'])))
-            ->orderByRaw("CASE WHEN status IN ('pending', 'in_review', 'needs_review') THEN 0 ELSE 1 END")
+            ->orderByRaw("CASE WHEN status IN ('pending', 'in_review', 'needs_review', 'needs_update') THEN 0 ELSE 1 END")
             ->latest()
             ->paginate($filters['per_page'] ?? 25)
             ->withQueryString();
@@ -351,29 +418,32 @@ class OperationsBusinessController extends BaseController
     public function review(Request $request, string $uuid): JsonResponse
     {
         $validated = $request->validate([
-            'decision' => ['required', 'in:approved,rejected'],
-            'rejection_reason' => ['required_if:decision,rejected', 'nullable', 'string', 'max:2000'],
+            'decision' => ['required', 'in:approved,returned'],
+            'reason' => ['required_if:decision,returned', 'nullable', 'string', 'max:2000'],
         ]);
 
-        $permission = $validated['decision'] === 'approved' ? 'operations.kyc.approve' : 'operations.kyc.reject';
+        $permission = $validated['decision'] === 'approved' ? 'operations.kyc.approve' : 'operations.kyc.return';
         abort_unless($request->user()->can($permission), 403, 'You do not have permission to make this document decision.');
 
         $document = ComplianceDocument::query()
             ->where('uuid', $uuid)
             ->whereNotNull('business_id')
             ->firstOrFail();
-        abort_unless(in_array($document->status, ['pending', 'in_review', 'needs_review'], true), 409, 'Only documents awaiting review can be decided.');
+        $effectiveStatus = $document->status === 'approved' && $document->expires_at?->isPast() ? 'expired' : $document->status;
+        abort_unless(in_array($effectiveStatus, ['pending', 'in_review', 'needs_review', 'needs_update', 'approved'], true), 409, 'This document is not available for an operations decision.');
 
         $document->update([
-            'status' => $validated['decision'],
+            'status' => $validated['decision'] === 'approved' ? 'approved' : 'needs_update',
             'reviewed_by' => $request->user()->id,
             'reviewed_at' => now(),
-            'rejection_reason' => $validated['decision'] === 'rejected' ? trim($validated['rejection_reason']) : null,
+            'rejection_reason' => $validated['decision'] === 'returned' ? trim($validated['reason']) : null,
         ]);
 
         return $this->sendResponse([
-            'document' => $this->documentData($document->fresh()->load(['business:id,uuid,name', 'uploader:id,name'])),
-        ], 'Compliance document decision recorded.');
+            'document' => $this->documentData($document->fresh()->load(['business:id,uuid,name', 'uploader:id,name', 'reviewer:id,name'])),
+        ], $validated['decision'] === 'approved'
+            ? 'Compliance document approved successfully.'
+            : 'Compliance document returned to the business for update.');
     }
 
     public function updateStatus(Request $request, string $uuid): JsonResponse
@@ -612,13 +682,80 @@ class OperationsBusinessController extends BaseController
             'filename' => $document->original_filename,
             'mime_type' => $document->mime_type,
             'file_size' => (int) $document->file_size,
-            'status' => $document->status,
+            'status' => $document->status === 'approved' && $document->expires_at?->isPast() ? 'expired' : $document->status,
             'issued_at' => $document->issued_at?->toDateString(),
             'expires_at' => $document->expires_at?->toDateString(),
             'uploaded_at' => $document->created_at?->toIso8601String(),
             'uploaded_by' => $document->uploader?->name,
             'reviewed_at' => $document->reviewed_at?->toIso8601String(),
+            'reviewed_by' => $document->reviewer?->name,
+            'updated_at' => $document->updated_at?->toIso8601String(),
+            'return_reason' => $document->rejection_reason,
             'rejection_reason' => $document->rejection_reason,
         ];
+    }
+
+    private function onboardingPaymentData($payment): ?array
+    {
+        if (! $payment) {
+            return null;
+        }
+
+        return [
+            'uuid' => $payment->uuid,
+            'package_id' => $payment->package_id,
+            'package' => $payment->package,
+            'package_price' => $payment->onboardingPackage?->price,
+            'amount_due' => $payment->amount_due,
+            'amount_paid' => $payment->amount_paid,
+            'currency' => $payment->currency,
+            'status' => $payment->status,
+            'payment_method' => $payment->payment_method,
+            'payment_reference' => $payment->payment_reference,
+            'paid_at' => $payment->paid_at?->toIso8601String(),
+            'proof_filename' => $payment->proof_filename,
+            'verified_at' => $payment->verified_at?->toIso8601String(),
+            'notes' => $payment->notes,
+        ];
+    }
+
+    private function documentRequirements(Business $business, $documents): array
+    {
+        $countryId = $business->district?->city?->country_id;
+        $latestByType = $documents->keyBy('type');
+
+        return ComplianceDocumentType::query()
+            ->where('scope', 'business')
+            ->where('is_active', true)
+            ->with(['rules' => fn ($query) => $query->where('is_active', true)])
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get()
+            ->map(function (ComplianceDocumentType $type) use ($business, $countryId, $latestByType): ?array {
+                $rule = $type->rules
+                    ->filter(fn ($rule) => ($rule->country_id === null || $rule->country_id === $countryId)
+                        && ($rule->business_type_id === null || $rule->business_type_id === $business->business_type_id))
+                    ->sortByDesc(fn ($rule) => (int) ($rule->country_id !== null) + (int) ($rule->business_type_id !== null))
+                    ->first();
+
+                if (! $rule) {
+                    return null;
+                }
+
+                $document = $latestByType->get($type->key);
+
+                return [
+                    'key' => $type->key,
+                    'name' => $type->name,
+                    'description' => $type->description,
+                    'required' => (bool) ($rule?->required_for_payment_activation ?? false),
+                    'requires_expiry_date' => (bool) $type->requires_expiry_date,
+                    'uploaded' => $document !== null,
+                    'status' => $document['status'] ?? null,
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
     }
 }

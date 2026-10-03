@@ -52,16 +52,6 @@ class ComplianceDocumentTypeSeeder extends Seeder
                 'required' => true,
             ],
             [
-                'key' => 'payment_settlement_details',
-                'name' => 'Payment settlement details',
-                'scope' => 'business',
-                'description' => 'Merchant or settlement details required for mobile-money activation.',
-                'requires_expiry_date' => false,
-                'reminder_days' => [],
-                'sort_order' => 30,
-                'required' => true,
-            ],
-            [
                 'key' => 'sector_permit',
                 'name' => 'Sector permit',
                 'scope' => 'business',

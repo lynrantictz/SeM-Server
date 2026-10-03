@@ -12,6 +12,7 @@ use App\Services\Business\BusinessActivationService;
 use App\Services\PaymentGateway\PaymentCheckoutService;
 use App\Services\PhoneNumberNormalizer;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\Request;
 
 class BusinessPaymentController extends BaseController
@@ -177,6 +178,25 @@ class BusinessPaymentController extends BaseController
         });
 
         return $this->sendResponse(['payout_account' => $this->payoutAccountData($payoutAccount->fresh())], 'Default payout account updated.');
+    }
+
+    public function uploadOnboardingProof(Request $request, Business $business)
+    {
+        $this->authorizePayoutSettings($business);
+        $payment = $business->onboardingPayment()->firstOrFail();
+        $validated = $request->validate(['file' => ['required', 'file', 'mimes:pdf', 'max:10240']]);
+        if ($payment->proof_path) {
+            Storage::disk('local')->delete($payment->proof_path);
+        }
+        $file = $validated['file'];
+        $payment->update([
+            'proof_path' => $file->store("onboarding-payments/{$business->uuid}", 'local'),
+            'proof_filename' => $file->getClientOriginalName(),
+            'uploaded_by' => $request->user()->id,
+            'status' => $payment->status === 'paid' ? 'paid' : 'submitted',
+        ]);
+
+        return $this->sendResponse(['proof_filename' => $payment->proof_filename], 'Onboarding payment proof uploaded.');
     }
 
     public function checkout(Request $request, Business $business, string $order)

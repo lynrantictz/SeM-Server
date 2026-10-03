@@ -18,7 +18,7 @@ class ComplianceDocumentController extends BaseController
         $this->ensureCanViewBusiness($business);
 
         return $this->sendResponse(
-            $this->documentList($business->complianceDocuments()->with('documentType')->latest()->get(), 'business', $business),
+            $this->documentList($business->complianceDocuments()->with(['documentType', 'reviewer:id,name'])->latest()->get(), 'business', $business),
             'Business compliance documents retrieved successfully.'
         );
     }
@@ -63,7 +63,7 @@ class ComplianceDocumentController extends BaseController
         $this->ensureCanViewVendor($vendor);
 
         return $this->sendResponse(
-            $this->documentList($vendor->complianceDocuments()->with('documentType')->latest()->get(), 'vendor', $vendor),
+            $this->documentList($vendor->complianceDocuments()->with(['documentType', 'reviewer:id,name'])->latest()->get(), 'vendor', $vendor),
             'Vendor compliance documents retrieved successfully.'
         );
     }
@@ -159,9 +159,7 @@ class ComplianceDocumentController extends BaseController
         $complete = $required->every(function (string $type) use ($latestByType) {
             $document = $latestByType->get($type);
 
-            return $document
-                && $document->status === 'approved'
-                && !($document->expires_at && $document->expires_at->isPast());
+            return $this->effectiveStatus($document) === 'approved';
         });
 
         return [
@@ -175,13 +173,13 @@ class ComplianceDocumentController extends BaseController
                     'required_for_payment_activation' => $definition['required_for_payment_activation'],
                     'expires' => $definition['requires_expiry_date'],
                     'uploaded' => (bool) $document,
-                    'expired' => (bool) ($document?->expires_at && $document->expires_at->isPast()),
+                    'expired' => $this->effectiveStatus($document) === 'expired',
                 ];
             })->values(),
             'payment_activation' => [
                 'documents_complete' => $complete,
                 'missing_document_types' => $required
-                    ->filter(fn (string $type) => !$latestByType->has($type))
+                    ->filter(fn (string $type) => $this->effectiveStatus($latestByType->get($type)) !== 'approved')
                     ->values(),
             ],
             'can_upload' => $scope === 'vendor'
@@ -200,12 +198,14 @@ class ComplianceDocumentController extends BaseController
             'document_number' => $document->document_number,
             'mime_type' => $document->mime_type,
             'file_size' => $document->file_size,
-            'status' => $document->status,
+            'status' => $this->effectiveStatus($document),
             'issued_at' => $document->issued_at?->toDateString(),
             'expires_at' => $document->expires_at?->toDateString(),
             'uploaded_at' => $document->created_at?->toIso8601String(),
-            // Approved documents are read-only to preserve the completed
-            // review record. A future renewal is uploaded after expiry.
+            'reviewed_at' => $document->reviewed_at?->toIso8601String(),
+            'reviewed_by' => $document->reviewer?->name,
+            'updated_at' => $document->updated_at?->toIso8601String(),
+            'return_reason' => $document->rejection_reason,
             'can_update' => $this->canModify($document),
             'can_delete' => $this->canModify($document),
         ];
@@ -213,7 +213,7 @@ class ComplianceDocumentController extends BaseController
 
     private function updateDocument(Request $request, ComplianceDocument $document): mixed
     {
-        abort_unless($this->canModify($document), HTTP_FORBIDDEN, 'Approved documents cannot be changed or deleted. Upload a renewal after expiry instead.');
+        abort_unless($this->canModify($document), HTTP_FORBIDDEN, 'This document cannot be changed. It must be returned by operations or expire before it can be replaced.');
 
         $validated = $request->validate([
             'document_number' => ['sometimes', 'nullable', 'string', 'max:120'],
@@ -279,7 +279,20 @@ class ComplianceDocumentController extends BaseController
 
     private function canModify(ComplianceDocument $document): bool
     {
-        return in_array($document->status, ['pending', 'rejected', 'expired'], true);
+        return in_array($this->effectiveStatus($document), ['needs_update', 'expired', 'rejected'], true);
+    }
+
+    private function effectiveStatus(?ComplianceDocument $document): ?string
+    {
+        if (!$document) {
+            return null;
+        }
+
+        if ($document->status === 'approved' && $document->expires_at?->isPast()) {
+            return 'expired';
+        }
+
+        return $document->status;
     }
 
     /**

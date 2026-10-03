@@ -22,6 +22,7 @@ class DatabaseSeeder extends Seeder
         $this->call(BusinessTypeSeeder::class);
         $this->call(TimezoneCatalogSeeder::class);
         $this->call(ComplianceDocumentTypeSeeder::class);
+        $this->call(OnboardingPackageSeeder::class);
         $this->call(BusinessStaffRoleSeeder::class);
         $this->call(OrderingChannelSeeder::class);
         // $this->call(VendorBusinessSeeder::class);

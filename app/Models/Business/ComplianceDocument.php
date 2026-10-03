@@ -54,6 +54,11 @@ class ComplianceDocument extends BaseModel
         return $this->belongsTo(User::class, 'uploaded_by');
     }
 
+    public function reviewer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'reviewed_by');
+    }
+
     public function reminders(): HasMany
     {
         return $this->hasMany(ComplianceDocumentReminder::class);

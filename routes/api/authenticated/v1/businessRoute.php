@@ -19,6 +19,7 @@ Route::get('timezones', [TimezoneController::class, 'index']);
 
 Route::group(['prefix' => 'businesses'], function () {
     Route::get('{business}/payout-settings', [BusinessPaymentController::class, 'payoutSettings']);
+    Route::post('{business}/onboarding-payment/proof', [BusinessPaymentController::class, 'uploadOnboardingProof']);
     Route::post('{business}/payout-accounts', [BusinessPaymentController::class, 'storePayoutAccount']);
     Route::put('{business}/payout-accounts/{payoutAccount}', [BusinessPaymentController::class, 'updatePayoutAccount']);
     Route::post('{business}/payout-accounts/{payoutAccount}/default', [BusinessPaymentController::class, 'makeDefaultPayoutAccount']);
