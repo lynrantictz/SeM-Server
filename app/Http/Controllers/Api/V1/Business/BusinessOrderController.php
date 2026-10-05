@@ -643,7 +643,7 @@ class BusinessOrderController extends BaseController
             ] : null,
             'customer' => [
                 'name' => null,
-                'phone' => $order->customer?->phone,
+                'phone' => $this->businessCustomerPhone($order),
             ],
             'service_point' => $point ? [
                 'type' => $point->type,
@@ -693,5 +693,28 @@ class BusinessOrderController extends BaseController
                 ])->values()
                 : [],
         ];
+    }
+
+    private function businessCustomerPhone(Order $order): ?string
+    {
+        $phone = $order->customer?->phone_e164 ?: $order->customer?->phone;
+
+        if (! $phone) {
+            return null;
+        }
+
+        $paymentCompleted = in_array(strtolower((string) $order->paymentStatus?->name), ['completed', 'paid', 'successful'], true);
+        $serviceCompleted = in_array(strtolower((string) $order->status?->name), ['served', 'completed'], true);
+
+        return ($paymentCompleted || $serviceCompleted) ? $this->maskBusinessPhone($phone) : $phone;
+    }
+
+    private function maskBusinessPhone(string $phone): string
+    {
+        $digits = preg_replace('/\D+/', '', $phone) ?: '';
+
+        return strlen($digits) > 6
+            ? '+' . substr($digits, 0, 3) . ' ' . str_repeat('•', strlen($digits) - 6) . ' ' . substr($digits, -3)
+            : '••••••';
     }
 }

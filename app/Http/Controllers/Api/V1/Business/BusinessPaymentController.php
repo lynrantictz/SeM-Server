@@ -148,6 +148,11 @@ class BusinessPaymentController extends BaseController
     {
         $this->authorizePayoutSettings($business);
         abort_unless((int) $payoutAccount->business_id === (int) $business->id, HTTP_NOT_FOUND, 'Payout account not found.');
+        abort_unless(
+            $payoutAccount->status === 'rejected' || $payoutAccount->verification_status === 'rejected',
+            HTTP_UNPROCESSABLE_ENTITY,
+            'Verified active payout accounts cannot be edited. Submit a new account for verification.',
+        );
 
         $validated = $request->validate([
             'provider' => ['required', 'string', 'max:80'],
