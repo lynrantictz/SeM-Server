@@ -43,6 +43,8 @@ class BusinessOrderController extends BaseController
             'payment_method_id' => ['nullable', 'integer', Rule::exists('payment_methods', 'id')],
             'date_from' => ['nullable', 'date_format:Y-m-d'],
             'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
+            'section_id' => ['nullable', 'integer'],
+            'sub_section_id' => ['nullable', 'integer'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', Rule::in([10, 25, 50])],
         ]);
@@ -122,6 +124,146 @@ class BusinessOrderController extends BaseController
                 ],
             ],
         ], 'Orders retrieved successfully.');
+    }
+
+    public function reports(Request $request, Business $business)
+    {
+        $role = $this->authorizeBusiness($business);
+        abort_unless(in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager'], true), Response::HTTP_FORBIDDEN, 'You do not have permission to view business reports.');
+        $validated = $request->validate([
+            'view' => ['nullable', Rule::in(['overview', 'sales', 'orders', 'payments', 'products'])],
+            'date_from' => ['nullable', 'date_format:Y-m-d'],
+            'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', Rule::in([10, 25, 50, 75, 100])],
+            'search' => ['nullable', 'string', 'max:100'],
+            'section_id' => ['nullable', 'integer'],
+            'sub_section_id' => ['nullable', 'integer'],
+        ]);
+
+        $from = $validated['date_from'] ?? now()->subDays(29)->toDateString();
+        $to = $validated['date_to'] ?? now()->toDateString();
+        $view = $validated['view'] ?? 'overview';
+        $perPage = $validated['per_page'] ?? 10;
+        $sectionId = $validated['section_id'] ?? null;
+        $subSectionId = $validated['sub_section_id'] ?? null;
+        $applyServicePointFilter = function ($query) use ($business, $sectionId, $subSectionId) {
+            return $query->when($sectionId || $subSectionId, function ($query) use ($business, $sectionId, $subSectionId) {
+                $query->whereExists(function ($servicePoint) use ($business, $sectionId, $subSectionId) {
+                    $servicePoint->selectRaw('1')
+                        ->from('service_points')
+                        ->whereColumn('service_points.id', 'orders.service_point_id')
+                        ->where('service_points.business_id', $business->id)
+                        ->when($sectionId, fn ($section) => $section->where('service_points.section_id', $sectionId))
+                        ->when($subSectionId, fn ($subSection) => $subSection->where('service_points.sub_section_id', $subSectionId));
+                });
+            });
+        };
+        $orders = fn () => Order::query()
+            ->where('orders.business_id', $business->id)
+            ->whereBetween('orders.created_at', [$from . ' 00:00:00', $to . ' 23:59:59'])
+            ->when($sectionId || $subSectionId, function (Builder $query) use ($business, $sectionId, $subSectionId) {
+                $query->whereHas('servicePoint', function (Builder $point) use ($business, $sectionId, $subSectionId) {
+                    $point->where('business_id', $business->id)
+                        ->when($sectionId, fn (Builder $section) => $section->where('section_id', $sectionId))
+                        ->when($subSectionId, fn (Builder $subSection) => $subSection->where('sub_section_id', $subSectionId));
+                });
+            });
+
+        if ($view === 'orders') {
+            $query = $orders()->with(['status:id,name', 'paymentStatus:id,name', 'paymentMethod:id,name', 'customer:id,phone,phone_e164'])
+                ->orderByDesc('created_at');
+            $search = trim((string) ($validated['search'] ?? ''));
+            if ($search !== '') {
+                $query->where(function (Builder $builder) use ($search) {
+                    $builder->where('number', 'ilike', "%{$search}%")
+                        ->orWhereHas('customer', fn (Builder $customer) => $customer->where('phone_e164', 'ilike', "%{$search}%"));
+                });
+            }
+            $page = $query->paginate($perPage)->withQueryString();
+
+            return $this->sendResponse([
+                'view' => $view,
+                'date_from' => $from,
+                'date_to' => $to,
+                'orders' => [
+                    'data' => collect($page->items())->map(fn (Order $order) => [
+                        'number' => $order->number,
+                        'created_at' => $order->created_at,
+                        'channel' => $order->channel,
+                        'status' => $order->status?->name,
+                        'payment_status' => $order->paymentStatus?->name,
+                        'payment_method' => $order->paymentMethod?->name,
+                        'customer_phone' => $this->businessCustomerPhone($order),
+                        'total_amount' => (float) $order->total_amount,
+                        'tax_amount' => (float) $order->tax_amount,
+                        'paid_amount' => (float) ($order->paid_amount ?? 0),
+                        'due_amount' => (float) ($order->due_amount ?? 0),
+                    ])->values(),
+                    'meta' => ['current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'per_page' => $page->perPage(), 'total' => $page->total(), 'from' => $page->firstItem(), 'to' => $page->lastItem()],
+                ],
+            ], 'Order report retrieved successfully.');
+        }
+
+        if ($view === 'products') {
+            $products = DB::table('order_items')
+                ->join('orders', 'orders.id', '=', 'order_items.order_id')
+                ->leftJoin('items', 'items.id', '=', 'order_items.item_id')
+                ->where('orders.business_id', $business->id)
+                ->whereBetween('orders.created_at', [$from . ' 00:00:00', $to . ' 23:59:59'])
+                ->tap($applyServicePointFilter)
+                ->selectRaw("COALESCE(items.name, 'Menu item') as name, SUM(order_items.quantity) as quantity, SUM(order_items.total_amount) as revenue")
+                ->groupBy('items.name')
+                ->orderByDesc('revenue')
+                ->paginate($perPage);
+
+            return $this->sendResponse(['view' => $view, 'date_from' => $from, 'date_to' => $to, 'rows' => ['data' => $products->items(), 'meta' => ['current_page' => $products->currentPage(), 'last_page' => $products->lastPage(), 'per_page' => $products->perPage(), 'total' => $products->total(), 'from' => $products->firstItem(), 'to' => $products->lastItem()]]], 'Product report retrieved successfully.');
+        }
+
+        if ($view === 'payments') {
+            $payments = DB::table('payments')
+                ->join('orders', 'orders.id', '=', 'payments.order_id')
+                ->leftJoin('payment_methods', 'payment_methods.id', '=', 'orders.payment_method_id')
+                ->where('orders.business_id', $business->id)
+                ->whereBetween('orders.created_at', [$from . ' 00:00:00', $to . ' 23:59:59'])
+                ->tap($applyServicePointFilter)
+                ->selectRaw("COALESCE(payment_methods.name, payments.provider, 'Not recorded') as method, payments.status, COUNT(*) as count, SUM(payments.amount) as amount")
+                ->groupBy('payment_methods.name', 'payments.provider', 'payments.status')
+                ->orderByDesc('amount')
+                ->paginate($perPage);
+
+            return $this->sendResponse(['view' => $view, 'date_from' => $from, 'date_to' => $to, 'rows' => ['data' => $payments->items(), 'meta' => ['current_page' => $payments->currentPage(), 'last_page' => $payments->lastPage(), 'per_page' => $payments->perPage(), 'total' => $payments->total(), 'from' => $payments->firstItem(), 'to' => $payments->lastItem()]]], 'Payment report retrieved successfully.');
+        }
+
+        $base = $orders();
+        $paid = (clone $base)->whereHas('paymentStatus', fn (Builder $query) => $query->whereIn('name', ['Completed', 'Paid', 'Successful']));
+        $statusCounts = (clone $base)->join('order_statuses', 'order_statuses.id', '=', 'orders.order_status_id')->selectRaw('order_statuses.name as status, COUNT(*) as count')->groupBy('order_statuses.name')->pluck('count', 'status');
+        $paymentStatusCounts = (clone $base)->join('payment_statuses', 'payment_statuses.id', '=', 'orders.payment_status_id')->selectRaw('payment_statuses.name as status, COUNT(*) as count')->groupBy('payment_statuses.name')->pluck('count', 'status');
+        $sourceCounts = (clone $base)->selectRaw("CASE WHEN user_id IS NULL THEN 'Customer' ELSE 'Staff' END as source, COUNT(*) as count")->groupBy('source')->pluck('count', 'source');
+        $daily = (clone $base)->selectRaw('DATE(created_at) as day, COUNT(*) as orders, SUM(total_amount) as revenue')->groupBy('day')->orderBy('day')->get();
+        $allocationQuery = DB::table('payment_allocations')->join('payments', 'payments.id', '=', 'payment_allocations.payment_id')->join('orders', 'orders.id', '=', 'payments.order_id')->where('payment_allocations.business_id', $business->id)->whereBetween('orders.created_at', [$from . ' 00:00:00', $to . ' 23:59:59']);
+        $allocation = $applyServicePointFilter($allocationQuery)->selectRaw('COALESCE(SUM(payment_allocations.gross_amount), 0) as gross, COALESCE(SUM(payment_allocations.commission_amount), 0) as commission, COALESCE(SUM(payment_allocations.gateway_fee_amount), 0) as gateway_fees, COALESCE(SUM(payment_allocations.business_payable_amount), 0) as payable')->first();
+
+        return $this->sendResponse([
+            'view' => $view,
+            'date_from' => $from,
+            'date_to' => $to,
+            'summary' => [
+                'orders' => (clone $base)->count(),
+                'gross_sales' => (float) ((clone $base)->sum('total_amount') ?? 0),
+                'tax' => (float) ((clone $base)->sum('tax_amount') ?? 0),
+                'average_order' => (float) ((clone $base)->avg('total_amount') ?? 0),
+                'paid_orders' => $paid->count(),
+                'unpaid_orders' => max(0, (clone $base)->count() - $paid->count()),
+                'commission' => (float) ($allocation->commission ?? 0),
+                'gateway_fees' => (float) ($allocation->gateway_fees ?? 0),
+                'net_business' => (float) ($allocation->payable ?? 0),
+            ],
+            'status_counts' => $statusCounts,
+            'payment_status_counts' => $paymentStatusCounts,
+            'source_counts' => $sourceCounts,
+            'daily' => $daily,
+        ], 'Business report retrieved successfully.');
     }
 
     public function action(Request $request, Business $business, string $order, OrderPaymentLinkService $paymentLinks)

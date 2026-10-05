@@ -26,6 +26,7 @@ Route::group(['prefix' => 'businesses'], function () {
     Route::get('{business}/payment-providers', [BusinessPaymentController::class, 'providers']);
     Route::post('{business}/orders/{order}/mno-checkout', [BusinessPaymentController::class, 'checkout']);
     Route::get('{business}/orders', [BusinessOrderController::class, 'index']);
+    Route::get('{business}/reports', [BusinessOrderController::class, 'reports']);
     Route::get('{business}/orders/context', [BusinessOrderController::class, 'context']);
     Route::get('{business}/orders/menu-items', [BusinessOrderController::class, 'menuItems']);
     Route::post('{business}/orders', [BusinessOrderController::class, 'store']);
