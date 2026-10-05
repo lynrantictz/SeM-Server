@@ -38,10 +38,13 @@ return new class extends Migration
                     }
             });
 
-            Schema::table('business_payout_accounts', function (Blueprint $table): void {
-                $table->unique('account_number', 'business_payout_accounts_account_number_unique');
-                $table->unique('wallet_id', 'business_payout_accounts_wallet_id_unique');
-            });
+        });
+
+        Schema::table('business_payout_accounts', function (Blueprint $table): void {
+            $table->string('provider', 80)->nullable()->change();
+            $table->text('account_number')->nullable()->change();
+            $table->unique('account_number', 'business_payout_accounts_account_number_unique');
+            $table->unique('wallet_id', 'business_payout_accounts_wallet_id_unique');
         });
     }
 

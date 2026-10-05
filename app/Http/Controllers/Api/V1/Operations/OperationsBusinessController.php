@@ -199,35 +199,48 @@ class OperationsBusinessController extends BaseController
     {
         $business = Business::query()->with('district.city.country')->where('uuid', $uuid)->firstOrFail();
         $validated = $request->validate([
-            'provider' => ['required', 'string', 'max:80'],
+            'provider' => ['nullable', 'string', 'max:80', 'required_without:wallet_id'],
             'wallet_id' => ['nullable', 'string', 'max:160'],
-            'account_number' => ['required', 'regex:/^[1-9][0-9]{6,14}$/'],
+            'account_number' => ['nullable', 'regex:/^[1-9][0-9]{6,14}$/', 'required_without:wallet_id'],
             'account_holder_name' => ['required', 'string', 'max:160'],
             'currency' => ['nullable', 'string', 'size:3'],
         ]);
         $country = $business->district?->city?->country;
-        $provider = MobileMoneyProvider::query()->where('gateway', 'azampay')->where('code', $validated['provider'])->where('is_active', true)->when($country?->id, fn ($query) => $query->where(fn ($countryQuery) => $countryQuery->where('country_id', $country->id)->orWhereNull('country_id')))->firstOrFail();
-        $accountNumber = app(PhoneNumberNormalizer::class)->normalize($validated['account_number'], $country?->iso2);
-        abort_if(BusinessPayoutAccount::query()->where('account_number', $accountNumber)->exists(), HTTP_UNPROCESSABLE_ENTITY, 'This settlement phone or account number is already registered.');
         $walletId = filled($validated['wallet_id'] ?? null) ? trim($validated['wallet_id']) : null;
+        $provider = $validated['provider']
+            ? MobileMoneyProvider::query()->where('gateway', 'azampay')->where('code', $validated['provider'])->where('is_active', true)->when($country?->id, fn ($query) => $query->where(fn ($countryQuery) => $countryQuery->where('country_id', $country->id)->orWhereNull('country_id')))->firstOrFail()
+            : null;
+        $accountNumber = filled($validated['account_number'] ?? null)
+            ? app(PhoneNumberNormalizer::class)->normalize($validated['account_number'], $country?->iso2)
+            : null;
+        abort_if($accountNumber && BusinessPayoutAccount::query()->where('account_number', $accountNumber)->exists(), HTTP_UNPROCESSABLE_ENTITY, 'This settlement phone or account number is already registered.');
         abort_if($walletId && BusinessPayoutAccount::query()->where('wallet_id', $walletId)->exists(), HTTP_UNPROCESSABLE_ENTITY, 'This AzamPay wallet ID is already registered.');
-        $account = DB::transaction(fn () => $business->payoutAccounts()->create([
-            'gateway' => 'azampay',
-            'wallet_id' => $walletId,
-            'destination_type' => 'mobile_money',
-            'provider' => $provider->code,
-            'account_number' => $accountNumber,
-            'phone_number' => $accountNumber,
-            'account_holder_name' => trim($validated['account_holder_name']),
-            'currency' => strtoupper($validated['currency'] ?? $business->paymentSetting?->currency ?? 'TZS'),
-            'country_id' => $country?->id,
-            'verification_status' => 'verified',
-            'status' => 'active',
-            'is_default' => false,
-            'verified_by' => $request->user()->id,
-            'verified_at' => now(),
-            'metadata' => ['created_by_operations' => true],
-        ]));
+        $account = DB::transaction(function () use ($business, $walletId, $provider, $accountNumber, $validated, $country, $request): BusinessPayoutAccount {
+            $lockedBusiness = Business::query()->lockForUpdate()->findOrFail($business->id);
+            abort_if(
+                $lockedBusiness->payoutAccounts()->where('status', 'active')->exists(),
+                HTTP_UNPROCESSABLE_ENTITY,
+                'This business already has an active settlement account. Suspend it before activating another account.',
+            );
+
+            return $lockedBusiness->payoutAccounts()->create([
+                'gateway' => 'azampay',
+                'wallet_id' => $walletId,
+                'destination_type' => 'mobile_money',
+                'provider' => $provider?->code,
+                'account_number' => $accountNumber,
+                'phone_number' => $accountNumber,
+                'account_holder_name' => trim($validated['account_holder_name']),
+                'currency' => strtoupper($validated['currency'] ?? $business->paymentSetting?->currency ?? 'TZS'),
+                'country_id' => $country?->id,
+                'verification_status' => 'verified',
+                'status' => 'active',
+                'is_default' => true,
+                'verified_by' => $request->user()->id,
+                'verified_at' => now(),
+                'metadata' => ['created_by_operations' => true],
+            ]);
+        });
 
         return $this->sendResponse(['payout_account' => $this->payoutAccountData($account)], 'Settlement account created and activated.', 201);
     }
@@ -237,21 +250,31 @@ class OperationsBusinessController extends BaseController
         $business = Business::query()->with('district.city.country')->where('uuid', $uuid)->firstOrFail();
         $account = $business->payoutAccounts()->where('uuid', $accountUuid)->firstOrFail();
         $validated = $request->validate([
-            'provider' => ['required', 'string', 'max:80'],
+            'provider' => ['nullable', 'string', 'max:80', 'required_without:wallet_id'],
             'wallet_id' => ['nullable', 'string', 'max:160'],
-            'account_number' => ['required', 'regex:/^[1-9][0-9]{6,14}$/'],
+            'account_number' => ['nullable', 'regex:/^[1-9][0-9]{6,14}$/', 'required_without:wallet_id'],
             'account_holder_name' => ['required', 'string', 'max:160'],
             'currency' => ['nullable', 'string', 'size:3'],
         ]);
         $country = $business->district?->city?->country;
-        $provider = MobileMoneyProvider::query()->where('gateway', 'azampay')->where('code', $validated['provider'])->where('is_active', true)->when($country?->id, fn ($query) => $query->where(fn ($countryQuery) => $countryQuery->where('country_id', $country->id)->orWhereNull('country_id')))->firstOrFail();
-        $accountNumber = app(PhoneNumberNormalizer::class)->normalize($validated['account_number'], $country?->iso2);
-        abort_if(BusinessPayoutAccount::query()->where('account_number', $accountNumber)->whereKeyNot($account->getKey())->exists(), HTTP_UNPROCESSABLE_ENTITY, 'This settlement phone or account number is already registered.');
         $walletId = filled($validated['wallet_id'] ?? null) ? trim($validated['wallet_id']) : null;
+        $provider = $validated['provider']
+            ? MobileMoneyProvider::query()->where('gateway', 'azampay')->where('code', $validated['provider'])->where('is_active', true)->when($country?->id, fn ($query) => $query->where(fn ($countryQuery) => $countryQuery->where('country_id', $country->id)->orWhereNull('country_id')))->firstOrFail()
+            : null;
+        $accountNumber = filled($validated['account_number'] ?? null)
+            ? app(PhoneNumberNormalizer::class)->normalize($validated['account_number'], $country?->iso2)
+            : null;
+        abort_if($accountNumber && BusinessPayoutAccount::query()->where('account_number', $accountNumber)->whereKeyNot($account->getKey())->exists(), HTTP_UNPROCESSABLE_ENTITY, 'This settlement phone or account number is already registered.');
         abort_if($walletId && BusinessPayoutAccount::query()->where('wallet_id', $walletId)->whereKeyNot($account->getKey())->exists(), HTTP_UNPROCESSABLE_ENTITY, 'This AzamPay wallet ID is already registered.');
         DB::transaction(function () use ($account, $provider, $validated, $accountNumber, $business, $request): void {
+            $lockedBusiness = Business::query()->lockForUpdate()->findOrFail($business->id);
+            abort_if(
+                $lockedBusiness->payoutAccounts()->where('status', 'active')->whereKeyNot($account->getKey())->exists(),
+                HTTP_UNPROCESSABLE_ENTITY,
+                'This business already has another active settlement account. Suspend it before updating this account.',
+            );
             $account->update([
-            'provider' => $provider->code,
+            'provider' => $provider?->code,
             'wallet_id' => filled($validated['wallet_id'] ?? null) ? trim($validated['wallet_id']) : null,
             'account_number' => $accountNumber,
             'phone_number' => $accountNumber,
@@ -259,6 +282,7 @@ class OperationsBusinessController extends BaseController
             'currency' => strtoupper($validated['currency'] ?? $business->paymentSetting?->currency ?? 'TZS'),
             'verification_status' => 'verified',
             'status' => 'active',
+            'is_default' => true,
             'verified_by' => $request->user()->id,
             'verified_at' => now(),
             'rejection_reason' => null,
@@ -305,11 +329,17 @@ class OperationsBusinessController extends BaseController
         $validated = $request->validate(['decision' => ['required', 'in:approved,returned,suspended,reactivated'], 'reason' => ['nullable', 'string', 'max:2000']]);
         $approved = in_array($validated['decision'], ['approved', 'reactivated'], true);
         $suspended = $validated['decision'] === 'suspended';
-        DB::transaction(function () use ($account, $approved, $suspended, $validated, $request): void {
+        DB::transaction(function () use ($account, $approved, $suspended, $validated, $request, $business): void {
+            $lockedBusiness = Business::query()->lockForUpdate()->findOrFail($business->id);
+            abort_if(
+                $approved && $lockedBusiness->payoutAccounts()->where('status', 'active')->whereKeyNot($account->getKey())->exists(),
+                HTTP_UNPROCESSABLE_ENTITY,
+                'This business already has another active settlement account. Suspend it before approving this account.',
+            );
             $account->update([
             'verification_status' => $approved ? 'verified' : ($suspended ? 'verified' : 'needs_update'),
             'status' => $approved ? 'active' : ($suspended ? 'suspended' : 'pending'),
-            'is_default' => $approved ? $account->is_default : false,
+            'is_default' => $approved,
             'verified_by' => $approved ? $request->user()->id : $account->verified_by,
             'verified_at' => $approved ? now() : $account->verified_at,
             'rejection_reason' => $approved ? null : ($validated['reason'] ?? 'Settlement account requires correction.'),
