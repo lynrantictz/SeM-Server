@@ -28,6 +28,7 @@ use App\Services\PhoneNumberNormalizer;
 use App\Services\MenuAvailabilityService;
 use App\Services\Order\GuestOrderSessionService;
 use App\Services\Order\GuestCustomerSessionService;
+use App\Services\Business\BusinessActivationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
@@ -600,6 +601,54 @@ class OrderController extends BaseController
         ];
         $data['order'] = $order->load($relationship);
         return $this->sendResponse($data, 'Order Retrieved successfully', HTTP_OK);
+    }
+
+    public function paymentMethods(string $number, BusinessActivationService $activation)
+    {
+        $order = Order::query()
+            ->with(['business.paymentSetting'])
+            ->whereNumber($number)
+            ->first();
+        if (! $order) {
+            return $this->sendError('Order not found', [], HTTP_NOT_FOUND);
+        }
+
+        $activationStatus = $activation->status($order->business);
+        $methods = $order->business->paymentMethods()
+            ->with(['paymentMethod', 'accounts'])
+            ->where('is_enabled', true)
+            ->where('status', 'active')
+            ->orderBy('sort_order')
+            ->when(! $activationStatus['manual_payment_ready'], fn ($query) => $query->whereRaw('1 = 0'))
+            ->get()
+            ->map(fn ($configuration) => [
+                'code' => $configuration->paymentMethod?->code,
+                'name' => $configuration->paymentMethod?->name,
+                'identifier_label' => $configuration->paymentMethod?->identifier_label,
+                'identifier' => $configuration->identifier,
+                'bank_name' => $configuration->bank_name,
+                'account_holder_name' => $configuration->account_holder_name,
+                'instructions' => $configuration->paymentMethod?->instructions,
+                'logo_path' => $configuration->paymentMethod?->logo_path,
+                'accounts' => $configuration->accounts->map(fn ($account) => [
+                    'label' => $account->label,
+                    'bank_name' => $account->bank_name,
+                    'account_number' => $account->account_number,
+                    'account_holder_name' => $account->account_holder_name,
+                    'branch_name' => $account->branch_name,
+                    'currency' => $account->currency,
+                    'is_default' => (bool) $account->is_default,
+                ])->values(),
+            ])->values();
+
+        return $this->sendResponse([
+            'order_number' => $order->number,
+            'amount' => $order->due_amount ?: $order->total_amount,
+            'currency' => $order->business->paymentSetting?->currency ?? 'TZS',
+            'payment_timing' => $order->business->paymentSetting?->payment_timing ?? 'after_approval',
+            'ready_for_manual_payments' => $activationStatus['manual_payment_ready'] && $methods->isNotEmpty(),
+            'methods' => $methods,
+        ], 'Order payment methods retrieved successfully.', HTTP_OK);
     }
 
     public function verifyPhone(PhoneVerifyRequest $request, Order $order)

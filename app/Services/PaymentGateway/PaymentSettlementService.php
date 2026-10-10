@@ -121,13 +121,53 @@ class PaymentSettlementService
     }
 
     /** This method must be called within the transaction that locks the payment. */
-    public function completeOrderPayment(Payment $payment): void
+    public function recordManualPayment(
+        Order $order,
+        int $paymentMethodId,
+        float $amount,
+        ?string $reference,
+        int $confirmedByUserId,
+        string $confirmationSource = 'staff_manual',
+    ): Payment {
+        return DB::transaction(function () use ($order, $paymentMethodId, $amount, $reference, $confirmedByUserId, $confirmationSource): Payment {
+            $lockedOrder = Order::query()->lockForUpdate()->findOrFail($order->id);
+            $due = (float) ($lockedOrder->due_amount ?: $lockedOrder->total_amount);
+            if ($amount <= 0 || abs($amount - $due) > 0.01) {
+                throw new RuntimeException('The confirmed payment amount must match the outstanding order amount.');
+            }
+
+            $paymentMethod = PaymentMethod::query()->findOrFail($paymentMethodId);
+            $payment = Payment::query()->create([
+                'order_id' => $lockedOrder->id,
+                'initiated_by_user_id' => $confirmedByUserId,
+                'external_id' => 'MANUAL-' . Str::upper(Str::random(14)),
+                'idempotency_key' => (string) Str::uuid(),
+                'account_number' => $paymentMethod->code,
+                'provider' => $paymentMethod->code,
+                'mno_reference' => $reference,
+                'initiation_source' => 'staff',
+                'amount' => $amount,
+                'currency' => $lockedOrder->business?->paymentSetting?->currency ?? 'TZS',
+                'status' => 'SUCCESS',
+                'paid_at' => now(),
+                'confirmed_at' => now(),
+                'confirmation_source' => $confirmationSource,
+                'confirmed_by_user_id' => $confirmedByUserId,
+                'metadata' => ['mode' => 'manual', 'payment_method_id' => $paymentMethodId],
+            ]);
+
+            $this->completeOrderPayment($payment, $paymentMethodId);
+
+            return $payment->fresh();
+        });
+    }
+
+    public function completeOrderPayment(Payment $payment, ?int $paymentMethodId = null): void
     {
         $order = Order::query()->lockForUpdate()->findOrFail($payment->order_id);
-        $mobileMoney = PaymentMethod::query()->firstOrCreate(['name' => 'Mobile Money']);
         $completed = PaymentStatus::query()->where('name', 'Completed')->firstOrFail();
         $order->update([
-            'payment_method_id' => $mobileMoney->id,
+            'payment_method_id' => $paymentMethodId ?? PaymentMethod::query()->firstOrCreate(['name' => 'Mobile Money'])->id,
             'payment_status_id' => $completed->id,
             'paid_amount' => $payment->amount,
             'due_amount' => 0,

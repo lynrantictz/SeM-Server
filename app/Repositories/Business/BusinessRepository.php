@@ -6,6 +6,7 @@ use App\Models\Business\Business;
 use App\Models\Business\Vendor;
 use App\Models\Business\Timezone;
 use App\Models\Location\District;
+use App\Models\SystemSetting;
 use App\Repositories\BaseRepository;
 use App\Services\OrderPrefixService;
 use App\Services\PhoneNumberNormalizer;
@@ -114,6 +115,19 @@ class BusinessRepository extends BaseRepository
                 ->value('id') ?: Timezone::query()->where('identifier', 'UTC')->value('id');
 
             $business = $vendor->businesses()->create(Arr::except($inputs, ['contacts', 'timezone']));
+
+            // Store the rate that was active when the business was registered.
+            // Operations can override this business-specific value later.
+            $business->paymentSetting()->create([
+                'provider' => 'manual',
+                'currency' => 'TZS',
+                'commission_rate' => SystemSetting::valueFor('payments.default_commission_rate'),
+                'commission_basis' => 'subtotal_excluding_tax',
+                'fee_bearer' => 'business',
+                'settlement_mode' => 'manual_hold',
+                'is_checkout_enabled' => false,
+                'is_settlement_enabled' => false,
+            ]);
 
             // contacts is an array of ['contact' => '...'] objects
             if (!empty($inputs['contacts'])) {

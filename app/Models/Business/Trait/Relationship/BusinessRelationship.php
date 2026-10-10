@@ -16,6 +16,7 @@ use App\Models\Business\BusinessPaymentSetting;
 use App\Models\Business\BusinessPayout;
 use App\Models\Business\BusinessPayoutAccount;
 use App\Models\Business\BusinessOnboardingPayment;
+use App\Models\Business\BusinessPaymentMethod;
 
 trait BusinessRelationship
 {
@@ -74,6 +75,11 @@ trait BusinessRelationship
     public function paymentSetting()
     {
         return $this->hasOne(BusinessPaymentSetting::class);
+    }
+
+    public function paymentMethods()
+    {
+        return $this->hasMany(BusinessPaymentMethod::class);
     }
 
     public function payoutAccounts()

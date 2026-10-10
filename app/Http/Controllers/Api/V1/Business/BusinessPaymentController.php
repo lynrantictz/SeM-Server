@@ -6,14 +6,19 @@ use App\Http\Controllers\Api\BaseController;
 use App\Models\Business\Business;
 use App\Models\Business\BusinessUser;
 use App\Models\Business\BusinessPayoutAccount;
+use App\Models\Business\BusinessPaymentMethod;
+use App\Models\Business\BusinessPaymentMethodAccount;
 use App\Models\Order\Order;
 use App\Models\Payment\MobileMoneyProvider;
+use App\Models\Payment\PaymentMethod;
+use App\Models\SystemSetting;
 use App\Services\Business\BusinessActivationService;
 use App\Services\PaymentGateway\PaymentCheckoutService;
 use App\Services\PhoneNumberNormalizer;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class BusinessPaymentController extends BaseController
 {
@@ -46,6 +51,161 @@ class BusinessPaymentController extends BaseController
                     'logo_url' => $provider->logo_url,
                 ]),
         ], 'Payment providers retrieved successfully.');
+    }
+
+    public function paymentMethods(Business $business)
+    {
+        $this->authorizePaymentAccess($business, false);
+        $business->loadMissing('district.city.country', 'paymentSetting');
+
+        $countryId = $business->district?->city?->country_id;
+        $catalog = PaymentMethod::query()
+            ->where('is_active', true)
+            ->where(fn ($query) => $query->where('country_id', $countryId)->orWhereNull('country_id'))
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get();
+        $configured = $business->paymentMethods()->with(['paymentMethod', 'accounts'])->get()->keyBy('payment_method_id');
+        $activation = $this->activation->status($business);
+        $configuredMethods = $configured->filter(fn (BusinessPaymentMethod $configuration) =>
+            $configuration->is_enabled && $configuration->status === 'active'
+        );
+        $completeMethods = $configuredMethods->filter(function (BusinessPaymentMethod $configuration) {
+            $method = $configuration->paymentMethod;
+
+            if (! $method) {
+                return false;
+            }
+
+            if ($method->code === 'bank_transfer') {
+                return $configuration->accounts->isNotEmpty()
+                    && $configuration->accounts->every(fn (BusinessPaymentMethodAccount $account) =>
+                        $account->is_enabled && filled($account->bank_name) && filled($account->account_number) && filled($account->account_holder_name)
+                    );
+            }
+
+            return ! $method->requires_identifier || filled($configuration->identifier);
+        });
+        $manualPaymentReady = $activation['manual_payment_ready']
+            && $configuredMethods->isNotEmpty()
+            && $completeMethods->count() === $configuredMethods->count();
+
+        return $this->sendResponse([
+            'payment_timing' => $business->paymentSetting?->payment_timing ?? 'after_approval',
+            'methods' => $catalog->map(fn (PaymentMethod $method) => $this->paymentMethodData($method, $configured->get($method->id)))->values(),
+            'readiness' => [
+                'business_active' => $activation['business_enabled'],
+                'documents_approved' => $activation['documents_approved'],
+                'methods_configured' => $configuredMethods->count(),
+                'methods_complete' => $completeMethods->count(),
+                'ready_for_manual_payments' => $manualPaymentReady,
+                'online_checkout_available' => $activation['online_checkout_ready'],
+            ],
+        ], 'Business payment methods retrieved successfully.');
+    }
+
+    public function savePaymentMethods(Request $request, Business $business)
+    {
+        $this->authorizePaymentSettings($business);
+        $validated = $request->validate([
+            'payment_timing' => ['nullable', Rule::in(['after_approval', 'after_served', 'anytime'])],
+            'methods' => ['present', 'array', 'max:10'],
+            'methods.*.payment_method_id' => ['required', 'integer', 'distinct', Rule::exists('payment_methods', 'id')],
+            'methods.*.identifier' => ['nullable', 'string', 'max:160'],
+            'methods.*.bank_name' => ['nullable', 'string', 'max:160'],
+            'methods.*.account_holder_name' => ['nullable', 'string', 'max:160'],
+            'methods.*.accounts' => ['nullable', 'array', 'max:20'],
+            'methods.*.accounts.*.label' => ['nullable', 'string', 'max:120'],
+            'methods.*.accounts.*.bank_name' => ['required', 'string', 'max:160'],
+            'methods.*.accounts.*.account_number' => ['required', 'string', 'max:160'],
+            'methods.*.accounts.*.account_holder_name' => ['required', 'string', 'max:160'],
+            'methods.*.accounts.*.branch_name' => ['nullable', 'string', 'max:160'],
+            'methods.*.accounts.*.currency' => ['required', 'string', 'size:3'],
+            'methods.*.accounts.*.is_default' => ['nullable', 'boolean'],
+        ]);
+
+        $business->loadMissing('district.city.country', 'paymentSetting');
+        $countryId = $business->district?->city?->country_id;
+        $methodIds = collect($validated['methods'])->pluck('payment_method_id')->values();
+        $catalog = PaymentMethod::query()
+            ->whereIn('id', $methodIds)
+            ->where('is_active', true)
+            ->where(fn ($query) => $query->where('country_id', $countryId)->orWhereNull('country_id'))
+            ->get()
+            ->keyBy('id');
+        abort_unless($catalog->count() === $methodIds->unique()->count(), HTTP_UNPROCESSABLE_ENTITY, 'One or more selected payment methods are not available for this country.');
+
+        foreach ($validated['methods'] as $methodInput) {
+            $method = $catalog->get($methodInput['payment_method_id']);
+            if ($method->code === 'bank_transfer' && blank($methodInput['accounts'] ?? null)) {
+                abort(HTTP_UNPROCESSABLE_ENTITY, 'Bank Transfer requires at least one bank account.');
+            }
+            if ($method->requires_identifier && blank($methodInput['identifier'] ?? null)) {
+                if ($method->code === 'bank_transfer' && filled($methodInput['accounts'] ?? null)) {
+                    continue;
+                }
+                abort(HTTP_UNPROCESSABLE_ENTITY, "{$method->name} requires a payment or account number.");
+            }
+            if ($method->code === 'bank_transfer' && blank($methodInput['bank_name'] ?? null)) {
+                abort(HTTP_UNPROCESSABLE_ENTITY, 'Bank transfer requires a bank name.');
+            }
+        }
+
+        DB::transaction(function () use ($business, $validated, $methodIds, $catalog): void {
+            $business->paymentMethods()->whereNotIn('payment_method_id', $methodIds->all())->update(['is_enabled' => false]);
+
+            foreach ($validated['methods'] as $index => $methodInput) {
+                $configuration = $business->paymentMethods()->updateOrCreate(
+                    ['payment_method_id' => $methodInput['payment_method_id']],
+                    [
+                        'identifier' => filled($methodInput['identifier'] ?? null) ? trim($methodInput['identifier']) : null,
+                        'bank_name' => filled($methodInput['bank_name'] ?? null) ? trim($methodInput['bank_name']) : null,
+                        'account_holder_name' => filled($methodInput['account_holder_name'] ?? null) ? trim($methodInput['account_holder_name']) : null,
+                        'status' => 'active',
+                        'is_enabled' => true,
+                        'sort_order' => $index,
+                        'rejection_reason' => null,
+                    ],
+                );
+
+                if ($catalog->get($methodInput['payment_method_id'])->code === 'bank_transfer') {
+                    $configuration->accounts()->delete();
+                    $accounts = collect($methodInput['accounts'] ?? [])->values();
+                    $defaultIndex = $accounts->search(fn (array $account) => (bool) ($account['is_default'] ?? false));
+                    $defaultIndex = $defaultIndex === false ? 0 : $defaultIndex;
+                    $configuration->accounts()->createMany($accounts->map(function (array $account, int $accountIndex) use ($defaultIndex): array {
+                        return [
+                            'label' => filled($account['label'] ?? null) ? trim($account['label']) : null,
+                            'bank_name' => trim($account['bank_name']),
+                            'account_number' => trim($account['account_number']),
+                            'account_holder_name' => trim($account['account_holder_name']),
+                            'branch_name' => filled($account['branch_name'] ?? null) ? trim($account['branch_name']) : null,
+                            'currency' => strtoupper($account['currency']),
+                            'is_default' => $accountIndex === $defaultIndex,
+                            'is_enabled' => true,
+                            'sort_order' => $accountIndex,
+                        ];
+                    })->all());
+                } else {
+                    $configuration->accounts()->delete();
+                }
+            }
+
+            $business->paymentSetting()->updateOrCreate(
+                ['business_id' => $business->id],
+                [
+                    'provider' => $business->paymentSetting?->provider ?? 'manual',
+                    'currency' => $business->paymentSetting?->currency ?? 'TZS',
+                    'commission_rate' => $business->paymentSetting?->commission_rate ?? SystemSetting::valueFor('payments.default_commission_rate'),
+                    'commission_basis' => $business->paymentSetting?->commission_basis ?? 'subtotal_excluding_tax',
+                    'fee_bearer' => $business->paymentSetting?->fee_bearer ?? 'business',
+                    'settlement_mode' => $business->paymentSetting?->settlement_mode ?? 'manual_hold',
+                    'payment_timing' => $validated['payment_timing'] ?? $business->paymentSetting?->payment_timing ?? 'after_approval',
+                ],
+            );
+        });
+
+        return $this->paymentMethods($business->fresh());
     }
 
     public function payoutSettings(Business $business)
@@ -89,6 +249,7 @@ class BusinessPaymentController extends BaseController
     public function storePayoutAccount(Request $request, Business $business)
     {
         $this->authorizePayoutSettings($business);
+        $this->ensureOnlineSettlementUnavailable();
         $validated = $request->validate([
             'destination_type' => ['required', 'in:mobile_money'],
             'provider' => ['required', 'string', 'max:80'],
@@ -147,6 +308,7 @@ class BusinessPaymentController extends BaseController
     public function updatePayoutAccount(Request $request, Business $business, BusinessPayoutAccount $payoutAccount)
     {
         $this->authorizePayoutSettings($business);
+        $this->ensureOnlineSettlementUnavailable();
         abort_unless((int) $payoutAccount->business_id === (int) $business->id, HTTP_NOT_FOUND, 'Payout account not found.');
         abort_unless(
             $payoutAccount->status === 'rejected' || $payoutAccount->verification_status === 'rejected',
@@ -211,6 +373,7 @@ class BusinessPaymentController extends BaseController
     public function makeDefaultPayoutAccount(Business $business, BusinessPayoutAccount $payoutAccount)
     {
         $this->authorizePayoutSettings($business);
+        $this->ensureOnlineSettlementUnavailable();
         abort_unless((int) $payoutAccount->business_id === (int) $business->id, HTTP_NOT_FOUND, 'Payout account not found.');
         abort_unless($payoutAccount->status === 'active' && $payoutAccount->verification_status === 'verified', HTTP_UNPROCESSABLE_ENTITY, 'Only a verified active payout account can be made default.');
 
@@ -335,6 +498,17 @@ class BusinessPaymentController extends BaseController
         abort_unless(in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager'], true), HTTP_FORBIDDEN, 'Only business management can manage payout information.');
     }
 
+    private function authorizePaymentSettings(Business $business): void
+    {
+        $role = $this->authorizePaymentAccess($business, false);
+        abort_unless(in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager'], true), HTTP_FORBIDDEN, 'Only business management can manage payment settings.');
+    }
+
+    private function ensureOnlineSettlementUnavailable(): void
+    {
+        abort(HTTP_CONFLICT, 'Online settlement is not available yet. Configure direct payment methods while Paperstic completes the online payment integration.');
+    }
+
     private function payoutAccountData(BusinessPayoutAccount $account): array
     {
         return [
@@ -351,6 +525,41 @@ class BusinessPaymentController extends BaseController
             'is_default' => (bool) $account->is_default,
             'verified_at' => $account->verified_at?->toIso8601String(),
             'rejection_reason' => $account->rejection_reason,
+        ];
+    }
+
+    private function paymentMethodData(PaymentMethod $method, ?BusinessPaymentMethod $configuration): array
+    {
+        return [
+            'id' => $method->id,
+            'code' => $method->code,
+            'name' => $method->name,
+            'identifier_label' => $method->identifier_label,
+            'instructions' => $method->instructions,
+            'logo_path' => $method->logo_path,
+            'requires_identifier' => (bool) $method->requires_identifier,
+            'selected' => (bool) $configuration?->is_enabled,
+            'configuration' => $configuration ? [
+                'uuid' => $configuration->uuid,
+                'identifier' => $configuration->identifier,
+                'bank_name' => $configuration->bank_name,
+                'account_holder_name' => $configuration->account_holder_name,
+                'status' => $configuration->status,
+                'is_enabled' => (bool) $configuration->is_enabled,
+                'sort_order' => $configuration->sort_order,
+                'accounts' => $configuration->relationLoaded('accounts') ? $configuration->accounts->map(fn (BusinessPaymentMethodAccount $account) => [
+                    'uuid' => $account->uuid,
+                    'label' => $account->label,
+                    'bank_name' => $account->bank_name,
+                    'account_number' => $account->account_number,
+                    'account_holder_name' => $account->account_holder_name,
+                    'branch_name' => $account->branch_name,
+                    'currency' => $account->currency,
+                    'is_default' => (bool) $account->is_default,
+                    'is_enabled' => (bool) $account->is_enabled,
+                    'sort_order' => $account->sort_order,
+                ])->values() : [],
+            ] : null,
         ];
     }
 }

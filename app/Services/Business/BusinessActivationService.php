@@ -11,9 +11,9 @@ class BusinessActivationService
     /**
      * Resolve the operational and payment readiness of one business.
      *
-     * Payment checkout may be offered only after Paperstic has enabled the
-     * business, approved every required compliance document, and enabled its
-     * checkout configuration.
+     * A business can operate with direct/manual payment methods once it is
+     * active and its required compliance documents are approved. Online
+     * mobile-money checkout remains a separate, future AzamPay capability.
      */
     public function status(Business $business): array
     {
@@ -41,15 +41,17 @@ class BusinessActivationService
         $documentsApproved = $pendingDocumentTypes === [];
         $checkoutEnabled = $business->paymentSetting?->provider === 'azampay'
             && (bool) $business->paymentSetting->is_checkout_enabled;
-        $canAcceptMobileMoney = (bool) $business->is_active
-            && $documentsApproved
-            && $checkoutEnabled;
+        $manualPaymentReady = (bool) $business->is_active
+            && $documentsApproved;
+        $canAcceptMobileMoney = $manualPaymentReady && $checkoutEnabled;
 
         return [
-            'status' => $canAcceptMobileMoney ? 'active' : 'needs_review',
+            'status' => $manualPaymentReady ? 'active' : 'needs_review',
             'business_enabled' => (bool) $business->is_active,
             'documents_approved' => $documentsApproved,
+            'manual_payment_ready' => $manualPaymentReady,
             'payment_checkout_enabled' => $checkoutEnabled,
+            'online_checkout_ready' => $canAcceptMobileMoney,
             'can_accept_mobile_money' => $canAcceptMobileMoney,
             'pending_document_types' => $pendingDocumentTypes,
         ];

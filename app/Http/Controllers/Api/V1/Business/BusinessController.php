@@ -9,6 +9,7 @@ use App\Models\Business\Business;
 use App\Models\Business\Vendor;
 use App\Repositories\Business\BusinessRepository;
 use App\Services\Business\BusinessActivationService;
+use App\Models\SystemSetting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 
@@ -76,6 +77,10 @@ class BusinessController extends BaseController
             ->whereKey($business->id)
             ->firstOrFail();
         $business->setAttribute('activation', $this->activation->status($business));
+        $business->setAttribute(
+            'platform_commission_rate',
+            (float) SystemSetting::valueFor('payments.default_commission_rate'),
+        );
 
         return $this->sendResponse([
             'business' => $business,

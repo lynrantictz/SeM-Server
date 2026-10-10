@@ -15,13 +15,13 @@ use App\Models\Order\OrderStatus;
 use App\Models\Order\OrderStatusHistory;
 use App\Models\Order\OrderWorkLock;
 use App\Models\Payment\PaymentStatus;
-use App\Models\Payment\Payment;
 use App\Models\Payment\PaymentMethod;
 use App\Models\Section\ServicePoint;
 use App\Repositories\Order\OrderItemRepository;
 use App\Repositories\Order\OrderRepository;
 use App\Services\MenuAvailabilityService;
 use App\Services\Business\BusinessActivationService;
+use App\Services\PaymentGateway\PaymentSettlementService;
 use App\Services\Order\GuestOrderSessionService;
 use App\Services\Order\OrderPaymentLinkService;
 use App\Jobs\WhatsApp\SendOrderPaymentRequestWhatsApp;
@@ -266,15 +266,18 @@ class BusinessOrderController extends BaseController
         ], 'Business report retrieved successfully.');
     }
 
-    public function action(Request $request, Business $business, string $order, OrderPaymentLinkService $paymentLinks)
+    public function action(Request $request, Business $business, string $order, OrderPaymentLinkService $paymentLinks, PaymentSettlementService $settlement)
     {
         $role = $this->authorizeBusiness($business);
         $validated = $request->validate([
             'action' => ['required', Rule::in(['approve', 'reject', 'ready', 'serve', 'mark_paid', 'confirm_cash', 'complete'])],
             'reason' => ['required_if:action,reject', 'nullable', 'string', 'max:500'],
+            'payment_method_id' => ['nullable', 'integer', Rule::exists('payment_methods', 'id')],
+            'payment_amount' => ['nullable', 'numeric', 'min:0'],
+            'payment_reference' => ['nullable', 'string', 'max:160'],
         ]);
 
-        $updated = DB::transaction(function () use ($business, $order, $validated, $role) {
+        $updated = DB::transaction(function () use ($business, $order, $validated, $role, $settlement) {
             $record = Order::query()
                 ->where('business_id', $business->id)
                 ->where('uuid', $order)
@@ -315,7 +318,24 @@ class BusinessOrderController extends BaseController
                 $record->approved_at = now();
             }
             if (in_array($validated['action'], ['mark_paid', 'confirm_cash'], true)) {
-                $record->payment_status_id = PaymentStatus::query()->where('name', 'Completed')->firstOrFail()->id;
+                $paymentMethodId = $validated['payment_method_id'] ?? null;
+                if ($validated['action'] === 'confirm_cash') {
+                    $paymentMethodId = PaymentMethod::query()->firstOrCreate(['name' => 'Cash'])->id;
+                }
+                if (! $paymentMethodId) {
+                    $paymentMethodId = $record->payment_method_id;
+                }
+                if (! $paymentMethodId) {
+                    $paymentMethodId = PaymentMethod::query()->firstOrCreate(['name' => 'Cash'])->id;
+                }
+                $settlement->recordManualPayment(
+                    $record,
+                    (int) $paymentMethodId,
+                    (float) ($validated['payment_amount'] ?? ($record->due_amount ?: $record->total_amount)),
+                    $validated['payment_reference'] ?? null,
+                    (int) auth()->id(),
+                    $validated['action'] === 'confirm_cash' ? 'staff_cash' : 'staff_manual',
+                );
             }
             $record->save();
 
@@ -325,26 +345,6 @@ class BusinessOrderController extends BaseController
                     ->whereNull('revoked_at')
                     ->where('expires_at', '>', now())
                     ->update(['revoked_at' => now()]);
-            }
-
-            if ($validated['action'] === 'confirm_cash') {
-                $cash = PaymentMethod::query()->firstOrCreate(['name' => 'Cash']);
-                $record->payment_method_id = $cash->id;
-                $record->save();
-                $payment = Payment::query()->where('order_id', $record->id)->latest('id')->first() ?? new Payment(['order_id' => $record->id]);
-                $payment->fill([
-                    'external_id' => "cash-{$record->number}",
-                    'account_number' => 'Cash',
-                    'provider' => 'cash',
-                    'amount' => $record->total_amount,
-                    'currency' => 'TZS',
-                    'status' => 'SUCCESS',
-                    'confirmation_source' => 'staff_cash',
-                    'confirmed_by_user_id' => auth()->id(),
-                    'confirmed_at' => now(),
-                    'response_payload' => ['confirmed_by' => auth()->id(), 'confirmed_at' => now()->toIso8601String()],
-                ]);
-                $payment->save();
             }
 
             OrderStatusHistory::query()->create([
