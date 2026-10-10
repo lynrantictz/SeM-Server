@@ -10,7 +10,7 @@ class BusinessPaymentMethodAccount extends BaseModel
     protected $fillable = [
         'business_payment_method_id', 'label', 'bank_name', 'account_number',
         'account_holder_name', 'branch_name', 'currency', 'is_default',
-        'is_enabled', 'sort_order',
+        'is_enabled', 'sort_order', 'status',
     ];
 
     protected $casts = [

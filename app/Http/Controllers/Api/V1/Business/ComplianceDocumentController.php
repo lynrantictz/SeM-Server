@@ -9,6 +9,7 @@ use App\Models\Business\ComplianceDocumentType;
 use App\Models\Business\Vendor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 class ComplianceDocumentController extends BaseController
@@ -126,27 +127,54 @@ class ComplianceDocumentController extends BaseController
             'An expiry date is required for this document type.'
         );
 
+        $taxDocumentTypes = ['vat_registration_certificate', 'tax_exemption_certificate'];
+        if ($scope === 'business' && in_array($validated['document_type'], $taxDocumentTypes, true)) {
+            $oppositeTaxDocument = collect($taxDocumentTypes)
+                ->reject(fn (string $type): bool => $type === $validated['document_type'])
+                ->values()
+                ->all();
+
+            $hasActiveOpposite = $owner->complianceDocuments()
+                ->whereIn('document_type', $oppositeTaxDocument)
+                ->whereIn('status', ['pending', 'in_review', 'needs_review', 'needs_update', 'approved'])
+                ->exists();
+
+            abort_if(
+                $hasActiveOpposite,
+                HTTP_UNPROCESSABLE_ENTITY,
+                'Only one tax-status document may be active. Return or expire the existing tax document before submitting the other type.'
+            );
+        }
+
         $file = $request->file('file');
         $path = $file->store("compliance-documents/{$scope}/{$owner->uuid}", 'local');
 
-        return ComplianceDocument::query()->create([
-            $scope . '_id' => $owner->id,
-            'compliance_document_type_id' => $definition['id'],
-            // Keep immutable key/name snapshots so historical records remain
-            // intelligible if Paperstic later renames or retires a type.
-            'document_type' => $definition['key'],
-            'document_type_name' => $definition['name'],
-            'document_number' => $validated['document_number'] ?? null,
-            'original_filename' => $file->getClientOriginalName(),
-            'disk' => 'local',
-            'storage_path' => $path,
-            'mime_type' => $file->getMimeType() ?: 'application/octet-stream',
-            'file_size' => $file->getSize(),
-            'status' => 'pending',
-            'issued_at' => $validated['issued_at'] ?? null,
-            'expires_at' => $validated['expires_at'] ?? null,
-            'uploaded_by' => $request->user()->id,
-        ])->load('documentType');
+        return DB::transaction(function () use ($request, $scope, $owner, $definition, $validated, $file, $path, $taxDocumentTypes): ComplianceDocument {
+            $document = ComplianceDocument::query()->create([
+                $scope . '_id' => $owner->id,
+                'compliance_document_type_id' => $definition['id'],
+                // Keep immutable key/name snapshots so historical records remain
+                // intelligible if Paperstic later renames or retires a type.
+                'document_type' => $definition['key'],
+                'document_type_name' => $definition['name'],
+                'document_number' => $validated['document_number'] ?? null,
+                'original_filename' => $file->getClientOriginalName(),
+                'disk' => 'local',
+                'storage_path' => $path,
+                'mime_type' => $file->getMimeType() ?: 'application/octet-stream',
+                'file_size' => $file->getSize(),
+                'status' => 'pending',
+                'issued_at' => $validated['issued_at'] ?? null,
+                'expires_at' => $validated['expires_at'] ?? null,
+                'uploaded_by' => $request->user()->id,
+            ]);
+
+            if ($scope === 'business' && in_array($definition['key'], $taxDocumentTypes, true)) {
+                $owner->update(['tax_status' => 'under_review']);
+            }
+
+            return $document->load('documentType');
+        });
     }
 
     private function documentList($documents, string $scope, Business|Vendor $owner): array

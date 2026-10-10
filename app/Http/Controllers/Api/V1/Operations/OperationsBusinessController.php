@@ -710,6 +710,14 @@ class OperationsBusinessController extends BaseController
                 'reviewed_at' => now(),
                 'rejection_reason' => $validated['decision'] === 'returned' ? trim($validated['reason']) : null,
             ]);
+
+            if ($document->business && in_array($document->document_type, ['vat_registration_certificate', 'tax_exemption_certificate'], true)) {
+                $document->business->update([
+                    'tax_status' => $validated['decision'] === 'approved'
+                        ? ($document->document_type === 'vat_registration_certificate' ? 'vat_registered' : 'tax_exempt')
+                        : 'under_review',
+                ]);
+            }
         });
 
         return $this->sendResponse([
@@ -726,6 +734,14 @@ class OperationsBusinessController extends BaseController
         abort_unless($request->user()->can($permission), 403, 'You do not have permission to change this business status.');
 
         $business = Business::query()->where('uuid', $uuid)->firstOrFail();
+        if ($validated['is_active']) {
+            $readiness = $this->activation->status($business);
+            abort_if(
+                ! $readiness['manual_payment_ready'],
+                HTTP_UNPROCESSABLE_ENTITY,
+                'This business cannot be activated until all required documents are approved and at least one payment method is approved and complete.'
+            );
+        }
         DB::transaction(function () use ($business, $validated): void {
             $business->update(['is_active' => $validated['is_active']]);
         });
@@ -758,6 +774,7 @@ class OperationsBusinessController extends BaseController
             'code_prefix' => $business->code_prefix,
             'current_order_number' => $business->current_order_number,
             'tax_allowed' => (bool) $business->tax_allowed,
+            'tax_status' => $business->tax_status ?: 'not_registered',
             'timezone' => $business->timezoneDefinition?->identifier ?: $business->timezone,
             'district' => $business->district?->name,
             'city' => $business->district?->city?->name,

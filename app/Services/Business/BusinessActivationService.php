@@ -5,6 +5,7 @@ namespace App\Services\Business;
 use App\Models\Business\Business;
 use App\Models\Business\ComplianceDocument;
 use App\Models\Business\ComplianceDocumentType;
+use App\Models\Business\BusinessPaymentMethod;
 
 class BusinessActivationService
 {
@@ -21,6 +22,8 @@ class BusinessActivationService
             'district.city',
             'paymentSetting',
             'complianceDocuments' => fn ($query) => $query->latest('id'),
+            'paymentMethods.paymentMethod',
+            'paymentMethods.accounts',
         ]);
 
         $requiredDocumentTypes = $this->requiredDocumentTypes($business);
@@ -39,22 +42,55 @@ class BusinessActivationService
             ->all();
 
         $documentsApproved = $pendingDocumentTypes === [];
+        $configuredMethods = $business->paymentMethods
+            ->filter(fn (BusinessPaymentMethod $configuration): bool =>
+                $configuration->is_enabled && $configuration->status === 'active'
+            );
+        $completeMethods = $configuredMethods->filter(
+            fn (BusinessPaymentMethod $configuration): bool => $this->paymentMethodIsComplete($configuration)
+        );
+        $paymentMethodsApproved = $completeMethods->isNotEmpty();
         $checkoutEnabled = $business->paymentSetting?->provider === 'azampay'
             && (bool) $business->paymentSetting->is_checkout_enabled;
         $manualPaymentReady = (bool) $business->is_active
-            && $documentsApproved;
+            && $documentsApproved
+            && $paymentMethodsApproved;
         $canAcceptMobileMoney = $manualPaymentReady && $checkoutEnabled;
 
         return [
             'status' => $manualPaymentReady ? 'active' : 'needs_review',
             'business_enabled' => (bool) $business->is_active,
             'documents_approved' => $documentsApproved,
+            'payment_methods_approved' => $paymentMethodsApproved,
+            'configured_payment_method_count' => $configuredMethods->count(),
+            'approved_payment_method_count' => $completeMethods->count(),
             'manual_payment_ready' => $manualPaymentReady,
             'payment_checkout_enabled' => $checkoutEnabled,
             'online_checkout_ready' => $canAcceptMobileMoney,
             'can_accept_mobile_money' => $canAcceptMobileMoney,
             'pending_document_types' => $pendingDocumentTypes,
         ];
+    }
+
+    private function paymentMethodIsComplete(BusinessPaymentMethod $configuration): bool
+    {
+        $method = $configuration->paymentMethod;
+        if (! $method) {
+            return false;
+        }
+
+        if ($method->code === 'bank_transfer') {
+            return $configuration->accounts->isNotEmpty()
+                && $configuration->accounts->every(fn ($account): bool =>
+                    $account->is_enabled
+                    && $account->status === 'active'
+                    && filled($account->bank_name)
+                    && filled($account->account_number)
+                    && filled($account->account_holder_name)
+                );
+        }
+
+        return ! $method->requires_identifier || filled($configuration->identifier);
     }
 
     private function requiredDocumentTypes(Business $business)

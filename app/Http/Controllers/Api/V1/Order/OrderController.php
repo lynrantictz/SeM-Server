@@ -548,6 +548,10 @@ class OrderController extends BaseController
         if (!$business || !$business->is_active) {
             return 'This business is currently unavailable.';
         }
+        $activation = app(BusinessActivationService::class)->status($business);
+        if (! $activation['manual_payment_ready']) {
+            return 'This business is not currently ready to accept guest orders.';
+        }
         if (!$this->channelEnabled($business, $channel)) {
             return 'This ordering channel is not enabled for this business.';
         }
@@ -637,6 +641,7 @@ class OrderController extends BaseController
                     'account_holder_name' => $account->account_holder_name,
                     'branch_name' => $account->branch_name,
                     'currency' => $account->currency,
+                    'status' => $account->status,
                     'is_default' => (bool) $account->is_default,
                 ])->values(),
             ])->values();

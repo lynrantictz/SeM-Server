@@ -9,6 +9,7 @@ use App\Models\Order\Order;
 use App\Models\Section\Code;
 use App\Repositories\Menu\CategoryRepository;
 use App\Services\MenuAvailabilityService;
+use App\Services\Business\BusinessActivationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -60,6 +61,12 @@ class CategoryController extends BaseController
             return $this->sendError('This business is not currently accepting orders.', [], HTTP_NOT_FOUND);
         }
         $business = $code->codable->business;
+        $activation = app(BusinessActivationService::class)->status($business);
+        if (! $activation['manual_payment_ready']) {
+            return $this->sendError('This business is not currently ready to accept guest orders.', [
+                'activation_status' => $activation['status'],
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
         if (!$this->channelEnabled($business, $channel)) {
             return $this->sendError('This ordering channel is not enabled for this business.', ['channel' => $channel], HTTP_UNPROCESSABLE_ENTITY);
         }

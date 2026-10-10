@@ -78,9 +78,9 @@ class BusinessPaymentController extends BaseController
             }
 
             if ($method->code === 'bank_transfer') {
-                return $configuration->accounts->isNotEmpty()
+                    return $configuration->accounts->isNotEmpty()
                     && $configuration->accounts->every(fn (BusinessPaymentMethodAccount $account) =>
-                        $account->is_enabled && filled($account->bank_name) && filled($account->account_number) && filled($account->account_holder_name)
+                        $account->is_enabled && $account->status === 'active' && filled($account->bank_name) && filled($account->account_number) && filled($account->account_holder_name)
                     );
             }
 
@@ -96,6 +96,7 @@ class BusinessPaymentController extends BaseController
             'readiness' => [
                 'business_active' => $activation['business_enabled'],
                 'documents_approved' => $activation['documents_approved'],
+                'payment_methods_approved' => $activation['payment_methods_approved'],
                 'methods_configured' => $configuredMethods->count(),
                 'methods_complete' => $completeMethods->count(),
                 'ready_for_manual_payments' => $manualPaymentReady,
@@ -109,6 +110,7 @@ class BusinessPaymentController extends BaseController
         $this->authorizePaymentSettings($business);
         $validated = $request->validate([
             'payment_timing' => ['nullable', Rule::in(['after_approval', 'after_served', 'anytime'])],
+            'submit_for_verification' => ['sometimes', 'boolean'],
             'methods' => ['present', 'array', 'max:10'],
             'methods.*.payment_method_id' => ['required', 'integer', 'distinct', Rule::exists('payment_methods', 'id')],
             'methods.*.identifier' => ['nullable', 'string', 'max:160'],
@@ -140,6 +142,10 @@ class BusinessPaymentController extends BaseController
             if ($method->code === 'bank_transfer' && blank($methodInput['accounts'] ?? null)) {
                 abort(HTTP_UNPROCESSABLE_ENTITY, 'Bank Transfer requires at least one bank account.');
             }
+            if (in_array($method->code, ['mpesa_lipa_namba', 'mixx_merchant', 'airtel_money'], true)
+                && blank($methodInput['account_holder_name'] ?? null)) {
+                abort(HTTP_UNPROCESSABLE_ENTITY, "{$method->name} requires the registered merchant name.");
+            }
             if ($method->requires_identifier && blank($methodInput['identifier'] ?? null)) {
                 if ($method->code === 'bank_transfer' && filled($methodInput['accounts'] ?? null)) {
                     continue;
@@ -161,7 +167,7 @@ class BusinessPaymentController extends BaseController
                         'identifier' => filled($methodInput['identifier'] ?? null) ? trim($methodInput['identifier']) : null,
                         'bank_name' => filled($methodInput['bank_name'] ?? null) ? trim($methodInput['bank_name']) : null,
                         'account_holder_name' => filled($methodInput['account_holder_name'] ?? null) ? trim($methodInput['account_holder_name']) : null,
-                        'status' => 'active',
+                        'status' => 'pending',
                         'is_enabled' => true,
                         'sort_order' => $index,
                         'rejection_reason' => null,
@@ -181,6 +187,7 @@ class BusinessPaymentController extends BaseController
                             'account_holder_name' => trim($account['account_holder_name']),
                             'branch_name' => filled($account['branch_name'] ?? null) ? trim($account['branch_name']) : null,
                             'currency' => strtoupper($account['currency']),
+                            'status' => 'pending',
                             'is_default' => $accountIndex === $defaultIndex,
                             'is_enabled' => true,
                             'sort_order' => $accountIndex,
@@ -555,6 +562,7 @@ class BusinessPaymentController extends BaseController
                     'account_holder_name' => $account->account_holder_name,
                     'branch_name' => $account->branch_name,
                     'currency' => $account->currency,
+                    'status' => $account->status,
                     'is_default' => (bool) $account->is_default,
                     'is_enabled' => (bool) $account->is_enabled,
                     'sort_order' => $account->sort_order,

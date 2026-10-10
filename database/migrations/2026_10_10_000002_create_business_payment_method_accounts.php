@@ -18,6 +18,7 @@ return new class extends Migration
             $table->string('account_holder_name');
             $table->string('branch_name')->nullable();
             $table->string('currency', 10)->default('TZS');
+            $table->string('status')->default('pending');
             $table->boolean('is_default')->default(false);
             $table->boolean('is_enabled')->default(true);
             $table->unsignedInteger('sort_order')->default(0);
@@ -40,6 +41,7 @@ return new class extends Migration
                         'account_number' => $configuration->identifier,
                         'account_holder_name' => $configuration->account_holder_name ?: 'Business account',
                         'currency' => 'TZS',
+                        'status' => 'active',
                         'is_default' => true,
                         'is_enabled' => true,
                         'sort_order' => 0,

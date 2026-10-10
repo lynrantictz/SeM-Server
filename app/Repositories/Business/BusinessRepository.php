@@ -49,6 +49,7 @@ class BusinessRepository extends BaseRepository
                 'businesses.current_order_number',
                 'businesses.is_active',
                 'businesses.tax_allowed',
+                'businesses.tax_status',
                 'businesses.created_at',
             ])
             ->with([
