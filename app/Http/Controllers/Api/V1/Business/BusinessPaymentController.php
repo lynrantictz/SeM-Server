@@ -55,6 +55,8 @@ class BusinessPaymentController extends BaseController
 
     public function paymentMethods(Business $business)
     {
+        // Payment methods are visible to any user who can access the business.
+        // Editing and submitting remain protected by their dedicated permissions.
         $this->authorizePaymentAccess($business, false);
         $business->loadMissing('district.city.country', 'paymentSetting');
 
@@ -102,12 +104,15 @@ class BusinessPaymentController extends BaseController
                 'ready_for_manual_payments' => $manualPaymentReady,
                 'online_checkout_available' => $activation['online_checkout_ready'],
             ],
+            'permissions' => [
+                'can_update' => auth()->user()->can('business.payment_methods.update'),
+                'can_submit' => auth()->user()->can('business.payment_methods.submit'),
+            ],
         ], 'Business payment methods retrieved successfully.');
     }
 
     public function savePaymentMethods(Request $request, Business $business)
     {
-        $this->authorizePaymentSettings($business);
         $validated = $request->validate([
             'payment_timing' => ['nullable', Rule::in(['after_approval', 'after_served', 'anytime'])],
             'submit_for_verification' => ['sometimes', 'boolean'],
@@ -125,6 +130,10 @@ class BusinessPaymentController extends BaseController
             'methods.*.accounts.*.currency' => ['required', 'string', 'size:3'],
             'methods.*.accounts.*.is_default' => ['nullable', 'boolean'],
         ]);
+        $this->authorizePaymentPermission($business, 'business.payment_methods.update');
+        if (($validated['submit_for_verification'] ?? false) === true) {
+            $this->authorizePaymentPermission($business, 'business.payment_methods.submit');
+        }
 
         $business->loadMissing('district.city.country', 'paymentSetting');
         $countryId = $business->district?->city?->country_id;
@@ -505,10 +514,12 @@ class BusinessPaymentController extends BaseController
         abort_unless(in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager'], true), HTTP_FORBIDDEN, 'Only business management can manage payout information.');
     }
 
-    private function authorizePaymentSettings(Business $business): void
+    private function authorizePaymentPermission(Business $business, string $permission): string
     {
         $role = $this->authorizePaymentAccess($business, false);
-        abort_unless(in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager'], true), HTTP_FORBIDDEN, 'Only business management can manage payment settings.');
+        abort_unless(auth()->user()->can($permission), HTTP_FORBIDDEN, 'You do not have permission to manage business payment methods.');
+
+        return $role;
     }
 
     private function ensureOnlineSettlementUnavailable(): void

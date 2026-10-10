@@ -47,6 +47,9 @@ class RolePermissionSeeder extends Seeder
             'business-users.list',
             'business-user.assign',
             'business-user.revoke',
+            'business.payment_methods.view',
+            'business.payment_methods.update',
+            'business.payment_methods.submit',
 
             // manager
             'section.create',
@@ -146,6 +149,10 @@ class RolePermissionSeeder extends Seeder
             'business-users.list',
             'business-user.assign',
 
+            'business.payment_methods.view',
+            'business.payment_methods.update',
+            'business.payment_methods.submit',
+
             'section.create',
             'section.edit',
             'section.view',
@@ -182,6 +189,10 @@ class RolePermissionSeeder extends Seeder
             'business-users.list',
             'business-user.assign',
             'business-user.revoke',
+
+            'business.payment_methods.view',
+            'business.payment_methods.update',
+            'business.payment_methods.submit',
 
             'section.create',
             'section.edit',
