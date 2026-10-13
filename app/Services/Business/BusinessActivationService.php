@@ -80,8 +80,7 @@ class BusinessActivationService
         }
 
         if ($method->code === 'bank_transfer') {
-            return $configuration->accounts->isNotEmpty()
-                && $configuration->accounts->every(fn ($account): bool =>
+            return $configuration->accounts->contains(fn ($account): bool =>
                     $account->is_enabled
                     && $account->status === 'active'
                     && filled($account->bank_name)

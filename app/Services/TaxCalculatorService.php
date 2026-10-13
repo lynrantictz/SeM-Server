@@ -6,12 +6,14 @@ use App\Models\Location\Country;
 
 trait TaxCalculatorService
 {
-    public function calculateTax(Country $country, $total_items_amount)
+    public function calculateTax(Country $country, $total_items_amount, bool $taxAllowed = true)
     {
         $tax_id = NULL;
         $tax_amount = 0;
-        //check if there active tax
-        $tax = $country->taxes()->where('is_active', true)->first();
+        // Tax is applied only after the business is verified as VAT registered.
+        $tax = $taxAllowed
+            ? $country->taxes()->where('is_active', true)->first()
+            : null;
         if (!$tax) {
             $total_amount = $total_items_amount;
         } else {

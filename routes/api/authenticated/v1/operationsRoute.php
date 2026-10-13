@@ -26,6 +26,12 @@ Route::prefix('operations')->group(function (): void {
         Route::get('businesses/{uuid}/onboarding-payment/proof', [OperationsBusinessController::class, 'downloadOnboardingProof']);
         Route::patch('businesses/{uuid}/payment-setting', [OperationsBusinessController::class, 'updatePaymentSetting'])
             ->middleware('permission:operations.settlements.manage');
+        Route::post('businesses/{uuid}/payment-methods/{methodUuid}/review', [OperationsBusinessController::class, 'reviewPaymentMethod'])
+            ->middleware('permission:operations.settlements.manage');
+        Route::post('businesses/{uuid}/payment-methods/{methodUuid}/accounts/{accountUuid}/review', [OperationsBusinessController::class, 'reviewPaymentMethodAccount'])
+            ->middleware('permission:operations.settlements.manage');
+        Route::post('businesses/{uuid}/payment-methods/{methodUuid}/accounts/{accountUuid}/disable-review', [OperationsBusinessController::class, 'reviewPaymentMethodAccountDisable'])
+            ->middleware('permission:operations.settlements.manage');
         Route::post('businesses/{uuid}/payout-accounts', [OperationsBusinessController::class, 'storePayoutAccount'])
             ->middleware('permission:operations.settlements.manage');
         Route::put('businesses/{uuid}/payout-accounts/{accountUuid}', [OperationsBusinessController::class, 'updatePayoutAccount'])
@@ -35,6 +41,8 @@ Route::prefix('operations')->group(function (): void {
         Route::post('businesses/{uuid}/payout-accounts/{accountUuid}/default', [OperationsBusinessController::class, 'makeDefaultPayoutAccount'])
             ->middleware('permission:operations.settlements.manage');
         Route::get('businesses/{uuid}/payout-accounts/{accountUuid}/history', [OperationsBusinessController::class, 'payoutAccountHistory'])
+            ->middleware('permission:operations.settlements.view');
+        Route::get('businesses/{uuid}/payment-methods/{methodUuid}/accounts/{accountUuid}/history', [OperationsBusinessController::class, 'paymentMethodAccountHistory'])
             ->middleware('permission:operations.settlements.view');
         Route::post('businesses/{uuid}/payout-accounts/{accountUuid}/verification-document', [OperationsBusinessController::class, 'uploadPayoutVerificationDocument'])
             ->middleware('permission:operations.settlements.manage');

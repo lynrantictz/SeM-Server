@@ -127,7 +127,7 @@ class ComplianceDocumentController extends BaseController
             'An expiry date is required for this document type.'
         );
 
-        $taxDocumentTypes = ['vat_registration_certificate', 'tax_exemption_certificate'];
+        $taxDocumentTypes = ['vat_registration_certificate'];
         if ($scope === 'business' && in_array($validated['document_type'], $taxDocumentTypes, true)) {
             $oppositeTaxDocument = collect($taxDocumentTypes)
                 ->reject(fn (string $type): bool => $type === $validated['document_type'])
@@ -170,7 +170,10 @@ class ComplianceDocumentController extends BaseController
             ]);
 
             if ($scope === 'business' && in_array($definition['key'], $taxDocumentTypes, true)) {
-                $owner->update(['tax_status' => 'under_review']);
+                $owner->update([
+                    'tax_allowed' => false,
+                    'tax_status' => 'under_review',
+                ]);
             }
 
             return $document->load('documentType');

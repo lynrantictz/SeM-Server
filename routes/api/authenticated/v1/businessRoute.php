@@ -26,6 +26,8 @@ Route::group(['prefix' => 'businesses'], function () {
     Route::get('{business}/payment-providers', [BusinessPaymentController::class, 'providers']);
     Route::get('{business}/payment-methods', [BusinessPaymentController::class, 'paymentMethods']);
     Route::put('{business}/payment-methods', [BusinessPaymentController::class, 'savePaymentMethods']);
+    Route::post('{business}/payment-methods/{methodUuid}/accounts/{accountUuid}/disable-request', [BusinessPaymentController::class, 'requestPaymentMethodAccountDisable']);
+    Route::get('{business}/payment-methods/{methodUuid}/accounts/{accountUuid}/history', [BusinessPaymentController::class, 'paymentMethodAccountHistory']);
     Route::post('{business}/orders/{order}/mno-checkout', [BusinessPaymentController::class, 'checkout']);
     Route::get('{business}/orders', [BusinessOrderController::class, 'index']);
     Route::get('{business}/reports', [BusinessOrderController::class, 'reports']);

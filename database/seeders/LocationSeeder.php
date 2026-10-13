@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\Location\Country;
+use App\Models\Location\Tax;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Str;
@@ -357,6 +358,12 @@ class LocationSeeder extends Seeder
             $countryModel = Country::firstOrCreate(['name' => $country['name'], 'iso2' => $country['iso2'], 'iso3' => $country['iso3'], 'phone_code' => $country['phone_code']],
                 $input
             );
+            if ($country['iso2'] === 'TZ') {
+                Tax::query()->updateOrCreate(
+                    ['country_id' => $countryModel->id],
+                    ['percent' => 18, 'is_active' => true],
+                );
+            }
             foreach ($country['cities'] as $city) {
                 $cityModel = $countryModel->cities()->firstOrCreate(['name' => $city['name']]);
                 foreach ($city['districts'] as $district) {

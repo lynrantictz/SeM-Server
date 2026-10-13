@@ -19,9 +19,13 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use OwenIt\Auditing\Models\Audit;
 
 class BusinessPaymentController extends BaseController
 {
+    private const MOBILE_MONEY_CODES = ['mpesa_lipa_namba', 'mixx_merchant', 'airtel_money', 'halopesa', 'mobile_money'];
+    private const ACCOUNT_BASED_CODES = ['mpesa_lipa_namba', 'mixx_merchant', 'airtel_money', 'halopesa', 'mobile_money', 'pos_card'];
+
     public function __construct(
         private readonly PaymentCheckoutService $checkout,
         private readonly BusinessActivationService $activation,
@@ -79,10 +83,9 @@ class BusinessPaymentController extends BaseController
                 return false;
             }
 
-            if ($method->code === 'bank_transfer') {
-                    return $configuration->accounts->isNotEmpty()
-                    && $configuration->accounts->every(fn (BusinessPaymentMethodAccount $account) =>
-                        $account->is_enabled && $account->status === 'active' && filled($account->bank_name) && filled($account->account_number) && filled($account->account_holder_name)
+            if (in_array($method->code, ['bank_transfer', ...self::ACCOUNT_BASED_CODES], true)) {
+                return $configuration->accounts->contains(fn (BusinessPaymentMethodAccount $account) =>
+                        $account->is_enabled && $account->status === 'active' && filled($account->account_number) && filled($account->account_holder_name)
                     );
             }
 
@@ -123,7 +126,7 @@ class BusinessPaymentController extends BaseController
             'methods.*.account_holder_name' => ['nullable', 'string', 'max:160'],
             'methods.*.accounts' => ['nullable', 'array', 'max:20'],
             'methods.*.accounts.*.label' => ['nullable', 'string', 'max:120'],
-            'methods.*.accounts.*.bank_name' => ['required', 'string', 'max:160'],
+            'methods.*.accounts.*.bank_name' => ['nullable', 'string', 'max:160'],
             'methods.*.accounts.*.account_number' => ['required', 'string', 'max:160'],
             'methods.*.accounts.*.account_holder_name' => ['required', 'string', 'max:160'],
             'methods.*.accounts.*.branch_name' => ['nullable', 'string', 'max:160'],
@@ -148,12 +151,21 @@ class BusinessPaymentController extends BaseController
 
         foreach ($validated['methods'] as $methodInput) {
             $method = $catalog->get($methodInput['payment_method_id']);
-            if ($method->code === 'bank_transfer' && blank($methodInput['accounts'] ?? null)) {
-                abort(HTTP_UNPROCESSABLE_ENTITY, 'Bank Transfer requires at least one bank account.');
+            $accountBasedMethod = $method->code === 'bank_transfer' || in_array($method->code, self::ACCOUNT_BASED_CODES, true);
+            if ($accountBasedMethod && blank($methodInput['accounts'] ?? null)) {
+                abort(HTTP_UNPROCESSABLE_ENTITY, $method->code === 'bank_transfer' ? 'Bank Transfer requires at least one bank account.' : "{$method->name} requires at least one merchant account.");
             }
-            if (in_array($method->code, ['mpesa_lipa_namba', 'mixx_merchant', 'airtel_money'], true)
-                && blank($methodInput['account_holder_name'] ?? null)) {
-                abort(HTTP_UNPROCESSABLE_ENTITY, "{$method->name} requires the registered merchant name.");
+            if (in_array($method->code, self::MOBILE_MONEY_CODES, true)) {
+                foreach ($methodInput['accounts'] as $account) {
+                    abort_if(blank($account['account_number'] ?? null) || blank($account['account_holder_name'] ?? null), HTTP_UNPROCESSABLE_ENTITY, "{$method->name} requires a merchant number and registered merchant name.");
+                }
+                continue;
+            }
+            if ($method->code === 'pos_card') {
+                foreach ($methodInput['accounts'] as $account) {
+                    abort_if(blank($account['account_number'] ?? null) || blank($account['account_holder_name'] ?? null), HTTP_UNPROCESSABLE_ENTITY, 'POS/Card requires a terminal or merchant number and registered name.');
+                }
+                continue;
             }
             if ($method->requires_identifier && blank($methodInput['identifier'] ?? null)) {
                 if ($method->code === 'bank_transfer' && filled($methodInput['accounts'] ?? null)) {
@@ -183,18 +195,19 @@ class BusinessPaymentController extends BaseController
                     ],
                 );
 
-                if ($catalog->get($methodInput['payment_method_id'])->code === 'bank_transfer') {
+                $methodCode = $catalog->get($methodInput['payment_method_id'])->code;
+                if ($methodCode === 'bank_transfer' || in_array($methodCode, self::ACCOUNT_BASED_CODES, true)) {
                     $configuration->accounts()->delete();
                     $accounts = collect($methodInput['accounts'] ?? [])->values();
                     $defaultIndex = $accounts->search(fn (array $account) => (bool) ($account['is_default'] ?? false));
                     $defaultIndex = $defaultIndex === false ? 0 : $defaultIndex;
-                    $configuration->accounts()->createMany($accounts->map(function (array $account, int $accountIndex) use ($defaultIndex): array {
+                    $configuration->accounts()->createMany($accounts->map(function (array $account, int $accountIndex) use ($defaultIndex, $methodCode): array {
                         return [
-                            'label' => filled($account['label'] ?? null) ? trim($account['label']) : null,
-                            'bank_name' => trim($account['bank_name']),
+                            'label' => $methodCode === 'bank_transfer' && filled($account['label'] ?? null) ? trim($account['label']) : null,
+                            'bank_name' => $methodCode === 'bank_transfer' && filled($account['bank_name'] ?? null) ? trim($account['bank_name']) : null,
                             'account_number' => trim($account['account_number']),
                             'account_holder_name' => trim($account['account_holder_name']),
-                            'branch_name' => filled($account['branch_name'] ?? null) ? trim($account['branch_name']) : null,
+                            'branch_name' => $methodCode === 'bank_transfer' && filled($account['branch_name'] ?? null) ? trim($account['branch_name']) : null,
                             'currency' => strtoupper($account['currency']),
                             'status' => 'pending',
                             'is_default' => $accountIndex === $defaultIndex,
@@ -222,6 +235,73 @@ class BusinessPaymentController extends BaseController
         });
 
         return $this->paymentMethods($business->fresh());
+    }
+
+    public function requestPaymentMethodAccountDisable(Request $request, Business $business, string $methodUuid, string $accountUuid)
+    {
+        $this->authorizePaymentPermission($business, 'business.payment_methods.submit');
+
+        $configuration = $business->paymentMethods()
+            ->with(['paymentMethod', 'accounts'])
+            ->where('uuid', $methodUuid)
+            ->firstOrFail();
+
+        abort_unless($configuration->paymentMethod?->code === 'bank_transfer', HTTP_UNPROCESSABLE_ENTITY, 'Only Bank Transfer accounts can be disabled through this request.');
+        $account = $configuration->accounts->firstWhere('uuid', $accountUuid);
+        abort_unless($account, HTTP_NOT_FOUND, 'Bank account not found.');
+        abort_unless($configuration->is_enabled && $configuration->status === 'active' && $account->is_enabled && $account->status === 'active', HTTP_UNPROCESSABLE_ENTITY, 'Only an approved active bank account can be disabled.');
+
+        DB::transaction(function () use ($account): void {
+            $lockedAccount = BusinessPaymentMethodAccount::query()->lockForUpdate()->findOrFail($account->id);
+            abort_unless($lockedAccount->is_enabled && $lockedAccount->status === 'active', HTTP_UNPROCESSABLE_ENTITY, 'Only an approved active bank account can be disabled.');
+            $lockedAccount->update(['status' => 'disable_requested']);
+        });
+
+        return $this->paymentMethods($business->fresh());
+    }
+
+    public function paymentMethodAccountHistory(Business $business, string $methodUuid, string $accountUuid)
+    {
+        $this->authorizePaymentAccess($business, false);
+
+        $configuration = $business->paymentMethods()
+            ->with('paymentMethod')
+            ->where('uuid', $methodUuid)
+            ->firstOrFail();
+
+        abort_unless($configuration->paymentMethod?->code === 'bank_transfer', HTTP_UNPROCESSABLE_ENTITY, 'Only Bank Transfer accounts have an approval history.');
+
+        $account = $configuration->accounts()->where('uuid', $accountUuid)->firstOrFail();
+        $audits = Audit::query()
+            ->where('auditable_type', BusinessPaymentMethodAccount::class)
+            ->where('auditable_id', $account->getKey())
+            ->with('user:id,name,email')
+            ->latest()
+            ->paginate(25);
+
+        return $this->sendResponse([
+            'history' => $audits->through(fn (Audit $audit) => [
+                'id' => $audit->id,
+                'event' => $audit->event,
+                'user' => $audit->user ? [
+                    'id' => $audit->user->id,
+                    'name' => $audit->user->name,
+                    'email' => $audit->user->email,
+                ] : null,
+                'performed_by' => $audit->user ? [
+                    'id' => $audit->user->id,
+                    'name' => $audit->user->name,
+                    'email' => $audit->user->email,
+                ] : [
+                    'id' => null,
+                    'name' => 'System',
+                    'email' => null,
+                ],
+                'old_values' => $audit->old_values,
+                'new_values' => $audit->new_values,
+                'created_at' => $audit->created_at?->toIso8601String(),
+            ]),
+        ], 'Bank account history retrieved successfully.');
     }
 
     public function payoutSettings(Business $business)

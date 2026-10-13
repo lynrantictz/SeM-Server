@@ -634,7 +634,7 @@ class OrderController extends BaseController
                 'account_holder_name' => $configuration->account_holder_name,
                 'instructions' => $configuration->paymentMethod?->instructions,
                 'logo_path' => $configuration->paymentMethod?->logo_path,
-                'accounts' => $configuration->accounts->map(fn ($account) => [
+                'accounts' => $configuration->accounts->filter(fn ($account) => $account->is_enabled && $account->status === 'active')->map(fn ($account) => [
                     'label' => $account->label,
                     'bank_name' => $account->bank_name,
                     'account_number' => $account->account_number,

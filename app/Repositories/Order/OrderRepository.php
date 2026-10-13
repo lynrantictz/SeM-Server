@@ -75,7 +75,7 @@ class OrderRepository extends BaseRepository
             (new OrderItemRepository())->store($order, $inputs['items'], $channel);
             //calculate total amount
             $order_total_amount = $order->items()->sum('total_amount');
-            $taxCalculator = $this->calculateTax($business->district->city->country, $order_total_amount);
+            $taxCalculator = $this->calculateTax($business->district->city->country, $order_total_amount, (bool) $business->tax_allowed);
             /**
              * update tax details and amount
              * tax_id
@@ -149,7 +149,7 @@ class OrderRepository extends BaseRepository
 
     public function totalsFor(Business $business, float|int $itemsTotal): array
     {
-        return $this->calculateTax($business->district->city->country, $itemsTotal);
+        return $this->calculateTax($business->district->city->country, $itemsTotal, (bool) $business->tax_allowed);
     }
 
     private function statusId(string $name): int
