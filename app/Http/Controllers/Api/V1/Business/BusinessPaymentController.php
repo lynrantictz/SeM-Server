@@ -8,6 +8,7 @@ use App\Models\Business\BusinessUser;
 use App\Models\Business\BusinessPayoutAccount;
 use App\Models\Business\BusinessPaymentMethod;
 use App\Models\Business\BusinessPaymentMethodAccount;
+use App\Models\Business\BusinessPaymentSetting;
 use App\Models\Order\Order;
 use App\Models\Payment\MobileMoneyProvider;
 use App\Models\Payment\PaymentMethod;
@@ -19,6 +20,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use OwenIt\Auditing\Models\Audit;
 
 class BusinessPaymentController extends BaseController
@@ -97,6 +99,8 @@ class BusinessPaymentController extends BaseController
 
         return $this->sendResponse([
             'payment_timing' => $business->paymentSetting?->payment_timing ?? 'after_approval',
+            'payment_timing_updated_at' => $business->paymentSetting?->updated_at?->toIso8601String(),
+            'currencies' => $this->supportedCurrencies($business),
             'methods' => $catalog->map(fn (PaymentMethod $method) => $this->paymentMethodData($method, $configured->get($method->id)))->values(),
             'readiness' => [
                 'business_active' => $activation['business_enabled'],
@@ -237,6 +241,166 @@ class BusinessPaymentController extends BaseController
         return $this->paymentMethods($business->fresh());
     }
 
+    public function submitPaymentMethod(Request $request, Business $business)
+    {
+        $this->authorizePaymentPermission($business, 'business.payment_methods.update');
+        $this->authorizePaymentPermission($business, 'business.payment_methods.submit');
+
+        $business->loadMissing('district.city.country', 'paymentSetting');
+        $currencyCodes = collect($this->supportedCurrencies($business))->pluck('code')->all();
+
+        $validated = $request->validate([
+            'payment_method_id' => ['required', 'integer', Rule::exists('payment_methods', 'id')],
+            'account_uuid' => ['nullable', 'uuid'],
+            'identifier' => ['nullable', 'string', 'max:160'],
+            'bank_name' => ['nullable', 'string', 'max:160'],
+            'account_holder_name' => ['nullable', 'string', 'max:160'],
+            'account_number' => ['nullable', 'string', 'max:160'],
+            'currency' => ['nullable', 'string', Rule::in($currencyCodes)],
+            'label' => ['nullable', 'string', 'max:120'],
+            'branch_name' => ['nullable', 'string', 'max:160'],
+            'is_default' => ['nullable', 'boolean'],
+        ]);
+
+        $countryId = $business->district?->city?->country_id;
+        $method = PaymentMethod::query()
+            ->whereKey($validated['payment_method_id'])
+            ->where('is_active', true)
+            ->where(fn ($query) => $query->where('country_id', $countryId)->orWhereNull('country_id'))
+            ->firstOrFail();
+        $accountBased = $method->code === 'bank_transfer' || in_array($method->code, self::ACCOUNT_BASED_CODES, true);
+
+        if ($accountBased) {
+            $request->validate([
+                'account_number' => ['required', 'string', 'max:160'],
+                'account_holder_name' => ['required', 'string', 'max:160'],
+                'currency' => ['required', 'string', Rule::in($currencyCodes)],
+            ]);
+            if ($method->code === 'bank_transfer') {
+                $request->validate(['bank_name' => ['required', 'string', 'max:160']]);
+            }
+        } elseif ($method->requires_identifier) {
+            $request->validate(['identifier' => ['required', 'string', 'max:160']]);
+        }
+
+        DB::transaction(function () use ($business, $method, $validated, $accountBased): void {
+            $configuration = $business->paymentMethods()->updateOrCreate(
+                ['payment_method_id' => $method->id],
+                [
+                    'identifier' => $accountBased ? null : (filled($validated['identifier'] ?? null) ? trim($validated['identifier']) : null),
+                    'bank_name' => $method->code === 'bank_transfer' ? trim((string) ($validated['bank_name'] ?? '')) : null,
+                    'account_holder_name' => $accountBased ? null : (filled($validated['account_holder_name'] ?? null) ? trim($validated['account_holder_name']) : null),
+                    'status' => 'pending',
+                    'is_enabled' => true,
+                    'rejection_reason' => null,
+                ],
+            );
+
+            if ($accountBased) {
+                $accountNumber = trim((string) $validated['account_number']);
+                if (in_array($method->code, [...self::MOBILE_MONEY_CODES, 'pos_card'], true)) {
+                    $this->ensureUniqueDirectPaymentNumber(
+                        $business,
+                        $accountNumber,
+                        $validated['account_uuid'] ?? null,
+                    );
+                }
+
+                $accountValues = [
+                    'label' => $method->code === 'bank_transfer' ? ($validated['label'] ?? null) : null,
+                    'bank_name' => $method->code === 'bank_transfer' ? trim((string) ($validated['bank_name'] ?? '')) : null,
+                    'account_number' => $accountNumber,
+                    'account_holder_name' => trim((string) $validated['account_holder_name']),
+                    'branch_name' => $method->code === 'bank_transfer' ? ($validated['branch_name'] ?? null) : null,
+                    'currency' => strtoupper((string) $validated['currency']),
+                    'status' => 'pending',
+                    'is_enabled' => true,
+                    'is_default' => (bool) ($validated['is_default'] ?? false),
+                ];
+                $account = filled($validated['account_uuid'] ?? null)
+                    ? $configuration->accounts()->where('uuid', $validated['account_uuid'])->firstOrFail()
+                    : $configuration->accounts()->create($accountValues);
+                if (filled($validated['account_uuid'] ?? null)) {
+                    $account->update($accountValues);
+                }
+                if ($accountValues['is_default']) {
+                    $configuration->accounts()->whereKeyNot($account->id)->update(['is_default' => false]);
+                }
+            }
+        });
+
+        return $this->paymentMethods($business->fresh());
+    }
+
+    private function ensureUniqueDirectPaymentNumber(Business $business, string $accountNumber, ?string $accountUuid = null): void
+    {
+        $normalized = strtolower(trim($accountNumber));
+        $duplicate = BusinessPaymentMethodAccount::query()
+            ->whereRaw('LOWER(TRIM(account_number)) = ?', [$normalized])
+            ->whereNotIn('status', ['rejected', 'disabled'])
+            ->whereHas('businessPaymentMethod', fn ($query) => $query->where('business_id', $business->id))
+            ->when($accountUuid, fn ($query) => $query->where('uuid', '!=', $accountUuid))
+            ->exists();
+
+        if ($duplicate) {
+            throw ValidationException::withMessages([
+                'account_number' => 'This payment number has already been submitted for this business.',
+            ]);
+        }
+    }
+
+    public function updatePaymentTiming(Request $request, Business $business)
+    {
+        $this->authorizePaymentPermission($business, 'business.payment_methods.update');
+        $validated = $request->validate(['payment_timing' => ['required', Rule::in(['after_approval', 'after_served', 'anytime'])]]);
+
+        DB::transaction(fn () => $business->paymentSetting()->updateOrCreate(
+            ['business_id' => $business->id],
+            [
+                'provider' => $business->paymentSetting?->provider ?? 'manual',
+                'currency' => $business->paymentSetting?->currency ?? 'TZS',
+                'commission_rate' => $business->paymentSetting?->commission_rate ?? SystemSetting::valueFor('payments.default_commission_rate'),
+                'commission_basis' => $business->paymentSetting?->commission_basis ?? 'subtotal_excluding_tax',
+                'fee_bearer' => $business->paymentSetting?->fee_bearer ?? 'business',
+                'settlement_mode' => $business->paymentSetting?->settlement_mode ?? 'manual_hold',
+                'payment_timing' => $validated['payment_timing'],
+            ],
+        ));
+
+        return $this->paymentMethods($business->fresh());
+    }
+
+    public function paymentTimingHistory(Business $business)
+    {
+        $this->authorizePaymentAccess($business, false);
+        $setting = $business->paymentSetting()->first();
+        if (! $setting) {
+            return $this->sendResponse(['history' => []], 'Payment timing history retrieved successfully.');
+        }
+
+        $audits = Audit::query()
+            ->where('auditable_type', BusinessPaymentSetting::class)
+            ->where('auditable_id', $setting->getKey())
+            ->with('user:id,name,email')
+            ->latest()
+            ->paginate(25);
+
+        return $this->sendResponse([
+            'history' => $audits->through(fn (Audit $audit) => [
+                'id' => $audit->id,
+                'event' => $audit->event,
+                'performed_by' => $audit->user ? [
+                    'id' => $audit->user->id,
+                    'name' => $audit->user->name,
+                    'email' => $audit->user->email,
+                ] : ['id' => null, 'name' => 'System', 'email' => null],
+                'old_values' => $audit->old_values,
+                'new_values' => $audit->new_values,
+                'created_at' => $audit->created_at?->toIso8601String(),
+            ]),
+        ], 'Payment timing history retrieved successfully.');
+    }
+
     public function requestPaymentMethodAccountDisable(Request $request, Business $business, string $methodUuid, string $accountUuid)
     {
         $this->authorizePaymentPermission($business, 'business.payment_methods.submit');
@@ -246,14 +410,14 @@ class BusinessPaymentController extends BaseController
             ->where('uuid', $methodUuid)
             ->firstOrFail();
 
-        abort_unless($configuration->paymentMethod?->code === 'bank_transfer', HTTP_UNPROCESSABLE_ENTITY, 'Only Bank Transfer accounts can be disabled through this request.');
+        abort_unless($this->supportsAccountHistory($configuration->paymentMethod?->code), HTTP_UNPROCESSABLE_ENTITY, 'This payment method does not have an individual account history.');
         $account = $configuration->accounts->firstWhere('uuid', $accountUuid);
-        abort_unless($account, HTTP_NOT_FOUND, 'Bank account not found.');
-        abort_unless($configuration->is_enabled && $configuration->status === 'active' && $account->is_enabled && $account->status === 'active', HTTP_UNPROCESSABLE_ENTITY, 'Only an approved active bank account can be disabled.');
+        abort_unless($account, HTTP_NOT_FOUND, 'Payment account not found.');
+        abort_unless($configuration->is_enabled && $configuration->status === 'active' && $account->is_enabled && $account->status === 'active', HTTP_UNPROCESSABLE_ENTITY, 'Only an approved active payment account can be disabled.');
 
         DB::transaction(function () use ($account): void {
             $lockedAccount = BusinessPaymentMethodAccount::query()->lockForUpdate()->findOrFail($account->id);
-            abort_unless($lockedAccount->is_enabled && $lockedAccount->status === 'active', HTTP_UNPROCESSABLE_ENTITY, 'Only an approved active bank account can be disabled.');
+            abort_unless($lockedAccount->is_enabled && $lockedAccount->status === 'active', HTTP_UNPROCESSABLE_ENTITY, 'Only an approved active payment account can be disabled.');
             $lockedAccount->update(['status' => 'disable_requested']);
         });
 
@@ -269,7 +433,7 @@ class BusinessPaymentController extends BaseController
             ->where('uuid', $methodUuid)
             ->firstOrFail();
 
-        abort_unless($configuration->paymentMethod?->code === 'bank_transfer', HTTP_UNPROCESSABLE_ENTITY, 'Only Bank Transfer accounts have an approval history.');
+        abort_unless($this->supportsAccountHistory($configuration->paymentMethod?->code), HTTP_UNPROCESSABLE_ENTITY, 'This payment method does not have an individual account history.');
 
         $account = $configuration->accounts()->where('uuid', $accountUuid)->firstOrFail();
         $audits = Audit::query()
@@ -660,5 +824,25 @@ class BusinessPaymentController extends BaseController
                 ])->values() : [],
             ] : null,
         ];
+    }
+
+    private function supportedCurrencies(Business $business): array
+    {
+        $countryCode = strtoupper((string) ($business->district?->city?->country?->iso2 ?? ''));
+        $currencies = config("payments.supported_currencies.{$countryCode}", config('payments.supported_currencies.*', []));
+
+        return collect($currencies)
+            ->map(fn (array $currency) => [
+                'code' => strtoupper($currency['code']),
+                'name' => $currency['name'],
+            ])
+            ->values()
+            ->all();
+    }
+
+    private function supportsAccountHistory(?string $methodCode): bool
+    {
+        return $methodCode === 'bank_transfer'
+            || in_array($methodCode, self::ACCOUNT_BASED_CODES, true);
     }
 }

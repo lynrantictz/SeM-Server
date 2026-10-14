@@ -3,6 +3,17 @@
 return [
     'payment_link_lifetime_hours' => (int) env('PAYMENT_LINK_LIFETIME_HOURS', 24),
     'customer_payment_link_send_limit' => (int) env('CUSTOMER_PAYMENT_LINK_SEND_LIMIT', 2),
+    // Currency choices are controlled by the API. Add or remove currencies here
+    // as Paperstic expands into supported markets.
+    'supported_currencies' => [
+        'TZ' => [
+            ['code' => 'TZS', 'name' => 'Tanzanian Shilling'],
+            ['code' => 'USD', 'name' => 'US Dollar'],
+        ],
+        '*' => [
+            ['code' => 'USD', 'name' => 'US Dollar'],
+        ],
+    ],
     'azampay' => [
         'environment' => env('AZAMPAY_ENV', 'sandbox'),
         'base_url' => env('AZAMPAY_SANDBOX_BASEURL') ?: 'https://sandbox.azampay.co.tz',
