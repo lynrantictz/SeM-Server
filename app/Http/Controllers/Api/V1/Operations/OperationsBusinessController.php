@@ -258,12 +258,13 @@ class OperationsBusinessController extends BaseController
             ->where('uuid', $methodUuid)
             ->firstOrFail();
 
-        abort_unless($configuration->paymentMethod?->code === 'bank_transfer', HTTP_UNPROCESSABLE_ENTITY, 'This review action is only available for bank-transfer accounts.');
+        $methodCode = $configuration->paymentMethod?->code;
+        abort_unless($this->supportsIndividualPaymentAccountReview($methodCode), HTTP_UNPROCESSABLE_ENTITY, 'This review action is only available for individual payment accounts.');
         $account = $configuration->accounts->firstWhere('uuid', $accountUuid);
-        abort_unless($account, HTTP_NOT_FOUND, 'Bank account not found.');
+        abort_unless($account, HTTP_NOT_FOUND, 'Payment account not found.');
 
         if ($validated['decision'] === 'approved') {
-            abort_unless($this->bankAccountIsComplete($account), HTTP_UNPROCESSABLE_ENTITY, 'This bank account is incomplete and cannot be approved.');
+            abort_unless($this->paymentAccountIsComplete($methodCode, $account), HTTP_UNPROCESSABLE_ENTITY, 'This payment account is incomplete and cannot be approved.');
         }
 
         DB::transaction(function () use ($configuration, $account, $validated, $request): void {
@@ -272,7 +273,7 @@ class OperationsBusinessController extends BaseController
                 ->lockForUpdate()
                 ->findOrFail($configuration->id);
             $lockedAccount = $lockedConfiguration->accounts->firstWhere('uuid', $account->uuid);
-            abort_unless($lockedAccount, HTTP_NOT_FOUND, 'Bank account not found.');
+            abort_unless($lockedAccount, HTTP_NOT_FOUND, 'Payment account not found.');
 
             $approved = $validated['decision'] === 'approved';
             $lockedAccount->update([
@@ -280,7 +281,7 @@ class OperationsBusinessController extends BaseController
             ]);
 
             $accounts = $lockedConfiguration->accounts->map(fn (BusinessPaymentMethodAccount $item) => $item->id === $lockedAccount->id ? $lockedAccount->fresh() : $item);
-            $hasActiveAccount = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $this->bankAccountIsComplete($item) && $item->is_enabled && $item->status === 'active');
+            $hasActiveAccount = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $this->paymentAccountIsComplete($lockedConfiguration->paymentMethod?->code, $item) && $item->is_enabled && $item->status === 'active');
             $hasPendingAccount = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $item->is_enabled && $item->status === 'pending');
             $status = $hasActiveAccount ? 'active' : ($hasPendingAccount ? 'pending' : 'needs_update');
 
@@ -295,8 +296,8 @@ class OperationsBusinessController extends BaseController
         return $this->sendResponse([
             'payment_method' => $this->businessPaymentMethodData($configuration->fresh(['paymentMethod', 'verifiedBy:id,name', 'accounts'])),
         ], $validated['decision'] === 'approved'
-            ? 'Bank account approved successfully.'
-            : 'Bank account returned to the business for correction.');
+            ? 'Payment account approved successfully.'
+            : 'Payment account returned to the business for correction.');
     }
 
     public function reviewPaymentMethodAccountDisable(Request $request, string $uuid, string $methodUuid, string $accountUuid): JsonResponse
@@ -308,20 +309,20 @@ class OperationsBusinessController extends BaseController
 
         $business = Business::query()->where('uuid', $uuid)->firstOrFail();
         $configuration = $business->paymentMethods()->with(['paymentMethod', 'accounts'])->where('uuid', $methodUuid)->firstOrFail();
-        abort_unless($configuration->paymentMethod?->code === 'bank_transfer', HTTP_UNPROCESSABLE_ENTITY, 'Only bank-transfer accounts can be reviewed here.');
+        abort_unless($this->supportsIndividualPaymentAccountReview($configuration->paymentMethod?->code), HTTP_UNPROCESSABLE_ENTITY, 'Only individual payment accounts can be reviewed here.');
         $account = $configuration->accounts->firstWhere('uuid', $accountUuid);
-        abort_unless($account, HTTP_NOT_FOUND, 'Bank account not found.');
+        abort_unless($account, HTTP_NOT_FOUND, 'Payment account not found.');
         abort_unless(
             ($validated['decision'] === 'reactivated' && $account->status === 'disabled')
             || ($validated['decision'] !== 'reactivated' && $account->status === 'disable_requested'),
             HTTP_UNPROCESSABLE_ENTITY,
-            $validated['decision'] === 'reactivated' ? 'Only a disabled bank account can be reactivated.' : 'This bank account has no pending disable request.',
+            $validated['decision'] === 'reactivated' ? 'Only a disabled payment account can be reactivated.' : 'This payment account has no pending disable request.',
         );
 
         DB::transaction(function () use ($configuration, $validated, $accountUuid): void {
             $lockedConfiguration = BusinessPaymentMethod::query()->with(['paymentMethod', 'accounts'])->lockForUpdate()->findOrFail($configuration->id);
             $lockedAccount = $lockedConfiguration->accounts->firstWhere('uuid', $accountUuid);
-            abort_unless($lockedAccount, HTTP_NOT_FOUND, 'Bank account not found.');
+            abort_unless($lockedAccount, HTTP_NOT_FOUND, 'Payment account not found.');
             $approved = $validated['decision'] === 'approved';
             $reactivated = $validated['decision'] === 'reactivated';
             $lockedAccount->update([
@@ -329,7 +330,7 @@ class OperationsBusinessController extends BaseController
                 'is_enabled' => $reactivated || ! $approved,
             ]);
             $accounts = $lockedConfiguration->accounts->map(fn (BusinessPaymentMethodAccount $item) => $item->id === $lockedAccount->id ? $lockedAccount->fresh() : $item);
-            $hasActiveAccount = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $this->bankAccountIsComplete($item) && $item->is_enabled && $item->status === 'active');
+            $hasActiveAccount = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $this->paymentAccountIsComplete($lockedConfiguration->paymentMethod?->code, $item) && $item->is_enabled && $item->status === 'active');
             $hasPendingAccount = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $item->is_enabled && in_array($item->status, ['pending', 'disable_requested'], true));
             $hasEnabledAccount = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $item->is_enabled);
             $status = $hasActiveAccount ? 'active' : ($hasPendingAccount ? 'pending' : ($hasEnabledAccount ? 'needs_update' : 'disabled'));
@@ -341,9 +342,9 @@ class OperationsBusinessController extends BaseController
         });
 
         return $this->sendResponse([], match ($validated['decision']) {
-            'approved' => 'Bank account disabled successfully.',
-            'reactivated' => 'Bank account reactivated successfully.',
-            default => 'Bank account remains active.',
+            'approved' => 'Payment account disabled successfully.',
+            'reactivated' => 'Payment account reactivated successfully.',
+            default => 'Payment account remains active.',
         });
     }
 
@@ -555,7 +556,7 @@ class OperationsBusinessController extends BaseController
     {
         $business = Business::query()->where('uuid', $uuid)->firstOrFail();
         $configuration = $business->paymentMethods()->with('paymentMethod')->where('uuid', $methodUuid)->firstOrFail();
-        abort_unless($configuration->paymentMethod?->code === 'bank_transfer', HTTP_UNPROCESSABLE_ENTITY, 'Only Bank Transfer accounts have an approval history.');
+        abort_unless($this->supportsIndividualPaymentAccountReview($configuration->paymentMethod?->code), HTTP_UNPROCESSABLE_ENTITY, 'This payment method does not have an individual account history.');
         $account = $configuration->accounts()->where('uuid', $accountUuid)->firstOrFail();
         $audits = Audit::query()
             ->where('auditable_type', BusinessPaymentMethodAccount::class)
@@ -1306,10 +1307,21 @@ class OperationsBusinessController extends BaseController
 
     private function bankAccountIsComplete(BusinessPaymentMethodAccount $account): bool
     {
-        return filled($account->bank_name)
+        return $this->paymentAccountIsComplete('bank_transfer', $account);
+    }
+
+    private function paymentAccountIsComplete(?string $methodCode, BusinessPaymentMethodAccount $account): bool
+    {
+        return ($methodCode !== 'bank_transfer' || filled($account->bank_name))
             && filled($account->account_number)
             && filled($account->account_holder_name)
             && filled($account->currency);
+    }
+
+    private function supportsIndividualPaymentAccountReview(?string $methodCode): bool
+    {
+        return $methodCode === 'bank_transfer'
+            || in_array($methodCode, ['mpesa_lipa_namba', 'mixx_merchant', 'airtel_money', 'halopesa', 'mobile_money', 'pos_card'], true);
     }
 
     private function documentRequirements(Business $business, $documents): array
