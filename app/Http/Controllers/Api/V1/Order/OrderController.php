@@ -621,7 +621,13 @@ class OrderController extends BaseController
         $methods = $order->business->paymentMethods()
             ->with(['paymentMethod', 'accounts'])
             ->where('is_enabled', true)
-            ->where('status', 'active')
+            ->where(function ($query): void {
+                $query->where('status', 'active')
+                    ->orWhereHas('accounts', fn ($accounts) => $accounts
+                        ->where('is_enabled', true)
+                        ->where('status', 'active')
+                    );
+            })
             ->orderBy('sort_order')
             ->when(! $activationStatus['manual_payment_ready'], fn ($query) => $query->whereRaw('1 = 0'))
             ->get()

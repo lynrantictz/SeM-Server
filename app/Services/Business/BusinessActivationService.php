@@ -46,7 +46,9 @@ class BusinessActivationService
             ->filter(fn (BusinessPaymentMethod $configuration): bool =>
                 $configuration->is_enabled && $configuration->status === 'active'
             );
-        $completeMethods = $configuredMethods->filter(
+        $completeMethods = $business->paymentMethods
+            ->filter(fn (BusinessPaymentMethod $configuration): bool => $configuration->is_enabled)
+            ->filter(
             fn (BusinessPaymentMethod $configuration): bool => $this->paymentMethodIsComplete($configuration)
         );
         $paymentMethodsApproved = $completeMethods->isNotEmpty();
@@ -79,17 +81,22 @@ class BusinessActivationService
             return false;
         }
 
-        if ($method->code === 'bank_transfer') {
+        if ($configuration->status === 'disabled') {
+            return false;
+        }
+
+        if ($configuration->accounts->isNotEmpty()) {
             return $configuration->accounts->contains(fn ($account): bool =>
                     $account->is_enabled
                     && $account->status === 'active'
-                    && filled($account->bank_name)
+                    && ($method->code !== 'bank_transfer' || filled($account->bank_name))
                     && filled($account->account_number)
                     && filled($account->account_holder_name)
                 );
         }
 
-        return ! $method->requires_identifier || filled($configuration->identifier);
+        return $configuration->status === 'active'
+            && (! $method->requires_identifier || filled($configuration->identifier));
     }
 
     private function requiredDocumentTypes(Business $business)

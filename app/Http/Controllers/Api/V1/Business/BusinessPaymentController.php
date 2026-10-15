@@ -93,6 +93,13 @@ class BusinessPaymentController extends BaseController
 
             return ! $method->requires_identifier || filled($configuration->identifier);
         });
+        $activePaymentAccounts = $configured->filter(fn (BusinessPaymentMethod $configuration) =>
+            $configuration->is_enabled && $configuration->status !== 'disabled'
+        )->sum(fn (BusinessPaymentMethod $configuration) =>
+            $configuration->accounts->filter(fn (BusinessPaymentMethodAccount $account) =>
+                $account->is_enabled && $account->status === 'active' && filled($account->account_number) && filled($account->account_holder_name)
+            )->count()
+        );
         $manualPaymentReady = $activation['manual_payment_ready']
             && $configuredMethods->isNotEmpty()
             && $completeMethods->count() === $configuredMethods->count();
@@ -108,6 +115,7 @@ class BusinessPaymentController extends BaseController
                 'payment_methods_approved' => $activation['payment_methods_approved'],
                 'methods_configured' => $configuredMethods->count(),
                 'methods_complete' => $completeMethods->count(),
+                'active_payment_accounts' => $activePaymentAccounts,
                 'ready_for_manual_payments' => $manualPaymentReady,
                 'online_checkout_available' => $activation['online_checkout_ready'],
             ],
