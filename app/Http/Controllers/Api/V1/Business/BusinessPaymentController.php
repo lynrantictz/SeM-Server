@@ -807,6 +807,7 @@ class BusinessPaymentController extends BaseController
                 'bank_name' => $configuration->bank_name,
                 'account_holder_name' => $configuration->account_holder_name,
                 'status' => $configuration->status,
+                'rejection_reason' => $configuration->rejection_reason,
                 'is_enabled' => (bool) $configuration->is_enabled,
                 'sort_order' => $configuration->sort_order,
                 'accounts' => $configuration->relationLoaded('accounts') ? $configuration->accounts->map(fn (BusinessPaymentMethodAccount $account) => [

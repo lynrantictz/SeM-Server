@@ -337,7 +337,10 @@ class OperationsBusinessController extends BaseController
             $lockedConfiguration->update([
                 'status' => $status,
                 'is_enabled' => $hasEnabledAccount,
-                'rejection_reason' => $approved || $reactivated ? null : ($validated['reason'] ?? null),
+                // A disable-review decision belongs to the individual account
+                // and its audit trail, not to the payment method's correction
+                // message shown to every account in the group.
+                'rejection_reason' => null,
             ]);
         });
 
@@ -1266,7 +1269,9 @@ class OperationsBusinessController extends BaseController
             'is_enabled' => (bool) $configuration->is_enabled,
             'verified_at' => $configuration->verified_at?->toIso8601String(),
             'verified_by' => $configuration->verifiedBy?->name,
-            'rejection_reason' => $configuration->rejection_reason,
+            'rejection_reason' => $configuration->rejection_reason && ! preg_match('/account will remain active/i', $configuration->rejection_reason)
+                ? $configuration->rejection_reason
+                : null,
             'accounts' => ($accounts ?? $configuration->accounts)->map(fn (BusinessPaymentMethodAccount $account) => [
                     'uuid' => $account->uuid,
                     'label' => $account->label,
