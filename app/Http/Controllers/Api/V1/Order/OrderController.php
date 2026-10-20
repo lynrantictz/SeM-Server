@@ -32,7 +32,9 @@ use App\Services\Business\BusinessActivationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Validator;
@@ -53,8 +55,7 @@ class OrderController extends BaseController
         CustomerRepository $customers,
         private readonly GuestOrderSessionService $guestSessions,
         private readonly GuestCustomerSessionService $guestCustomerSessions,
-    )
-    {
+    ) {
         $this->orders = $orders;
         $this->customers = $customers;
     }
@@ -73,6 +74,50 @@ class OrderController extends BaseController
     public function create()
     {
         //
+    }
+
+    /**
+     * Issue a short-lived, one-time checkout intent before a guest can request
+     * a WhatsApp verification code. This gives the server a trusted checkout
+     * boundary without relying on browser-only checks or an external bot service.
+     */
+    public function createCheckoutIntent(Request $request)
+    {
+        $validated = $request->validate([
+            'code' => ['required', 'string', 'max:255'],
+            'channel' => ['sometimes', 'string', 'max:24'],
+        ]);
+        $channel = $validated['channel'] ?? 'dine_in';
+        $code = Code::query()
+            ->with('codable.business')
+            ->whereCode($validated['code'])
+            ->first();
+
+        if (!$code) {
+            return $this->sendError('code not found', [], HTTP_NOT_FOUND);
+        }
+        if (!in_array($channel, OrderingChannel::activeSlugs(), true)) {
+            return $this->sendError('The ordering channel is invalid.', ['channel' => $channel], HTTP_UNPROCESSABLE_ENTITY);
+        }
+        if ($reason = $this->checkoutUnavailableReason($code, $channel)) {
+            return $this->sendError($reason, [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $intent = Str::random(96);
+        Cache::put(
+            $this->checkoutIntentCacheKey($intent),
+            [
+                'code_id' => (int) $code->id,
+                'channel' => $channel,
+                'ip' => $request->ip(),
+            ],
+            now()->addMinutes(10),
+        );
+
+        return $this->sendResponse([
+            'intent' => $intent,
+            'expires_at' => now()->addMinutes(10),
+        ], 'Checkout intent created.', HTTP_OK);
     }
 
     /**
@@ -137,22 +182,72 @@ class OrderController extends BaseController
             return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
         }
 
+        // Honeypot: real customers never see or fill this field.
+        if ($request->filled('company_website')) {
+            return $this->sendError('Checkout could not be started. Please try again.', [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        // Do not create duplicate verification records when a customer double-clicks
+        // or retries while the previous code is still active.
+        $activeCheckout = OrderCheckoutVerification::query()
+            ->where('code_id', $code->id)
+            ->where('phone', $phone)
+            ->whereNull('order_id')
+            ->whereNull('verified_at')
+            ->where('created_at', '>=', now()->subMinutes(self::CHECKOUT_SESSION_MINUTES))
+            ->latest('id')
+            ->first();
+
+        if ($activeCheckout) {
+            return $this->sendResponse([
+                'verification' => [
+                    'uuid' => $activeCheckout->uuid,
+                    'expires_at' => $activeCheckout->expires_at,
+                    'session_expires_at' => $activeCheckout->created_at->copy()->addMinutes(self::CHECKOUT_SESSION_MINUTES),
+                    'resend_available_at' => ($activeCheckout->code_sent_at ?? $activeCheckout->created_at)->copy()->addSeconds(20),
+                ],
+            ], 'A verification code is already active. Enter the latest code or wait to request another one.', HTTP_OK);
+        }
+
+        $rateLimitKeys = $this->checkoutRateLimitKeys($request, $phone, (int) $code->codable->business->id);
+        foreach ($rateLimitKeys as $key => $decaySeconds) {
+            if (RateLimiter::tooManyAttempts($key, $this->checkoutRateLimitMaxAttempts($key))) {
+                $retryAfter = max(1, RateLimiter::availableIn($key));
+                return $this->sendError(
+                    "Too many checkout attempts. Please try again in {$retryAfter} seconds.",
+                    ['retry_after' => $retryAfter],
+                    429,
+                );
+            }
+        }
+
+        // The intent is single-use and bound to this QR code, channel and IP.
+        $intent = Cache::pull($this->checkoutIntentCacheKey((string) $request->input('checkout_intent')));
+        if (!is_array($intent)
+            || (int) ($intent['code_id'] ?? 0) !== (int) $code->id
+            || ($intent['channel'] ?? null) !== $channel
+            || ($intent['ip'] ?? null) !== $request->ip()) {
+            return $this->sendError('Your checkout session expired. Please continue again.', [], 419);
+        }
+
         if (! $this->canDeliverCheckoutVerification()) {
             return $this->sendError('Phone verification delivery is not configured. The order was not created.', [], 503);
         }
 
         $otp = (string) random_int(1000, 9999);
+
+        Log::info('Order checkout verification code (local testing only)', ['otp' => $otp]);
         $checkout = DB::transaction(function () use ($code, $channel, $phone, $request, $otp) {
             $record = OrderCheckoutVerification::query()->create([
                 'code_id' => $code->id,
                 'channel' => $channel,
                 'phone' => $phone,
                 'checkout_payload' => [
-                    'items' => collect($request->input('items'))->map(fn (array $item) => [
+                    'items' => collect($request->input('items'))->map(fn(array $item) => [
                         'uuid' => $item['uuid'],
                         'quantity' => $item['quantity'],
                         'comment' => $item['comment'] ?? null,
-                        'options' => collect($item['options'] ?? [])->map(fn ($option) => [
+                        'options' => collect($item['options'] ?? [])->map(fn($option) => [
                             'uuid' => is_array($option) ? $option['uuid'] : $option,
                         ])->values()->all(),
                     ])->values()->all(),
@@ -164,11 +259,15 @@ class OrderController extends BaseController
                 'expires_at' => now()->addMinutes(self::CHECKOUT_CODE_MINUTES),
             ]);
 
-            DB::afterCommit(fn () => SendOrderCheckoutVerificationWhatsApp::dispatch($record->uuid, $otp, 1)
+            DB::afterCommit(fn() => SendOrderCheckoutVerificationWhatsApp::dispatch($record->uuid, $otp, 1)
                 ->onQueue(config('whatsapp.queue')));
 
             return $record;
         });
+
+        foreach ($rateLimitKeys as $key => $decaySeconds) {
+            RateLimiter::hit($key, $decaySeconds);
+        }
 
         return $this->sendResponse([
             'verification' => [
@@ -177,6 +276,32 @@ class OrderController extends BaseController
                 'session_expires_at' => $checkout->created_at->copy()->addMinutes(self::CHECKOUT_SESSION_MINUTES),
             ],
         ], 'Verification code is being sent to your WhatsApp number.', HTTP_OK);
+    }
+
+    private function checkoutIntentCacheKey(string $intent): string
+    {
+        return 'checkout-intent:' . hash('sha256', $intent);
+    }
+
+    /** @return array<string, int> */
+    private function checkoutRateLimitKeys(Request $request, string $phone, int $businessId): array
+    {
+        $ipHash = hash('sha256', (string) $request->ip());
+        $phoneHash = hash('sha256', $phone . '|' . $businessId);
+
+        return [
+            'checkout-start:ip:' . $ipHash => 600,
+            'checkout-start:phone:' . $phoneHash => 900,
+            'checkout-start:daily-ip:' . $ipHash => 86400,
+            'checkout-start:daily-phone:' . hash('sha256', $phone) => 86400,
+        ];
+    }
+
+    private function checkoutRateLimitMaxAttempts(string $key): int
+    {
+        return str_contains($key, ':daily-')
+            ? 20
+            : (str_contains($key, ':phone:') ? 3 : 5);
     }
 
     public function confirmCheckoutVerification(PhoneVerifyRequest $request, string $uuid)
@@ -291,19 +416,19 @@ class OrderController extends BaseController
         }
 
         $statuses = OrderStatus::query()->get(['id', 'name']);
-        $statusNameById = $statuses->mapWithKeys(fn ($status) => [(string) $status->id => $status->name]);
+        $statusNameById = $statuses->mapWithKeys(fn($status) => [(string) $status->id => $status->name]);
         $activeStatusIds = $statuses
             ->whereIn('name', ['Pending', 'Processing'])
-            ->map(fn ($status) => (string) $status->id)
+            ->map(fn($status) => (string) $status->id)
             ->values()
             ->all();
         $terminalStatusIds = $statuses
             ->whereIn('name', ['Cancelled', 'Refunded'])
-            ->map(fn ($status) => (string) $status->id)
+            ->map(fn($status) => (string) $status->id)
             ->values()
             ->all();
         $paymentStatuses = PaymentStatus::query()->get(['id', 'name']);
-        $paymentStatusNameById = $paymentStatuses->mapWithKeys(fn ($status) => [(string) $status->id => $status->name]);
+        $paymentStatusNameById = $paymentStatuses->mapWithKeys(fn($status) => [(string) $status->id => $status->name]);
         $pendingPaymentStatusId = $paymentStatuses->firstWhere('name', 'Pending')?->id;
 
         $orders = Order::query()
@@ -324,7 +449,7 @@ class OrderController extends BaseController
             ->latest('created_at')
             ->limit(10)
             ->get()
-            ->map(fn (Order $order) => [
+            ->map(fn(Order $order) => [
                 'uuid' => $order->uuid,
                 'number' => $order->number,
                 'status' => $statusNameById[(string) $order->order_status_id] ?? 'Pending',
@@ -332,7 +457,7 @@ class OrderController extends BaseController
                 'total_amount' => $order->total_amount,
                 'currency' => $business->currency ?? 'TZS',
                 'created_at' => $order->created_at,
-                'items' => $order->items->map(fn ($item) => [
+                'items' => $order->items->map(fn($item) => [
                     'name' => $item->item?->name ?? 'Menu item',
                     'quantity' => $item->quantity,
                 ])->values(),
@@ -442,7 +567,10 @@ class OrderController extends BaseController
                 return ['error' => "Please wait {$seconds} seconds before requesting another code.", 'status' => 429];
             }
             if ($checkout->resend_count >= 3) {
-                return ['error' => 'You have reached the resend limit. Please start checkout again later.', 'status' => 429];
+                return [
+                    'error' => 'We have sent the maximum number of codes for this verification session. Enter the latest code, or choose a different phone number to start again.',
+                    'status' => 429,
+                ];
             }
 
             $otp = (string) random_int(1000, 9999);
@@ -462,7 +590,7 @@ class OrderController extends BaseController
                 'whatsapp_failure_reason' => null,
             ])->save();
 
-            DB::afterCommit(fn () => SendOrderCheckoutVerificationWhatsApp::dispatch($checkout->uuid, $otp, $sendVersion)
+            DB::afterCommit(fn() => SendOrderCheckoutVerificationWhatsApp::dispatch($checkout->uuid, $otp, $sendVersion)
                 ->onQueue(config('whatsapp.queue')));
 
             return ['checkout' => $checkout];
@@ -623,15 +751,17 @@ class OrderController extends BaseController
             ->where('is_enabled', true)
             ->where(function ($query): void {
                 $query->where('status', 'active')
-                    ->orWhereHas('accounts', fn ($accounts) => $accounts
-                        ->where('is_enabled', true)
-                        ->where('status', 'active')
+                    ->orWhereHas(
+                        'accounts',
+                        fn($accounts) => $accounts
+                            ->where('is_enabled', true)
+                            ->where('status', 'active')
                     );
             })
             ->orderBy('sort_order')
-            ->when(! $activationStatus['manual_payment_ready'], fn ($query) => $query->whereRaw('1 = 0'))
+            ->when(! $activationStatus['manual_payment_ready'], fn($query) => $query->whereRaw('1 = 0'))
             ->get()
-            ->map(fn ($configuration) => [
+            ->map(fn($configuration) => [
                 'code' => $configuration->paymentMethod?->code,
                 'name' => $configuration->paymentMethod?->name,
                 'identifier_label' => $configuration->paymentMethod?->identifier_label,
@@ -640,7 +770,7 @@ class OrderController extends BaseController
                 'account_holder_name' => $configuration->account_holder_name,
                 'instructions' => $configuration->paymentMethod?->instructions,
                 'logo_path' => $configuration->paymentMethod?->logo_path,
-                'accounts' => $configuration->accounts->filter(fn ($account) => $account->is_enabled && $account->status === 'active')->map(fn ($account) => [
+                'accounts' => $configuration->accounts->filter(fn($account) => $account->is_enabled && $account->status === 'active')->map(fn($account) => [
                     'label' => $account->label,
                     'bank_name' => $account->bank_name,
                     'account_number' => $account->account_number,
@@ -823,7 +953,7 @@ class OrderController extends BaseController
             ->get();
 
         // The matching phone is the lookup credential, not response data.
-        $orders->each(fn (Order $order) => $order->customer?->makeHidden(['phone']));
+        $orders->each(fn(Order $order) => $order->customer?->makeHidden(['phone']));
 
         return $this->sendResponse($orders, 'Orders retrieved successfully', HTTP_OK);
     }
@@ -897,7 +1027,8 @@ class OrderController extends BaseController
             if (OrderFeedback::query()
                 ->where('order_id', $lockedOrder->id)
                 ->where('type', $validated['type'])
-                ->exists()) {
+                ->exists()
+            ) {
                 return ['error' => 'Feedback for this part of your order has already been submitted.', 'status' => Response::HTTP_CONFLICT];
             }
 

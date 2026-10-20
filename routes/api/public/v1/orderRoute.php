@@ -11,13 +11,14 @@ Route::post('order-history/verification/confirm', [OrderController::class, 'veri
 Route::get('phone/{phone}/verify', [OrderController::class, 'getOrdersByPhone']);
 
 Route::group(['prefix' => 'orders'], function () {
+   Route::post('checkout-intents', [OrderController::class, 'createCheckoutIntent'])->middleware('throttle:30,1');
    Route::post('', [OrderController::class, 'store'])->middleware('throttle:5,1');
    Route::get('guest-session', [OrderController::class, 'guestSession'])->middleware('throttle:30,1');
    Route::delete('guest-session', [OrderController::class, 'forgetGuestSession'])->middleware('throttle:10,1');
    Route::post('active', [OrderController::class, 'activeGuestOrders'])->middleware('throttle:30,1');
    Route::get('checkout-verifications/{uuid}', [OrderController::class, 'resumeCheckoutVerification'])->middleware('throttle:10,1');
    Route::post('checkout-verifications/{uuid}/confirm', [OrderController::class, 'confirmCheckoutVerification'])->middleware('throttle:10,1');
-   Route::post('checkout-verifications/{uuid}/resend', [OrderController::class, 'resendCheckoutVerification'])->middleware('throttle:3,1');
+   Route::post('checkout-verifications/{uuid}/resend', [OrderController::class, 'resendCheckoutVerification'])->middleware('throttle:6,1');
    Route::get('{number}/payment-methods', [OrderController::class, 'paymentMethods']);
    Route::get('{number}', [OrderController::class, 'show']);
    Route::put('{order}/verify-phone', [OrderController::class, 'verifyPhone']);

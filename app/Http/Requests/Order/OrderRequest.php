@@ -38,6 +38,8 @@ class OrderRequest extends FormRequest
                         },
                     ],
                     'guest_session' => ['nullable', 'string', 'max:160'],
+                    'checkout_intent' => ['nullable', 'string', 'max:160'],
+                    'company_website' => ['nullable', 'string', 'max:255'],
                     'items' => ['required', 'array', 'min:1'],
                     'channel' => ['sometimes', 'string', 'max:24'],
                     'items.*.uuid' => ['required', 'uuid'],
