@@ -7,10 +7,11 @@ use App\Http\Controllers\Api\V1\Business\Concerns\AuthorizesVendorDirectories;
 use App\Http\Requests\Api\V1\Business\BusinessRequest;
 use App\Models\Business\Business;
 use App\Models\Business\Vendor;
+use App\Models\SystemSetting;
 use App\Repositories\Business\BusinessRepository;
 use App\Services\Business\BusinessActivationService;
-use App\Models\SystemSetting;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 class BusinessController extends BaseController
@@ -22,8 +23,7 @@ class BusinessController extends BaseController
     public function __construct(
         BusinessRepository $businesses,
         private readonly BusinessActivationService $activation,
-    )
-    {
+    ) {
         $this->businesses = $businesses;
     }
 
@@ -60,6 +60,7 @@ class BusinessController extends BaseController
     {
         $this->canManageBusiness($vendor, null, true);
         $data['business'] = $this->businesses->store($vendor, $request->all());
+
         return $this->sendResponse(
             $data,
             'Business created successfully.',
@@ -103,6 +104,7 @@ class BusinessController extends BaseController
         $this->canManageBusiness($business->vendor, $business);
         $this->businesses->update($business, $request->all());
         $data['business'] = $business->fresh()->load('contacts');
+
         return $this->sendResponse(
             $data,
             'Business updated successfully.',
@@ -112,6 +114,7 @@ class BusinessController extends BaseController
     public function logo(Business $business)
     {
         $this->businesses->getQuery()->whereKey($business->id)->firstOrFail();
+
         return $this->logoResponse($business);
     }
 
@@ -124,13 +127,15 @@ class BusinessController extends BaseController
     private function logoResponse(Business $business)
     {
         $business->refresh();
-        abort_unless($business->logo_path && $business->logo_disk, HTTP_NOT_FOUND, 'This business has not uploaded a logo.');
-        abort_unless(Storage::disk($business->logo_disk)->exists($business->logo_path), HTTP_NOT_FOUND, 'The business logo file is unavailable.');
+        [$disk, $path, $mimeType] = [$business->logo_disk, $business->logo_path, $business->logo_mime_type];
 
-        return Storage::disk($business->logo_disk)->response(
-            $business->logo_path,
+        abort_unless($path && $disk, HTTP_NOT_FOUND, 'This business has not uploaded a logo.');
+        abort_unless(Storage::disk($disk)->exists($path), HTTP_NOT_FOUND, 'The business logo file is unavailable.');
+
+        return Storage::disk($disk)->response(
+            $path,
             null,
-            ['Content-Type' => $business->logo_mime_type ?? 'image/png']
+            ['Content-Type' => $mimeType ?? 'image/png']
         );
     }
 
@@ -138,26 +143,36 @@ class BusinessController extends BaseController
     {
         $this->canManageBusiness($business->vendor, $business);
         $validated = $request->validate([
-            'logo' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            'logo' => [
+                'required',
+                'image',
+                'mimes:jpg,jpeg,png,webp',
+                'max:2048',
+                'dimensions:width=512,height=512',
+            ],
         ]);
 
         $file = $validated['logo'];
         $oldDisk = $business->logo_disk;
         $oldPath = $business->logo_path;
         $path = $file->store("business-logos/{$business->uuid}", 'public');
-        $business->update([
-            'logo_disk' => 'public',
-            'logo_path' => $path,
-            'logo_mime_type' => $file->getMimeType() ?: 'image/png',
-            'logo_updated_at' => now(),
-        ]);
+        $updatedBusiness = DB::transaction(function () use ($business, $file, $path) {
+            $business->update([
+                'logo_disk' => 'public',
+                'logo_path' => $path,
+                'logo_mime_type' => $file->getMimeType() ?: 'image/png',
+                'logo_updated_at' => now(),
+            ]);
+
+            return $business->fresh();
+        });
 
         if ($oldDisk && $oldPath) {
             Storage::disk($oldDisk)->delete($oldPath);
         }
 
         return $this->sendResponse([
-            'business' => $business->fresh(),
+            'business' => $updatedBusiness,
         ], 'Business logo updated successfully.');
     }
 
@@ -184,7 +199,7 @@ class BusinessController extends BaseController
             return;
         }
 
-        abort_if($creating || !$business || !auth()->user()->businesses()->whereKey($business->id)->where('vendor_id', $vendor->id)->exists(), HTTP_FORBIDDEN, 'You only have access to selected businesses.');
+        abort_if($creating || ! $business || ! auth()->user()->businesses()->whereKey($business->id)->where('vendor_id', $vendor->id)->exists(), HTTP_FORBIDDEN, 'You only have access to selected businesses.');
     }
 
     private function businessPaginatorData($paginator): array

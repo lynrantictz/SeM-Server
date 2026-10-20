@@ -15,7 +15,7 @@ class Business extends BaseModel
 
     public function getLogoUrlAttribute(): ?string
     {
-        if (!$this->logo_path) {
+        if (! $this->logo_path) {
             return null;
         }
 
