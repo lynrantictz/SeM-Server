@@ -59,7 +59,7 @@ class BusinessController extends BaseController
     public function store(BusinessRequest $request, Vendor $vendor)
     {
         $this->canManageBusiness($vendor, null, true);
-        $data['business'] = $this->businesses->store($vendor, $request->all());
+        $data['business'] = $this->businesses->store($vendor, $request->validated());
 
         return $this->sendResponse(
             $data,
@@ -102,7 +102,7 @@ class BusinessController extends BaseController
     public function update(BusinessRequest $request, Business $business)
     {
         $this->canManageBusiness($business->vendor, $business);
-        $this->businesses->update($business, $request->all());
+        $this->businesses->update($business, $request->validated());
         $data['business'] = $business->fresh()->load('contacts');
 
         return $this->sendResponse(

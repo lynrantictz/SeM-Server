@@ -61,6 +61,7 @@ class CategoryController extends BaseController
             return $this->sendError('This business is not currently accepting orders.', [], HTTP_NOT_FOUND);
         }
         $business = $code->codable->business;
+        $country = $business->district?->city?->country;
         $activation = app(BusinessActivationService::class)->status($business);
         if (! $activation['manual_payment_ready']) {
             return $this->sendError('This business is not currently ready to accept guest orders.', [
@@ -111,6 +112,23 @@ class CategoryController extends BaseController
         $data['menu'] = $menu;
         $data['menu_status'] = $businessStatus;
         $data['channel'] = $channel;
+        $vat = $business->tax_allowed && $business->tax_status === 'vat_registered'
+            ? $country?->taxes()
+                ->where('is_active', true)
+                ->where(function ($query): void {
+                    $query->whereNull('effective_from')->orWhere('effective_from', '<=', now());
+                })
+                ->where(function ($query): void {
+                    $query->whereNull('effective_until')->orWhere('effective_until', '>', now());
+                })
+                ->orderByDesc('effective_from')
+                ->first()
+            : null;
+        $data['pricing'] = [
+            'currency' => $country?->currency,
+            'vat_applicable' => $vat !== null,
+            'vat_rate' => $vat?->percent !== null ? (float) $vat->percent : null,
+        ];
 
         return $this->sendResponse($data, 'Menu retrieved successfully', HTTP_OK);
     }

@@ -19,6 +19,8 @@ Route::prefix('operations')->group(function (): void {
         Route::get('businesses/{uuid}/orders', [OperationsBusinessController::class, 'orders']);
         Route::patch('businesses/{uuid}/status', [OperationsBusinessController::class, 'updateStatus'])
             ->middleware('permission:operations.businesses.manage');
+        Route::patch('businesses/{uuid}/tax-status', [OperationsBusinessController::class, 'updateTaxStatus'])
+            ->middleware('permission:operations.kyc.approve');
         Route::patch('businesses/{uuid}/onboarding-payment', [OperationsBusinessController::class, 'updateOnboardingPayment'])
             ->middleware('permission:operations.businesses.manage');
         Route::post('businesses/{uuid}/onboarding-payment/proof', [OperationsBusinessController::class, 'uploadOnboardingProof'])

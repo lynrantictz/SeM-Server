@@ -45,7 +45,7 @@ class OperationsBusinessController extends BaseController
 
         $businessQuery = Business::query()
             ->select(['id', 'uuid', 'name', 'vendor_id', 'business_type_id', 'tin', 'location', 'district_id', 'is_active', 'created_at'])
-            ->with(['vendor:id,name', 'type:id,name', 'district:id,name,city_id', 'district.city:id,name,country_id', 'district.city.country:id,name,iso2'])
+            ->with(['vendor:id,name', 'type:id,name', 'district:id,name,city_id', 'district.city:id,name,country_id', 'district.city.country:id,name,iso2', 'district.city.country.taxes:id,country_id,percent,is_active,effective_from,effective_until'])
             ->withCount('complianceDocuments')
             ->withCount(['complianceDocuments as pending_documents_count' => fn ($query) => $query->whereIn('status', ['pending', 'in_review', 'needs_review'])])
             ->when(!empty($filters['search']), function ($query) use ($filters): void {
@@ -96,6 +96,7 @@ class OperationsBusinessController extends BaseController
                 'district:id,name,city_id',
                 'district.city:id,name,country_id',
                 'district.city.country:id,name,iso2',
+                'district.city.country.taxes:id,country_id,percent,is_active,effective_from,effective_until',
                 'timezoneDefinition:id,identifier,name',
                 'contacts:id,business_id,contact,is_active',
                 'orderingChannels:id,slug,name',
@@ -937,9 +938,55 @@ class OperationsBusinessController extends BaseController
         });
 
         return $this->sendResponse([
-            'business' => $this->businessData($business->fresh()->load(['vendor:id,name', 'type:id,name', 'district.city.country', 'contacts:id,business_id,contact,is_active'])),
+            'business' => $this->businessData($business->fresh()->load(['vendor:id,name', 'type:id,name', 'district.city.country.taxes:id,country_id,percent,is_active,effective_from,effective_until', 'contacts:id,business_id,contact,is_active'])),
             'activation' => $this->activation->status($business),
         ], $validated['is_active'] ? 'Business activated successfully.' : 'Business suspended successfully.');
+    }
+
+    public function updateTaxStatus(Request $request, string $uuid): JsonResponse
+    {
+        $validated = $request->validate([
+            'tax_status' => ['required', 'in:vat_registered,not_registered,under_review'],
+        ]);
+
+        $business = Business::query()->where('uuid', $uuid)->firstOrFail();
+        $taxStatus = $validated['tax_status'];
+        $hasApprovedVatCertificate = $business->complianceDocuments()
+            ->where('document_type', 'vat_registration_certificate')
+            ->where('status', 'approved')
+            ->where(function ($query): void {
+                $query->whereNull('expires_at')->orWhere('expires_at', '>', now());
+            })
+            ->exists();
+
+        abort_unless(
+            $taxStatus !== 'vat_registered' || $hasApprovedVatCertificate,
+            HTTP_UNPROCESSABLE_ENTITY,
+            'An approved and valid Certificate of registration for VAT is required before this status can be enabled.',
+        );
+        abort_if(
+            $taxStatus !== 'vat_registered' && $hasApprovedVatCertificate,
+            HTTP_UNPROCESSABLE_ENTITY,
+            'Return or update the approved VAT certificate before changing this business away from VAT registered.',
+        );
+
+        DB::transaction(function () use ($business, $taxStatus): void {
+            $business->update([
+                'tax_allowed' => $taxStatus === 'vat_registered',
+                'tax_status' => $taxStatus,
+            ]);
+        });
+
+        $business = $business->fresh()->load([
+            'vendor:id,name',
+            'type:id,name',
+            'district.city.country.taxes:id,country_id,percent,is_active,effective_from,effective_until',
+            'contacts:id,business_id,contact,is_active',
+        ]);
+
+        return $this->sendResponse([
+            'business' => $this->businessData($business),
+        ], 'Business tax status updated successfully.');
     }
 
     private function businessData(Business $business, ?\Illuminate\Support\Collection $paymentMethodAccounts = null): array
@@ -965,6 +1012,14 @@ class OperationsBusinessController extends BaseController
             'current_order_number' => $business->current_order_number,
             'tax_allowed' => (bool) $business->tax_allowed,
             'tax_status' => $business->tax_status ?: 'not_registered',
+            'vat_rate' => $business->district?->city?->country?->relationLoaded('taxes')
+                ? $business->district->city->country->taxes
+                    ->filter(fn ($tax) => $tax->is_active
+                        && (!$tax->effective_from || $tax->effective_from->lte(now()))
+                        && (!$tax->effective_until || $tax->effective_until->gt(now())))
+                    ->sortByDesc('effective_from')
+                    ->first()?->percent
+                : null,
             'timezone' => $business->timezoneDefinition?->identifier ?: $business->timezone,
             'district' => $business->district?->name,
             'city' => $business->district?->city?->name,
@@ -1079,6 +1134,7 @@ class OperationsBusinessController extends BaseController
             ] : null,
             'items_count' => (int) $order->items_count,
             'total_items_amount' => (float) ($order->total_items_amount ?? 0),
+            'tax_rate' => $order->tax_rate !== null ? (float) $order->tax_rate : null,
             'tax_amount' => (float) ($order->tax_amount ?? 0),
             'total_amount' => (float) ($order->total_amount ?? 0),
             'paid_amount' => (float) ($order->paid_amount ?? 0),

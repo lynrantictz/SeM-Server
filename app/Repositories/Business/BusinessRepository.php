@@ -108,6 +108,7 @@ class BusinessRepository extends BaseRepository
     public function store(Vendor $vendor, array $inputs)
     {
         return DB::transaction(function () use ($vendor, $inputs) {
+            $inputs = Arr::except($inputs, ['contacts', 'timezone', 'tax_allowed', 'tax_status']);
             // Orders and staff login codes use deliberately separate namespaces.
             $inputs['order_prefix'] = $this->prefixService->generate($inputs['name']);
             $inputs['code_prefix'] = $this->staffCodePrefixService->generate($inputs['name']);
@@ -115,7 +116,7 @@ class BusinessRepository extends BaseRepository
                 ->where('identifier', $inputs['timezone'] ?? 'UTC')
                 ->value('id') ?: Timezone::query()->where('identifier', 'UTC')->value('id');
 
-            $business = $vendor->businesses()->create(Arr::except($inputs, ['contacts', 'timezone']));
+            $business = $vendor->businesses()->create($inputs);
 
             // Store the rate that was active when the business was registered.
             // Operations can override this business-specific value later.
@@ -142,7 +143,7 @@ class BusinessRepository extends BaseRepository
     public function update(Business $business, array $inputs)
     {
         return DB::transaction(function () use ($business, $inputs) {
-            $business->update(Arr::except($inputs, ['contacts']));
+            $business->update(Arr::except($inputs, ['contacts', 'tax_allowed', 'tax_status']));
             if (array_key_exists('contacts', $inputs)) {
                 $business->contacts()->delete();
                 $business->contacts()->createMany($this->normalizeContacts($inputs['contacts'], $business->district_id));

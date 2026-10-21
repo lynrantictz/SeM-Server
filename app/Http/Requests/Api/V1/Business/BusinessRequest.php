@@ -32,7 +32,6 @@ class BusinessRequest extends FormRequest
                     'location' => 'required',
                     'latitude' => 'nullable|numeric|between:-90,90',
                     'longitude' => 'nullable|numeric|between:-180,180',
-                    'tax_allowed' => 'required',
                     'contacts' => 'required|array|min:1',
                     'contacts.*.contact' => 'required|string|distinct|unique:business_contacts,contact',
                 ];
@@ -45,7 +44,6 @@ class BusinessRequest extends FormRequest
                     'location' => 'required',
                     'latitude' => 'nullable|numeric|between:-90,90',
                     'longitude' => 'nullable|numeric|between:-180,180',
-                    'tax_allowed' => 'required|boolean',
                     'contacts' => 'required|array|min:1',
                     'contacts.*.contact' => 'required|string|distinct',
                 ];
