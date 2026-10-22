@@ -292,8 +292,11 @@ class OrderController extends BaseController
         return [
             'checkout-start:ip:' . $ipHash => 600,
             'checkout-start:phone:' . $phoneHash => 900,
-            'checkout-start:daily-ip:' . $ipHash => 86400,
-            'checkout-start:daily-phone:' . hash('sha256', $phone) => 86400,
+            // Keep the daily protection tied to the business as well. A customer
+            // should not be blocked at every business after testing or ordering
+            // at one location, and a shared restaurant Wi-Fi must not block all
+            // customers through one daily IP bucket.
+            'checkout-start:daily-phone:' . $phoneHash => 86400,
         ];
     }
 

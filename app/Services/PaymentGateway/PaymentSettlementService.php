@@ -128,8 +128,9 @@ class PaymentSettlementService
         ?string $reference,
         int $confirmedByUserId,
         string $confirmationSource = 'staff_manual',
+        ?string $paymentAccountUuid = null,
     ): Payment {
-        return DB::transaction(function () use ($order, $paymentMethodId, $amount, $reference, $confirmedByUserId, $confirmationSource): Payment {
+        return DB::transaction(function () use ($order, $paymentMethodId, $amount, $reference, $confirmedByUserId, $confirmationSource, $paymentAccountUuid): Payment {
             $lockedOrder = Order::query()->lockForUpdate()->findOrFail($order->id);
             $due = (float) ($lockedOrder->due_amount ?: $lockedOrder->total_amount);
             if ($amount <= 0 || abs($amount - $due) > 0.01) {
@@ -153,7 +154,11 @@ class PaymentSettlementService
                 'confirmed_at' => now(),
                 'confirmation_source' => $confirmationSource,
                 'confirmed_by_user_id' => $confirmedByUserId,
-                'metadata' => ['mode' => 'manual', 'payment_method_id' => $paymentMethodId],
+                'metadata' => [
+                    'mode' => 'manual',
+                    'payment_method_id' => $paymentMethodId,
+                    'payment_account_uuid' => $paymentAccountUuid,
+                ],
             ]);
 
             $this->completeOrderPayment($payment, $paymentMethodId);

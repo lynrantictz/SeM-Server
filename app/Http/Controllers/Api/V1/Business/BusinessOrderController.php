@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\BaseController;
 use App\Models\Auth\User;
 use App\Models\Business\Business;
 use App\Models\Business\BusinessUser;
+use App\Models\Business\BusinessPaymentMethod;
 use App\Models\Menu\Category;
 use App\Models\Menu\Item;
 use App\Models\Order\Order;
@@ -73,12 +74,16 @@ class BusinessOrderController extends BaseController
         $orders = (clone $baseQuery)
             ->with([
                 'status:id,name',
+                'business:id',
+                'business.paymentSetting:business_id,currency',
+                'business.paymentMethods:id,uuid,business_id,payment_method_id',
+                'business.paymentMethods.accounts:id,uuid,business_payment_method_id,label,bank_name,account_number,account_holder_name,currency',
                 'customer:id,phone,phone_e164',
                 'approver:id,name',
                 'assignee:id,name',
                 'paymentStatus:id,name',
                 'paymentMethod:id,name',
-                'payment:payments.id,payments.order_id,payments.provider,payments.status,payments.expires_at,payments.confirmation_source,payments.confirmed_by_user_id,payments.confirmed_at',
+                'payment:payments.id,payments.order_id,payments.provider,payments.status,payments.expires_at,payments.confirmation_source,payments.confirmed_by_user_id,payments.confirmed_at,payments.metadata',
                 'payment.confirmedBy:id,name',
                 'servicePoint:id,type,label,display_name,section_id,sub_section_id',
                 'servicePoint.section:id,name',
@@ -108,10 +113,44 @@ class BusinessOrderController extends BaseController
             'role' => $role,
             'default_tab' => $this->defaultTab($role),
             'counts' => $counts,
-            'payment_methods' => PaymentMethod::query()->orderBy('name')->get(['id', 'name'])->map(fn (PaymentMethod $method) => [
-                'id' => $method->id,
-                'name' => $method->name,
-            ])->values(),
+            'payment_methods' => $business->paymentMethods()
+                ->with(['paymentMethod', 'accounts'])
+                ->where('is_enabled', true)
+                ->where('status', 'active')
+                ->get()
+                ->filter(fn (BusinessPaymentMethod $configuration) =>
+                    $configuration->paymentMethod
+                    && ($configuration->accounts->isEmpty()
+                        || $configuration->accounts->contains(fn ($account) =>
+                            $account->is_enabled && $account->status === 'active'
+                        ))
+                )
+                ->flatMap(function (BusinessPaymentMethod $configuration) {
+                    $method = $configuration->paymentMethod;
+                    $accounts = $configuration->accounts
+                        ->filter(fn ($account) => $account->is_enabled && $account->status === 'active')
+                        ->values();
+
+                    if ($accounts->isEmpty()) {
+                        return [[
+                            'id' => $method->id,
+                            'name' => $method->name,
+                            'account_uuid' => null,
+                            'account_details' => null,
+                        ]];
+                    }
+
+                    return $accounts->map(fn ($account) => [
+                        'id' => $method->id,
+                        'name' => $method->name,
+                        'account_uuid' => $account->uuid,
+                        'account_details' => collect([$account->bank_name, $account->label, $account->account_number, $account->currency])
+                            ->filter(fn ($value) => filled($value))
+                            ->implode(' · '),
+                    ])->all();
+                })
+                ->sortBy('name')
+                ->values(),
             'orders' => [
                 'data' => collect($orders->items())->map(fn (Order $order) => $this->orderData($order))->values(),
                 'meta' => [
@@ -273,6 +312,7 @@ class BusinessOrderController extends BaseController
             'action' => ['required', Rule::in(['approve', 'reject', 'ready', 'serve', 'mark_paid', 'confirm_cash', 'complete'])],
             'reason' => ['required_if:action,reject', 'nullable', 'string', 'max:500'],
             'payment_method_id' => ['nullable', 'integer', Rule::exists('payment_methods', 'id')],
+            'payment_account_uuid' => ['nullable', 'uuid'],
             'payment_amount' => ['nullable', 'numeric', 'min:0'],
             'payment_reference' => ['nullable', 'string', 'max:160'],
         ]);
@@ -294,13 +334,18 @@ class BusinessOrderController extends BaseController
                 'reject' => ['Pending', 'Cancelled'],
                 'ready' => ['Processing', 'Ready'],
                 'serve' => ['Ready', 'Served'],
-                'mark_paid' => ['Served', 'Served'],
+                'mark_paid' => [$current->name, $current->name],
                 'confirm_cash' => ['Served', 'Served'],
                 'complete' => ['Served', 'Completed'],
             };
 
             abort_unless($this->canPerform($role, $validated['action'], $record->channel), HTTP_FORBIDDEN,
                 'Your role cannot perform this action for this order.');
+            if ($validated['action'] === 'mark_paid') {
+                abort_unless(in_array($current->name, ['Processing', 'Ready', 'Served'], true),
+                    Response::HTTP_CONFLICT,
+                    'Payment can only be verified while the order is being prepared, ready to serve, or awaiting payment.');
+            }
             abort_unless($current->name === $transition[0], Response::HTTP_CONFLICT,
                 'This order has already changed. Refresh the queue and try again.');
 
@@ -328,6 +373,25 @@ class BusinessOrderController extends BaseController
                 if (! $paymentMethodId) {
                     $paymentMethodId = PaymentMethod::query()->firstOrCreate(['name' => 'Cash'])->id;
                 }
+                if ($validated['action'] === 'mark_paid') {
+                    $configuration = $business->paymentMethods()
+                        ->with('accounts')
+                        ->where('payment_method_id', $paymentMethodId)
+                        ->where('is_enabled', true)
+                        ->where('status', 'active')
+                        ->first();
+                    abort_unless($configuration && ($configuration->accounts->isEmpty()
+                        || $configuration->accounts->contains(fn ($account) => $account->is_enabled && $account->status === 'active')),
+                        Response::HTTP_UNPROCESSABLE_ENTITY,
+                        'Select an active payment method configured for this business.');
+                    if (! empty($validated['payment_account_uuid'])) {
+                        abort_unless($configuration->accounts->contains(fn ($account) =>
+                            $account->uuid === $validated['payment_account_uuid']
+                            && $account->is_enabled
+                            && $account->status === 'active'
+                        ), Response::HTTP_UNPROCESSABLE_ENTITY, 'Select an active payment account configured for this business.');
+                    }
+                }
                 $settlement->recordManualPayment(
                     $record,
                     (int) $paymentMethodId,
@@ -335,6 +399,7 @@ class BusinessOrderController extends BaseController
                     $validated['payment_reference'] ?? null,
                     (int) auth()->id(),
                     $validated['action'] === 'confirm_cash' ? 'staff_cash' : 'staff_manual',
+                    $validated['payment_account_uuid'] ?? null,
                 );
             }
             $record->save();
@@ -359,13 +424,16 @@ class BusinessOrderController extends BaseController
 
             return $record->fresh()->load([
                 'status:id,name', 'customer:id,phone,phone_e164', 'approver:id,name', 'assignee:id,name', 'paymentStatus:id,name', 'paymentMethod:id,name',
-                'payment:payments.id,payments.order_id,payments.provider,payments.status,payments.expires_at,payments.confirmation_source,payments.confirmed_by_user_id,payments.confirmed_at', 'payment.confirmedBy:id,name',
+                'payment:payments.id,payments.order_id,payments.provider,payments.status,payments.expires_at,payments.confirmation_source,payments.confirmed_by_user_id,payments.confirmed_at,payments.metadata', 'payment.confirmedBy:id,name',
                 'servicePoint:id,type,label,display_name,section_id,sub_section_id',
                 'servicePoint.section:id,name', 'servicePoint.subSection:id,name',
                 'items:id,order_id,item_id,quantity,unit_price,final_price,total_amount,comment',
                 'items.item:id,uuid,name', 'items.options:id,order_item_id,name,price_adjustment',
                 'items.options.itemOption:id,uuid',
                 'statusHistories.fromStatus:id,name', 'statusHistories.toStatus:id,name',
+                'business:id', 'business.paymentSetting:business_id,currency',
+                'business.paymentMethods:id,uuid,business_id,payment_method_id',
+                'business.paymentMethods.accounts:id,uuid,business_payment_method_id,label,bank_name,account_number,account_holder_name,currency',
                 'statusHistories.changedBy:id,name',
                 'staffNotes.author:id,name', 'workLock.user:id,name',
             ]);
@@ -392,8 +460,8 @@ class BusinessOrderController extends BaseController
             ->with(['status', 'paymentStatus'])
             ->firstOrFail();
 
-        abort_unless($record->status?->name === 'Served', HTTP_UNPROCESSABLE_ENTITY, 'Only served orders can be presented for payment.');
-        abort_unless($record->paymentStatus?->name === 'Pending', HTTP_UNPROCESSABLE_ENTITY, 'Payment has already been recorded for this order.');
+        abort_unless(in_array($record->status?->name, ['Processing', 'Ready', 'Served'], true), HTTP_UNPROCESSABLE_ENTITY, 'Only accepted, ready, or served orders can be presented for payment.');
+        abort_unless(in_array($record->paymentStatus?->name, ['Pending', 'Completed'], true), HTTP_UNPROCESSABLE_ENTITY, 'This order is not available for a customer receipt.');
 
         $paymentSession = $guestSessions->issueForOrder($record, 120);
         $url = rtrim((string) config('paperstick.client_url'), '/') . "/orders/{$record->number}?payment_session=" . rawurlencode($paymentSession['access_token']);
@@ -619,11 +687,14 @@ class BusinessOrderController extends BaseController
     {
         return $order->fresh()->load([
             'status:id,name', 'customer:id,phone,phone_e164', 'approver:id,name', 'assignee:id,name', 'paymentStatus:id,name', 'paymentMethod:id,name',
-            'payment:payments.id,payments.order_id,payments.provider,payments.status,payments.expires_at,payments.confirmation_source,payments.confirmed_by_user_id,payments.confirmed_at', 'payment.confirmedBy:id,name',
+                'payment:payments.id,payments.order_id,payments.provider,payments.status,payments.expires_at,payments.confirmation_source,payments.confirmed_by_user_id,payments.confirmed_at,payments.metadata', 'payment.confirmedBy:id,name',
             'servicePoint:id,type,label,display_name,section_id,sub_section_id', 'servicePoint.section:id,name', 'servicePoint.subSection:id,name',
             'items:id,order_id,item_id,quantity,unit_price,final_price,total_amount,comment', 'items.item:id,uuid,name', 'items.options:id,order_item_id,name,price_adjustment',
             'items.options.itemOption:id,uuid',
             'statusHistories.fromStatus:id,name', 'statusHistories.toStatus:id,name', 'statusHistories.changedBy:id,name',
+            'business:id', 'business.paymentSetting:business_id,currency',
+            'business.paymentMethods:id,uuid,business_id,payment_method_id',
+            'business.paymentMethods.accounts:id,uuid,business_payment_method_id,label,bank_name,account_number,account_holder_name,currency',
             'staffNotes.author:id,name', 'workLock.user:id,name',
         ]);
     }
@@ -691,7 +762,8 @@ class BusinessOrderController extends BaseController
             'ready' => in_array($role, ['kitchen', 'chef'], true),
             'serve' => in_array($role, ['counter', 'counter-clerk'], true)
                 || ($role === 'waiter' && $channel === 'dine_in'),
-            'mark_paid', 'complete' => in_array($role, ['counter', 'counter-clerk'], true),
+            'mark_paid', 'complete' => in_array($role, ['counter', 'counter-clerk'], true)
+                || ($action === 'mark_paid' && $role === 'waiter' && $channel === 'dine_in'),
             'confirm_cash' => in_array($role, ['counter', 'counter-clerk'], true)
                 || ($role === 'waiter' && $channel === 'dine_in'),
             default => false,
@@ -770,14 +842,27 @@ class BusinessOrderController extends BaseController
             && in_array($order->payment->status, ['PENDING', 'PROCESSING'], true)
             && $order->payment->expires_at?->isFuture();
 
+        $paymentAccountUuid = data_get($order->payment?->metadata, 'payment_account_uuid');
+        $paymentAccount = $paymentAccountUuid
+            ? $order->business?->paymentMethods?->flatMap(fn ($method) => $method->accounts)->first(fn ($account) => $account->uuid === $paymentAccountUuid)
+            : null;
+
         return [
             'uuid' => $order->uuid,
             'number' => $order->number,
             'channel' => $order->channel,
             'status' => $order->status?->name,
             'payment_status' => $order->paymentStatus?->name,
+            'currency' => $order->business?->paymentSetting?->currency ?? 'TZS',
             'payment_method' => $order->paymentMethod?->name
                 ?? ($order->payment?->provider ? str($order->payment->provider)->replace('_', ' ')->title()->toString() : null),
+            'payment_account' => $paymentAccount ? [
+                'label' => $paymentAccount->label,
+                'bank_name' => $paymentAccount->bank_name,
+                'account_number' => $paymentAccount->account_number,
+                'account_holder_name' => $paymentAccount->account_holder_name,
+                'currency' => $paymentAccount->currency,
+            ] : null,
             'paid_by' => $order->payment?->confirmedBy?->name ?? $order->approver?->name,
             'payment_checkout' => $activeCheckout ? [
                 'status' => $order->payment->status,
