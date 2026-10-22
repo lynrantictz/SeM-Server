@@ -39,6 +39,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Validator;
 use Symfony\Component\HttpFoundation\Response;
+use SimpleSoftwareIO\QrCode\Facades\QrCode;
 
 class OrderController extends BaseController
 {
@@ -735,7 +736,89 @@ class OrderController extends BaseController
             'feedback',
         ];
         $data['order'] = $order->load($relationship);
+        if ($data['order']->customer) {
+            // The public customer order view never needs the customer's full
+            // phone number. Keep the canonical value out of the response while
+            // preserving the masked phone shape expected by the client.
+            $data['order']->customer->setAttribute(
+                'phone_e164',
+                $this->maskedPhone($data['order']->customer->phone_e164 ?? $data['order']->customer->phone),
+            );
+        }
         return $this->sendResponse($data, 'Order Retrieved successfully', HTTP_OK);
+    }
+
+    public function receipt(string $number)
+    {
+        $order = DB::transaction(function () use ($number) {
+            $record = Order::query()->whereNumber($number)->lockForUpdate()->firstOrFail();
+
+            if (! $record->receipt_token) {
+                $record->forceFill(['receipt_token' => Str::random(80)])->save();
+            }
+
+            return $record;
+        });
+
+        abort_unless($order->paymentStatus?->name === 'Completed', HTTP_UNPROCESSABLE_ENTITY, 'A receipt is available after payment is completed.');
+
+        $verificationUrl = rtrim((string) config('paperstick.client_url'), '/') . '/verify/receipt?' . http_build_query([
+            'order' => $order->number,
+            'token' => $order->receipt_token,
+        ]);
+        $svg = QrCode::format('svg')->errorCorrection('H')->size(360)->margin(1)->generate($verificationUrl);
+
+        return $this->sendResponse([
+            'verification_url' => $verificationUrl,
+            'qr_data_uri' => 'data:image/svg+xml;base64,' . base64_encode($svg),
+        ], 'Receipt verification details generated successfully.', HTTP_OK);
+    }
+
+    public function verifyReceipt(string $number, string $token)
+    {
+        $order = Order::query()
+            ->whereNumber($number)
+            ->where('receipt_token', $token)
+            ->with([
+                'business:id,name,logo_disk,logo_path',
+                'business.paymentSetting:business_id,currency',
+                'status:id,name',
+                'paymentStatus:id,name',
+                'tax:id,percent',
+                'items:id,order_id,item_id,quantity,total_amount',
+                'items.item:id,uuid,name',
+                'orderingChannel',
+            ])
+            ->firstOrFail();
+
+        $status = $order->paymentStatus?->name ?? 'Pending';
+        $receiptStatus = match ($status) {
+            'Completed' => 'Paid',
+            'Refunded' => 'Refunded',
+            default => $status,
+        };
+
+        return $this->sendResponse([
+            'verified' => true,
+            'receipt' => [
+                'number' => $order->number,
+                'status' => $receiptStatus,
+                'business_name' => $order->business?->name,
+                'business_logo_url' => $order->business?->logo_url,
+                'created_at' => $order->created_at,
+                'currency' => $order->business?->paymentSetting?->currency ?? 'TZS',
+                'subtotal' => $order->total_items_amount,
+                'tax_amount' => $order->tax_amount,
+                'tax_percent' => $order->tax?->percent,
+                'total_amount' => $order->total_amount,
+                'items' => $order->items->map(fn ($item) => [
+                    'name' => $item->item?->name ?? 'Menu item',
+                    'quantity' => $item->quantity,
+                    'total_amount' => $item->total_amount,
+                ])->values(),
+                'channel' => $order->orderingChannel?->name ?? $order->channel,
+            ],
+        ], 'Receipt verified successfully.', HTTP_OK);
     }
 
     public function paymentMethods(string $number, BusinessActivationService $activation)

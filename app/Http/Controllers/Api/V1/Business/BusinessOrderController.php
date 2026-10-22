@@ -116,7 +116,12 @@ class BusinessOrderController extends BaseController
             'payment_methods' => $business->paymentMethods()
                 ->with(['paymentMethod', 'accounts'])
                 ->where('is_enabled', true)
-                ->where('status', 'active')
+                ->where(function (Builder $query): void {
+                    $query->where('status', 'active')
+                        ->orWhereHas('accounts', fn (Builder $accounts) => $accounts
+                            ->where('is_enabled', true)
+                            ->where('status', 'active'));
+                })
                 ->get()
                 ->filter(fn (BusinessPaymentMethod $configuration) =>
                     $configuration->paymentMethod
@@ -134,6 +139,7 @@ class BusinessOrderController extends BaseController
                     if ($accounts->isEmpty()) {
                         return [[
                             'id' => $method->id,
+                            'code' => $method->code,
                             'name' => $method->name,
                             'account_uuid' => null,
                             'account_details' => null,
@@ -142,9 +148,10 @@ class BusinessOrderController extends BaseController
 
                     return $accounts->map(fn ($account) => [
                         'id' => $method->id,
+                        'code' => $method->code,
                         'name' => $method->name,
                         'account_uuid' => $account->uuid,
-                        'account_details' => collect([$account->bank_name, $account->label, $account->account_number, $account->currency])
+                        'account_details' => collect([$account->bank_name, $account->label, $account->account_number, $account->account_holder_name, $account->currency])
                             ->filter(fn ($value) => filled($value))
                             ->implode(' · '),
                     ])->all();
@@ -378,7 +385,12 @@ class BusinessOrderController extends BaseController
                         ->with('accounts')
                         ->where('payment_method_id', $paymentMethodId)
                         ->where('is_enabled', true)
-                        ->where('status', 'active')
+                        ->where(function (Builder $query): void {
+                            $query->where('status', 'active')
+                                ->orWhereHas('accounts', fn (Builder $accounts) => $accounts
+                                    ->where('is_enabled', true)
+                                    ->where('status', 'active'));
+                        })
                         ->first();
                     abort_unless($configuration && ($configuration->accounts->isEmpty()
                         || $configuration->accounts->contains(fn ($account) => $account->is_enabled && $account->status === 'active')),

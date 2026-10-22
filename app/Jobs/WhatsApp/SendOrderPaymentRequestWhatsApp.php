@@ -3,6 +3,7 @@
 namespace App\Jobs\WhatsApp;
 
 use App\Models\Order\OrderPaymentLink;
+use App\Services\Order\OrderPaymentLinkService;
 use App\Services\WhatsApp\WhatsAppMessagingService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeEncrypted;
@@ -22,11 +23,19 @@ class SendOrderPaymentRequestWhatsApp implements ShouldQueue, ShouldBeEncrypted
 
     public function __construct(public readonly string $paymentLinkUuid, public readonly string $token) {}
 
-    public function handle(WhatsAppMessagingService $whatsApp): void
+    public function handle(WhatsAppMessagingService $whatsApp, OrderPaymentLinkService $paymentLinks): void
     {
         $link = OrderPaymentLink::query()->with('order.customer', 'order.business')->where('uuid', $this->paymentLinkUuid)->first();
         $recipientPhone = $link?->recipient_phone_e164 ?: $link?->order?->customer?->phone_e164;
         if (! $link || $link->revoked_at || $link->expires_at->isPast() || ! $recipientPhone) return;
+
+        if (config('whatsapp.driver') === 'log') {
+            Log::info('Payment link test URL', [
+                'order_number' => $link->order?->number,
+                'payment_link_url' => $paymentLinks->url($this->token),
+                'expires_at' => $link->expires_at?->toIso8601String(),
+            ]);
+        }
 
         try {
             $result = $whatsApp->sendOrderPaymentRequest(

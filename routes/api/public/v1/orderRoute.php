@@ -23,6 +23,8 @@ Route::group(['prefix' => 'orders'], function () {
    Route::post('checkout-verifications/{uuid}/confirm', [OrderController::class, 'confirmCheckoutVerification'])->middleware('throttle:10,1');
    Route::post('checkout-verifications/{uuid}/resend', [OrderController::class, 'resendCheckoutVerification'])->middleware('throttle:6,1');
    Route::get('{number}/payment-methods', [OrderController::class, 'paymentMethods']);
+   Route::get('{number}/receipt', [OrderController::class, 'receipt'])->middleware('throttle:30,1');
+   Route::get('{number}/receipt/verify/{token}', [OrderController::class, 'verifyReceipt'])->middleware('throttle:60,1');
    Route::get('{number}', [OrderController::class, 'show']);
    Route::put('{order}/verify-phone', [OrderController::class, 'verifyPhone']);
    Route::post('{order}/resend-phone-verification-code', [OrderController::class, 'resendPhoneVerificationCode']);

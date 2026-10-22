@@ -10,6 +10,10 @@ class Order extends BaseModel
 {
     use OrderAttribute, OrderRelationship;
 
+    protected $hidden = [
+        'receipt_token',
+    ];
+
     protected $casts = [
         'order_status_id' => 'integer',
         'payment_status_id' => 'integer',

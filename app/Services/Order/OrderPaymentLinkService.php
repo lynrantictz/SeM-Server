@@ -74,8 +74,9 @@ class OrderPaymentLinkService
             ->get()
             ->map(fn (OrderPaymentLink $link) => [
                 'recipient' => $this->maskPhone($link->recipient_phone_e164),
-                'status' => $link->whatsapp_status ?? 'queued',
+                'status' => $link->opened_at ? 'opened' : ($link->whatsapp_status ?? 'queued'),
                 'sent_at' => $link->whatsapp_sent_at?->toIso8601String(),
+                'opened_at' => $link->opened_at?->toIso8601String(),
             ])
             ->values()
             ->all();

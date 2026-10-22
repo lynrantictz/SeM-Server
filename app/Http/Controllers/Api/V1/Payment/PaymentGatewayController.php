@@ -15,6 +15,7 @@ use App\Services\PaymentGateway\PaymentCheckoutService;
 use App\Services\PaymentGateway\PaymentSettlementService;
 use App\Services\PhoneNumberNormalizer;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class PaymentGatewayController extends BaseController
 {
@@ -94,9 +95,18 @@ class PaymentGatewayController extends BaseController
             return $this->sendError('This order is no longer available for payment.', ['code' => 'ORDER_NOT_PAYABLE'], HTTP_GONE);
         }
 
+        DB::transaction(function () use ($link): void {
+            $link->newQuery()
+                ->whereKey($link->getKey())
+                ->whereNull('opened_at')
+                ->update(['opened_at' => now()]);
+        });
+        $link->refresh();
+
         $minutes = max(1, now()->diffInMinutes($link->expires_at, false));
         $session = $this->guestSessions->issueForOrder($order, $minutes);
         return $this->sendResponse([
+            'order_uuid' => $order->uuid,
             'order_number' => $order->number,
             'payment_session' => $session['access_token'],
             'expires_at' => $link->expires_at,
@@ -133,7 +143,7 @@ class PaymentGatewayController extends BaseController
         if (! $this->canAccessOrder($request, $record, $request->input('access_token'))) {
             return $this->sendError('Verify your phone to share this payment link.', [], HTTP_UNAUTHORIZED);
         }
-        if (! in_array($record->status?->name, ['Processing', 'Served'], true) || $record->paymentStatus?->name === 'Completed') {
+        if (! in_array($record->status?->name, ['Processing', 'Ready', 'Served'], true) || $record->paymentStatus?->name === 'Completed') {
             return $this->sendError('This order is not available for payment sharing.', [], HTTP_UNPROCESSABLE_ENTITY);
         }
 
