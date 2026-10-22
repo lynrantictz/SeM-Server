@@ -14,5 +14,6 @@ Route::group(['prefix' => 'business'], function () {
 });
 
 Route::get('discover/businesses', [DiscoveryController::class, 'index']);
+Route::get('discover/regions', [DiscoveryController::class, 'regions']);
 Route::get('public/businesses/{business}/logo', [BusinessController::class, 'publicLogo']);
 Route::get('ordering-channels', [OrderingChannelController::class, 'index']);

@@ -708,11 +708,14 @@ class OrderController extends BaseController
     /**
      * Display the specified resource.
      */
-    public function show(string $number)
+    public function show(Request $request, string $number)
     {
         $order = Order::query()->whereNumber($number)->first();
         if (!$order) {
             return $this->sendError('Order not found', [], HTTP_NOT_FOUND);
+        }
+        if (! $this->canAccessGuestOrder($request, $order, $request->query('access_token'))) {
+            return $this->sendError('Verify your phone to access this order.', [], HTTP_UNAUTHORIZED);
         }
         $relationship = [
             'customer',
@@ -821,7 +824,7 @@ class OrderController extends BaseController
         ], 'Receipt verified successfully.', HTTP_OK);
     }
 
-    public function paymentMethods(string $number, BusinessActivationService $activation)
+    public function paymentMethods(Request $request, string $number, BusinessActivationService $activation)
     {
         $order = Order::query()
             ->with(['business.paymentSetting'])
@@ -829,6 +832,9 @@ class OrderController extends BaseController
             ->first();
         if (! $order) {
             return $this->sendError('Order not found', [], HTTP_NOT_FOUND);
+        }
+        if (! $this->canAccessGuestOrder($request, $order, $request->query('access_token'))) {
+            return $this->sendError('Verify your phone to access payment options for this order.', [], HTTP_UNAUTHORIZED);
         }
 
         $activationStatus = $activation->status($order->business);

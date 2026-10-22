@@ -8,11 +8,39 @@ use Illuminate\Http\Request;
 
 class DiscoveryController extends BaseController
 {
+    public function regions(Request $request)
+    {
+        $validated = $request->validate([
+            'country_id' => ['nullable', 'integer', 'exists:countries,id'],
+        ]);
+
+        $regions = Business::query()
+            ->join('districts', 'districts.id', '=', 'businesses.district_id')
+            ->join('cities', 'cities.id', '=', 'districts.city_id')
+            ->selectRaw('cities.id, cities.name, AVG(businesses.latitude) as latitude, AVG(businesses.longitude) as longitude')
+            ->where('businesses.is_active', true)
+            ->whereNotNull('businesses.latitude')
+            ->whereNotNull('businesses.longitude')
+            ->when($validated['country_id'] ?? null, fn ($query, $countryId) => $query->where('cities.country_id', $countryId))
+            ->groupBy('cities.id', 'cities.name')
+            ->orderBy('cities.name')
+            ->get()
+            ->map(fn ($region) => [
+                'id' => (int) $region->id,
+                'name' => $region->name,
+                'latitude' => (float) $region->latitude,
+                'longitude' => (float) $region->longitude,
+            ]);
+
+        return $this->sendResponse(['regions' => $regions], 'Discovery regions retrieved successfully.');
+    }
+
     public function index(Request $request)
     {
         $validated = $request->validate([
             'q' => ['nullable', 'string', 'max:100'],
             'type' => ['nullable', 'string', 'max:100'],
+            'country_id' => ['nullable', 'integer', 'exists:countries,id'],
             'city' => ['nullable', 'string', 'max:100'],
             'district_id' => ['nullable', 'integer', 'exists:districts,id'],
             'lat' => ['nullable', 'numeric', 'between:-90,90'],
@@ -51,6 +79,9 @@ class DiscoveryController extends BaseController
             })
             ->when($validated['type'] ?? null, function ($businesses, $type) {
                 $businesses->whereHas('type', fn ($types) => $types->where('name', $type));
+            })
+            ->when($validated['country_id'] ?? null, function ($businesses, $countryId) {
+                $businesses->whereHas('district.city', fn ($cities) => $cities->where('country_id', $countryId));
             })
             ->when($validated['city'] ?? null, function ($businesses, $city) {
                 $businesses->whereHas('district.city', fn ($cities) => $cities->where('name', $city));
