@@ -44,6 +44,10 @@ return new class extends Migration
                 'updated_at' => now(),
             ]);
 
+            if (DB::getDriverName() === 'sqlite') {
+                Schema::table('business_payment_settings', fn (Blueprint $table) => $table->decimal('commission_rate', 5, 2)->nullable()->default(null)->change());
+                return;
+            }
             DB::statement('ALTER TABLE business_payment_settings ALTER COLUMN commission_rate DROP DEFAULT');
             DB::statement('ALTER TABLE business_payment_settings ALTER COLUMN commission_rate DROP NOT NULL');
         });

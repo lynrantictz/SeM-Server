@@ -10,6 +10,16 @@ use App\Repositories\Order\OrderRepository;
 beforeEach(function () {
     Country::query()->create(['name' => 'Tanzania', 'iso2' => 'TZ', 'iso3' => 'TZA', 'currency' => 'TZS', 'phone_code' => '255', 'flag' => 'flags/tz.jpg']);
     Country::query()->create(['name' => 'Kenya', 'iso2' => 'KE', 'iso3' => 'KEN', 'currency' => 'KES', 'phone_code' => '254', 'flag' => 'flags/ke.jpg']);
+    foreach (['255758483019', '254758483019'] as $phone) {
+        \App\Models\Order\OrderHistoryVerification::query()->create([
+            'phone' => $phone,
+            'verification_code' => \Illuminate\Support\Facades\Hash::make('123456'),
+            'access_token' => \Illuminate\Support\Facades\Hash::make('history-test-token'),
+            'verified_at' => now(),
+            'expires_at' => now()->addMinutes(10),
+        ]);
+    }
+
 });
 
 function historyOrderFor(Customer $customer, string $number): Order
@@ -25,8 +35,8 @@ it('keeps Tanzanian local and international lookup compatible', function () {
     $customer = Customer::query()->create(['phone' => '0758483019']);
     historyOrderFor($customer, 'TZ-000001');
 
-    $localResponse = $this->getJson('/api/v1/phone/0758483019/verify?country=TZ');
-    $internationalResponse = $this->getJson('/api/v1/phone/255758483019/verify');
+    $localResponse = $this->getJson('/v1/phone/0758483019/verify?country=TZ&token=history-test-token');
+    $internationalResponse = $this->getJson('/v1/phone/255758483019/verify?token=history-test-token');
 
     $localResponse->assertOk()
         ->assertJsonPath('data.0.number', 'TZ-000001')
@@ -41,7 +51,7 @@ it('finds a legacy nine-digit Tanzanian customer by canonical input', function (
     $customer = Customer::query()->create(['phone' => '758483019']);
     historyOrderFor($customer, 'TZ-000006');
 
-    $this->getJson('/api/v1/phone/255758483019/verify')
+    $this->getJson('/v1/phone/255758483019/verify?token=history-test-token')
         ->assertOk()
         ->assertJsonPath('data.0.number', 'TZ-000006');
 });
@@ -55,7 +65,7 @@ it('does not return a Tanzanian order for another country with the same national
     historyOrderFor($tanzania, 'TZ-000002');
     historyOrderFor($kenya, 'KE-000001');
 
-    $response = $this->getJson('/api/v1/phone/254758483019/verify');
+    $response = $this->getJson('/v1/phone/254758483019/verify?token=history-test-token');
 
     $response->assertOk()
         ->assertJsonPath('data.0.number', 'KE-000001')
@@ -103,13 +113,18 @@ it('rejects an unsupported numeric country code', function () {
 });
 
 it('rejects an explicitly empty country for national history input', function () {
-    $this->getJson('/api/v1/phone/0758483019/verify?country=')
+    $this->getJson('/v1/phone/0758483019/verify?country=')
         ->assertUnprocessable()
         ->assertJsonPath('success', false);
 });
 
 it('returns a validation error for invalid history phone input', function () {
-    $this->getJson('/api/v1/phone/not-a-phone/verify')
+    $this->getJson('/v1/phone/not-a-phone/verify')
         ->assertUnprocessable()
         ->assertJsonPath('success', false);
+});
+
+it('requires verification before returning phone history', function () {
+    $this->getJson('/v1/phone/255758483019/verify')->assertUnauthorized();
+    $this->getJson('/v1/phone/255758483019/verify?token=wrong-token')->assertUnauthorized();
 });
