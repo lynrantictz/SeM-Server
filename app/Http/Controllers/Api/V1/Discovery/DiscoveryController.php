@@ -4,10 +4,37 @@ namespace App\Http\Controllers\Api\V1\Discovery;
 
 use App\Http\Controllers\Api\BaseController;
 use App\Models\Business\Business;
+use App\Models\Discovery\DiscoveryInteraction;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class DiscoveryController extends BaseController
 {
+    public function trackInteraction(Request $request)
+    {
+        $validated = $request->validate([
+            'business_uuid' => ['required', 'uuid'],
+            'event_type' => ['required', 'string', 'in:tap,search,copy_location'],
+        ]);
+
+        $business = Business::query()
+            ->where('uuid', $validated['business_uuid'])
+            ->where('is_active', true)
+            ->firstOrFail();
+
+        DB::transaction(function () use ($request, $business, $validated): void {
+            DiscoveryInteraction::query()->create([
+                'business_id' => $business->id,
+                'event_type' => $validated['event_type'],
+                'ip_address' => $request->ip(),
+                'user_agent' => Str::limit((string) $request->userAgent(), 1000, ''),
+            ]);
+        });
+
+        return $this->sendResponse([], 'Discovery interaction recorded successfully.');
+    }
+
     public function regions(Request $request)
     {
         $validated = $request->validate([
