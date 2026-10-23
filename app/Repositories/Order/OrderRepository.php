@@ -16,6 +16,7 @@ use App\Services\TaxCalculatorService;
 use App\Models\Payment\PaymentStatus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Carbon\Carbon;
 
 class OrderRepository extends BaseRepository
 {
@@ -32,6 +33,8 @@ class OrderRepository extends BaseRepository
         $country = $business->district?->city?->country?->iso2;
         $customer = $verifiedCustomer ?? (new CustomerRepository())->getCustomerByPhone($inputs['phone'], $country);
         $servicePoint = $code->codable instanceof ServicePoint ? $code->codable : null;
+        $scheduledFor = !empty($inputs['scheduled_for']) ? Carbon::parse($inputs['scheduled_for']) : null;
+        $timezone = $business->timezoneDefinition?->identifier ?: ($business->timezone ?: config('app.timezone', 'UTC'));
         return [
             'business_id' => $business->id,
             'user_id' => null, //TODO:: update later when a registered user is making order
@@ -40,6 +43,9 @@ class OrderRepository extends BaseRepository
             'payment_status_id' => $this->paymentStatusId('Pending'),
             'service_point_id' => $servicePoint?->id,
             'service_point_label' => $servicePoint?->display_name,
+            'scheduled_for' => $scheduledFor,
+            'preparation_starts_at' => $scheduledFor?->copy()->subMinutes((int) config('orders.online_preparation_minutes', 30)),
+            'schedule_timezone' => $scheduledFor ? $timezone : null,
         ];
     }
 
@@ -62,8 +68,13 @@ class OrderRepository extends BaseRepository
             }
             $business->save();
             //create order
+            $orderInputs = $this->inputManipulator($code, $inputs, $verifiedCustomer);
+            if ($channel === 'online') {
+                $orderInputs['service_point_id'] = null;
+                $orderInputs['service_point_label'] = null;
+            }
             $order = $code->orders()->create(array_merge(
-                $this->inputManipulator($code, $inputs, $verifiedCustomer),
+                $orderInputs,
                 [
                     'number' => $orderNumber,
                     'channel' => $channel,
@@ -72,7 +83,7 @@ class OrderRepository extends BaseRepository
             ));
             // create order items
             $business->load('promotions');
-            (new OrderItemRepository())->store($order, $inputs['items'], $channel);
+            (new OrderItemRepository())->store($order, $inputs['items'], $channel, $order->scheduled_for);
             //calculate total amount
             $order_total_amount = $order->items()->sum('total_amount');
             $taxCalculator = $this->calculateTax(

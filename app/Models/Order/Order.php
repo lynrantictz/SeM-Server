@@ -18,6 +18,8 @@ class Order extends BaseModel
         'order_status_id' => 'integer',
         'payment_status_id' => 'integer',
         'assigned_to_user_id' => 'integer',
+        'scheduled_for' => 'datetime',
+        'preparation_starts_at' => 'datetime',
     ];
 
     protected $appends = ['created_at_formatted'];

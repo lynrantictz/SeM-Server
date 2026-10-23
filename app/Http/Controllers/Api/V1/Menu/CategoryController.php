@@ -51,6 +51,9 @@ class CategoryController extends BaseController
             if (!$code->codable->is_active) {
                 return $this->sendError('This table, room, or service point is not currently accepting orders.', [], HTTP_NOT_FOUND);
             }
+            if (!$code->codable->orderingChannels()->where('slug', $channel)->exists()) {
+                return $this->sendError('This service point is not enabled for the selected ordering channel.', ['channel' => $channel], HTTP_UNPROCESSABLE_ENTITY);
+            }
             array_unshift($relationships, 'section', 'subSection');
         } elseif ($code->codable instanceof \App\Models\Section\SubSection) {
             array_unshift($relationships, 'section');
@@ -73,7 +76,7 @@ class CategoryController extends BaseController
         }
         $availability = app(MenuAvailabilityService::class);
         $businessStatus = $availability->businessStatus($business);
-        if (!$businessStatus['is_open_now']) {
+        if ($channel !== 'online' && !$businessStatus['is_open_now']) {
             return $this->sendError($businessStatus['reason'], ['menu_status' => $businessStatus], HTTP_UNPROCESSABLE_ENTITY);
         }
 

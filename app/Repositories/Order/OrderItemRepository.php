@@ -9,24 +9,29 @@ use App\Repositories\Menu\ItemRepository;
 use App\Services\MenuAvailabilityService;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
 
 class OrderItemRepository extends BaseRepository
 {
     const MODEL = OrderItem::class;
 
-    public function inputManipulator($item, $business, string $channel = 'dine_in'): array
+    public function inputManipulator($item, $business, string $channel = 'dine_in', ?Carbon $availableAt = null): array
     {
         $itemResults = (new ItemRepository())->query()
             ->where('uuid', $item['uuid'])
             ->whereHas('category', fn($query) => $query->where('business_id', $business->id))
-            ->with(['availabilityRules.days', 'discountRules', 'optionGroups.options'])
+            ->with(['category.availabilityRules.days', 'availabilityRules.days', 'discountRules', 'optionGroups.options'])
             ->first();
         if (!$itemResults) {
             throw ValidationException::withMessages(['items' => ['One or more selected menu items are invalid for this business.']]);
         }
-        $availability = app(MenuAvailabilityService::class)->itemStatus($itemResults, $business, $channel);
+        $availability = app(MenuAvailabilityService::class)->itemStatus($itemResults, $business, $channel, $availableAt);
         if (!$availability['is_available_now']) {
             throw ValidationException::withMessages(['items' => [$itemResults->name . ': ' . $availability['reason']]]);
+        }
+        $categoryAvailability = app(MenuAvailabilityService::class)->categoryStatus($itemResults->category, $business, $channel, $availableAt);
+        if (!$categoryAvailability['is_available_now']) {
+            throw ValidationException::withMessages(['items' => [$itemResults->name . ': ' . $categoryAvailability['reason']]]);
         }
         $pricing = app(MenuAvailabilityService::class)->itemPricing($itemResults, $business, $channel);
         $selectedOptions = $this->resolveOptions($item, $itemResults);
@@ -49,12 +54,12 @@ class OrderItemRepository extends BaseRepository
         ];
     }
 
-    public function store(Order $order, $items, string $channel = 'dine_in')
+    public function store(Order $order, $items, string $channel = 'dine_in', ?Carbon $availableAt = null)
     {
-        return DB::transaction(function () use ($order, $items, $channel) {
+        return DB::transaction(function () use ($order, $items, $channel, $availableAt) {
             $order->loadMissing('business.promotions', 'business.timezoneDefinition');
             foreach ($items as $item) {
-                $line = $this->inputManipulator($item, $order->business, $channel);
+                $line = $this->inputManipulator($item, $order->business, $channel, $availableAt);
                 $selectedOptions = $line['_selected_options'] ?? [];
                 unset($line['_selected_options']);
                 $orderItem = $order->items()->create($line);

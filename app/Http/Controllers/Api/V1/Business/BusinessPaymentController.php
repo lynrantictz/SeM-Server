@@ -687,7 +687,7 @@ class BusinessPaymentController extends BaseController
             ->where('business_id', $business->id)
             ->where('uuid', $order)
             ->firstOrFail();
-        abort_unless($record->status?->name === 'Served', HTTP_UNPROCESSABLE_ENTITY, 'Only served orders can be sent for payment.');
+        abort_unless(in_array($record->status?->name, ['Awaiting payment', 'Scheduled', 'Processing', 'Ready', 'Served'], true), HTTP_UNPROCESSABLE_ENTITY, 'Only approved orders can be sent for payment.');
         abort_unless($record->paymentStatus?->name !== 'Completed', HTTP_UNPROCESSABLE_ENTITY, 'This order is already paid.');
         abort_unless($role !== 'waiter' || $record->channel === 'dine_in', HTTP_FORBIDDEN, 'Waiters can request payment only for dine-in orders.');
 

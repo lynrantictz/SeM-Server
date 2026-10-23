@@ -143,7 +143,7 @@ class PaymentGatewayController extends BaseController
         if (! $this->canAccessOrder($request, $record, $request->input('access_token'))) {
             return $this->sendError('Verify your phone to share this payment link.', [], HTTP_UNAUTHORIZED);
         }
-        if (! in_array($record->status?->name, ['Processing', 'Ready', 'Served'], true) || $record->paymentStatus?->name === 'Completed') {
+        if (! in_array($record->status?->name, ['Awaiting payment', 'Scheduled', 'Processing', 'Ready', 'Served'], true) || $record->paymentStatus?->name === 'Completed') {
             return $this->sendError('This order is not available for payment sharing.', [], HTTP_UNPROCESSABLE_ENTITY);
         }
 
@@ -207,7 +207,7 @@ class PaymentGatewayController extends BaseController
         if (! $this->canAccessOrder($request, $record, $validated['access_token'] ?? null)) {
             return $this->sendError('Verify your phone to request payment for this order.', [], HTTP_UNAUTHORIZED);
         }
-        if (! in_array($record->status?->name, ['Processing', 'Served'], true)) {
+        if (! in_array($record->status?->name, ['Awaiting payment', 'Scheduled', 'Processing', 'Served'], true)) {
             return $this->sendError('Payment is available after the business accepts your order.', [], HTTP_UNPROCESSABLE_ENTITY);
         }
         if ($record->paymentStatus?->name === 'Completed') {

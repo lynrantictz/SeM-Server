@@ -40,6 +40,7 @@ use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Validator;
 use Symfony\Component\HttpFoundation\Response;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
+use Carbon\Carbon;
 
 class OrderController extends BaseController
 {
@@ -141,6 +142,8 @@ class OrderController extends BaseController
             return $this->sendError($reason, [], HTTP_UNPROCESSABLE_ENTITY);
         }
 
+        $this->validateOnlineSchedule($code, $channel, $request->input('scheduled_for'));
+
         $persistentSession = $this->guestCustomerSessions->resolveFromRequest($request);
         if ($persistentSession || $request->filled('guest_session')) {
             $session = $persistentSession ?: $this->guestSessions->resolveForBusiness(
@@ -158,7 +161,7 @@ class OrderController extends BaseController
             try {
                 $order = $this->orders->store(
                     $code,
-                    ['items' => $request->input('items')],
+                    ['items' => $request->input('items'), 'scheduled_for' => $request->input('scheduled_for')],
                     $channel,
                     $customer,
                 );
@@ -244,6 +247,7 @@ class OrderController extends BaseController
                 'channel' => $channel,
                 'phone' => $phone,
                 'checkout_payload' => [
+                    'scheduled_for' => $request->input('scheduled_for'),
                     'items' => collect($request->input('items'))->map(fn(array $item) => [
                         'uuid' => $item['uuid'],
                         'quantity' => $item['quantity'],
@@ -354,6 +358,7 @@ class OrderController extends BaseController
                 }
 
                 $payload = $checkout->checkout_payload;
+                $this->validateOnlineSchedule($code, $checkout->channel, $payload['scheduled_for'] ?? null);
                 $payload['phone'] = $checkout->phone;
                 $order = $this->orders->store($code, $payload, $checkout->channel);
                 $order->forceFill(['phone_verified_at' => now()])->save();
@@ -422,7 +427,7 @@ class OrderController extends BaseController
         $statuses = OrderStatus::query()->get(['id', 'name']);
         $statusNameById = $statuses->mapWithKeys(fn($status) => [(string) $status->id => $status->name]);
         $activeStatusIds = $statuses
-            ->whereIn('name', ['Pending', 'Processing'])
+            ->whereIn('name', ['Pending', 'Awaiting payment', 'Scheduled', 'Processing'])
             ->map(fn($status) => (string) $status->id)
             ->values()
             ->all();
@@ -690,13 +695,53 @@ class OrderController extends BaseController
         if ($code->codable instanceof \App\Models\Section\ServicePoint && !$code->codable->is_active) {
             return 'This table, room, or service point is not currently accepting orders.';
         }
+        if ($code->codable instanceof \App\Models\Section\ServicePoint
+            && !$code->codable->orderingChannels()->where('slug', $channel)->exists()) {
+            return 'This service point is not enabled for the selected ordering channel.';
+        }
 
         $businessStatus = app(MenuAvailabilityService::class)->businessStatus($business);
-        if (!$businessStatus['is_open_now']) {
+        if ($channel !== 'online' && !$businessStatus['is_open_now']) {
             return $businessStatus['reason'];
         }
 
         return null;
+    }
+
+    private function validateOnlineSchedule(Code $code, string $channel, mixed $scheduledFor): void
+    {
+        if ($channel !== 'online') {
+            return;
+        }
+
+        abort_unless(is_string($scheduledFor) && trim($scheduledFor) !== '', HTTP_UNPROCESSABLE_ENTITY,
+            'Choose a future date and time for this online order.');
+
+        $business = $code->codable?->business;
+        $timezone = $business?->timezoneDefinition?->identifier ?: ($business?->timezone ?: config('app.timezone', 'UTC'));
+        try {
+            $selected = Carbon::parse($scheduledFor)->setTimezone($timezone);
+        } catch (\Throwable) {
+            abort(HTTP_UNPROCESSABLE_ENTITY, 'Choose a valid future date and time.');
+        }
+
+        abort_unless($selected->isFuture(), HTTP_UNPROCESSABLE_ENTITY,
+            'The online order time must be in the future.');
+        abort_unless($selected->lessThanOrEqualTo(now($timezone)->addDays(30)), HTTP_UNPROCESSABLE_ENTITY,
+            'Online orders can only be scheduled up to 30 days ahead.');
+
+        $hours = $business?->openingHours()->where('day_of_week', $selected->dayOfWeek)->where('is_closed', false)->get() ?? collect();
+        if ($hours->isNotEmpty()) {
+            $time = $selected->format('H:i:s');
+            $open = $hours->contains(function ($hour) use ($time): bool {
+                if (!$hour->opens_at || !$hour->closes_at) return false;
+                return $hour->opens_at <= $hour->closes_at
+                    ? $time >= $hour->opens_at && $time <= $hour->closes_at
+                    : $time >= $hour->opens_at || $time <= $hour->closes_at;
+            });
+            abort_unless($open, HTTP_UNPROCESSABLE_ENTITY,
+                'Choose a time within the business opening hours.');
+        }
     }
 
     private function channelEnabled($business, string $channel): bool

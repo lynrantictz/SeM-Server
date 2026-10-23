@@ -320,6 +320,7 @@ class BusinessOrderController extends BaseController
             'reason' => ['required_if:action,reject', 'nullable', 'string', 'max:500'],
             'payment_method_id' => ['nullable', 'integer', Rule::exists('payment_methods', 'id')],
             'payment_account_uuid' => ['nullable', 'uuid'],
+            'service_point_id' => ['nullable', 'integer', 'exists:service_points,id'],
             'payment_amount' => ['nullable', 'numeric', 'min:0'],
             'payment_reference' => ['nullable', 'string', 'max:160'],
         ]);
@@ -337,7 +338,7 @@ class BusinessOrderController extends BaseController
             $current = OrderStatus::query()->findOrFail($record->order_status_id);
 
             $transition = match ($validated['action']) {
-                'approve' => ['Pending', 'Processing'],
+                'approve' => ['Pending', $record->channel === 'online' ? 'Awaiting payment' : 'Processing'],
                 'reject' => ['Pending', 'Cancelled'],
                 'ready' => ['Processing', 'Ready'],
                 'serve' => ['Ready', 'Served'],
@@ -349,7 +350,7 @@ class BusinessOrderController extends BaseController
             abort_unless($this->canPerform($role, $validated['action'], $record->channel), HTTP_FORBIDDEN,
                 'Your role cannot perform this action for this order.');
             if ($validated['action'] === 'mark_paid') {
-                abort_unless(in_array($current->name, ['Processing', 'Ready', 'Served'], true),
+                abort_unless(in_array($current->name, ['Awaiting payment', 'Scheduled', 'Processing', 'Ready', 'Served'], true),
                     Response::HTTP_CONFLICT,
                     'Payment can only be verified while the order is being prepared, ready to serve, or awaiting payment.');
             }
@@ -360,6 +361,22 @@ class BusinessOrderController extends BaseController
                 $paidStatus = PaymentStatus::query()->where('name', 'Completed')->firstOrFail();
                 abort_unless($record->payment_status_id === $paidStatus->id, Response::HTTP_UNPROCESSABLE_ENTITY,
                     'Record payment before completing this order.');
+            }
+
+            if ($validated['action'] === 'serve' && $record->channel === 'online' && empty($record->service_point_id) && empty($validated['service_point_id'])) {
+                abort(Response::HTTP_UNPROCESSABLE_ENTITY, 'Assign a table or room before serving an online order.');
+            }
+
+            if (!empty($validated['service_point_id'])) {
+                $servicePoint = ServicePoint::query()
+                    ->whereKey($validated['service_point_id'])
+                    ->where('business_id', $business->id)
+                    ->where('is_active', true)
+                    ->firstOrFail();
+                abort_unless($servicePoint->orderingChannels()->where('slug', 'dine_in')->exists(), Response::HTTP_UNPROCESSABLE_ENTITY,
+                    'Select a table or room that supports dine-in service.');
+                $record->service_point_id = $servicePoint->id;
+                $record->service_point_label = $servicePoint->display_name;
             }
 
             $next = OrderStatus::query()->where('name', $transition[1])->firstOrFail();
@@ -413,6 +430,12 @@ class BusinessOrderController extends BaseController
                     $validated['action'] === 'confirm_cash' ? 'staff_cash' : 'staff_manual',
                     $validated['payment_account_uuid'] ?? null,
                 );
+                if ($validated['action'] === 'mark_paid' && $record->channel === 'online' && $current->name === 'Awaiting payment') {
+                    $record->order_status_id = OrderStatus::query()
+                        ->where('name', $record->preparation_starts_at?->isFuture() ? 'Scheduled' : 'Processing')
+                        ->firstOrFail()->id;
+                    $next = OrderStatus::query()->findOrFail($record->order_status_id);
+                }
             }
             $record->save();
 
@@ -431,7 +454,11 @@ class BusinessOrderController extends BaseController
                 'changed_by_user_id' => auth()->id(),
                 'note' => $validated['action'] === 'reject'
                     ? trim((string) $validated['reason'])
-                    : ($validated['action'] === 'confirm_cash' ? 'Cash payment confirmed by staff.' : ($validated['action'] === 'mark_paid' ? 'Payment recorded by staff.' : null)),
+                    : ($validated['action'] === 'approve' && $record->channel === 'online'
+                        ? 'Online order approved. Awaiting customer payment.'
+                        : (!empty($validated['service_point_id'])
+                            ? 'Table or room assigned: ' . $record->service_point_label . '.'
+                            : ($validated['action'] === 'confirm_cash' ? 'Cash payment confirmed by staff.' : ($validated['action'] === 'mark_paid' ? 'Payment recorded by staff.' : null)))),
             ]);
 
             return $record->fresh()->load([
@@ -770,12 +797,12 @@ class BusinessOrderController extends BaseController
         if ($manager) return true;
         return match ($action) {
             'approve', 'reject' => in_array($role, ['counter', 'counter-clerk'], true)
-                || ($role === 'waiter' && $channel === 'dine_in'),
+                || $role === 'waiter',
             'ready' => in_array($role, ['kitchen', 'chef'], true),
             'serve' => in_array($role, ['counter', 'counter-clerk'], true)
-                || ($role === 'waiter' && $channel === 'dine_in'),
+                || $role === 'waiter',
             'mark_paid', 'complete' => in_array($role, ['counter', 'counter-clerk'], true)
-                || ($action === 'mark_paid' && $role === 'waiter' && $channel === 'dine_in'),
+                || ($action === 'mark_paid' && $role === 'waiter'),
             'confirm_cash' => in_array($role, ['counter', 'counter-clerk'], true)
                 || ($role === 'waiter' && $channel === 'dine_in'),
             default => false,
@@ -793,7 +820,8 @@ class BusinessOrderController extends BaseController
             'awaiting' => ['Pending'],
             'preparing' => ['Processing'],
             'ready' => ['Ready'],
-            'awaiting_payment', 'paid' => ['Served'],
+            'awaiting_payment' => ['Awaiting payment', 'Served'],
+            'paid' => ['Scheduled', 'Processing', 'Ready', 'Served'],
             'completed' => ['Completed'],
             'cancelled' => ['Cancelled', 'Refunded'],
             default => [],
@@ -909,6 +937,9 @@ class BusinessOrderController extends BaseController
             'tax_amount' => (float) $order->tax_amount,
             'total_amount' => (float) $order->total_amount,
             'created_at' => $order->created_at,
+            'scheduled_for' => $order->scheduled_for?->toIso8601String(),
+            'preparation_starts_at' => $order->preparation_starts_at?->toIso8601String(),
+            'schedule_timezone' => $order->schedule_timezone,
             'service_duration_minutes' => $serviceDurationMinutes,
             'service_lead_time_seconds' => $serviceLeadTimeSeconds,
             'approved_at' => $order->approved_at,

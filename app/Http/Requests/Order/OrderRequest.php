@@ -42,6 +42,7 @@ class OrderRequest extends FormRequest
                     'company_website' => ['nullable', 'string', 'max:255'],
                     'items' => ['required', 'array', 'min:1'],
                     'channel' => ['sometimes', 'string', 'max:24'],
+                    'scheduled_for' => ['nullable', 'date'],
                     'items.*.uuid' => ['required', 'uuid'],
                     'items.*.quantity' => ['required', 'integer', 'min:1', 'max:100'],
                     'items.*.comment' => ['nullable', 'string', 'max:500'],
