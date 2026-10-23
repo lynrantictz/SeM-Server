@@ -17,6 +17,7 @@ use App\Models\Business\BusinessPayout;
 use App\Models\Business\BusinessPayoutAccount;
 use App\Models\Business\BusinessOnboardingPayment;
 use App\Models\Business\BusinessPaymentMethod;
+use App\Models\Section\ServicePoint;
 
 trait BusinessRelationship
 {
@@ -80,6 +81,11 @@ trait BusinessRelationship
     public function paymentMethods()
     {
         return $this->hasMany(BusinessPaymentMethod::class);
+    }
+
+    public function servicePoints()
+    {
+        return $this->hasMany(ServicePoint::class);
     }
 
     public function payoutAccounts()

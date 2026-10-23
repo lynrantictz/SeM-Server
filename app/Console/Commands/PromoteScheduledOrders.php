@@ -31,6 +31,7 @@ class PromoteScheduledOrders extends Command
                     DB::transaction(function () use ($order, $processingId): void {
                         $locked = Order::query()->lockForUpdate()->find($order->id);
                         if (!$locked || $locked->order_status_id !== OrderStatus::query()->where('name', 'Scheduled')->value('id')) return;
+                        if (!$locked->preparation_starts_at || $locked->preparation_starts_at->isFuture()) return;
                         $from = $locked->order_status_id;
                         $locked->update(['order_status_id' => $processingId]);
                         OrderStatusHistory::query()->create([

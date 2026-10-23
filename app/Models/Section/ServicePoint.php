@@ -10,6 +10,11 @@ use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class ServicePoint extends BaseModel
 {
+    protected $casts = [
+        'is_active' => 'boolean',
+        'is_system_managed' => 'boolean',
+    ];
+
     protected $fillable = [
         'business_id', 'section_id', 'sub_section_id', 'type', 'label',
         'display_name', 'capacity', 'notes', 'is_active',

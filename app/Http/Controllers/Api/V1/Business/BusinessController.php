@@ -103,7 +103,11 @@ class BusinessController extends BaseController
     {
         $this->canManageBusiness($business->vendor, $business);
         $this->businesses->update($business, $request->validated());
-        $data['business'] = $business->fresh()->load('contacts');
+        $data['business'] = $business->fresh()->load([
+            'contacts',
+            'district.city.country',
+            'type',
+        ]);
 
         return $this->sendResponse(
             $data,

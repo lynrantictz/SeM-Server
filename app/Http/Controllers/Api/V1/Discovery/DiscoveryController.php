@@ -19,6 +19,13 @@ class DiscoveryController extends BaseController
 
         $channel = $request->query('channel', 'dine_in');
         abort_unless(in_array($channel, OrderingChannel::activeSlugs(), true), HTTP_UNPROCESSABLE_ENTITY, 'The ordering channel is invalid.');
+        if ($channel === 'online') {
+            abort_unless(
+                $business->orderingChannels()->where('ordering_channels.slug', 'online')->wherePivot('is_enabled', true)->exists(),
+                HTTP_UNPROCESSABLE_ENTITY,
+                'Online ordering is not enabled for this business.',
+            );
+        }
 
         $business->loadMissing('district.city.country');
         $availability = app(MenuAvailabilityService::class);
@@ -154,6 +161,11 @@ class DiscoveryController extends BaseController
                 'district.city.country:id,name',
                 'categories:id,business_id,name,is_active',
                 'categories.items:id,category_id,name,final_price,is_active',
+                'servicePoints' => fn ($points) => $points
+                    ->where('is_system_managed', true)
+                    ->where('type', 'online')
+                    ->where('is_active', true)
+                    ->with('activeCode'),
             ])
             ->where('businesses.is_active', true)
             ->whereNotNull('businesses.latitude')
@@ -227,6 +239,8 @@ class DiscoveryController extends BaseController
                 'country' => $business->district?->city?->country?->name,
                 'image' => $business->image_url,
                 'logo' => $business->logo_url,
+                'online_ordering_enabled' => (bool) $business->online_ordering_enabled,
+                'online_code' => $business->servicePoints->first()?->activeCode?->code,
                 'rating' => $business->rating ? (float) $business->rating : null,
                 'review_count' => $business->review_count,
                 'opening_hours' => $business->opening_hours,

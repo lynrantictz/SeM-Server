@@ -40,7 +40,7 @@ class ServiceAreaController extends BaseController
 
         $paginator = ServicePoint::query()
             ->where('business_id', $business->id)
-            ->select(['id', 'uuid', 'business_id', 'section_id', 'sub_section_id', 'type', 'label', 'display_name', 'capacity', 'is_active', 'created_at'])
+            ->select(['id', 'uuid', 'business_id', 'section_id', 'sub_section_id', 'type', 'label', 'display_name', 'capacity', 'is_active', 'is_system_managed', 'created_at'])
             ->with([
                 'section:id,uuid,name',
                 'subSection:id,uuid,name',
@@ -74,7 +74,7 @@ class ServiceAreaController extends BaseController
         $search = mb_strtolower(trim((string) ($validated['search'] ?? '')));
         $paginator = Section::query()
             ->where('business_id', $business->id)
-            ->select(['id', 'uuid', 'name', 'is_active', 'created_at'])
+            ->select(['id', 'uuid', 'name', 'is_active', 'is_system_managed', 'created_at'])
             ->withCount(['subs', 'servicePoints'])
             ->when($search !== '', fn ($query) => $query->whereRaw('LOWER(name) LIKE ?', ['%' . $search . '%']))
             ->orderByDesc('created_at')
@@ -90,7 +90,7 @@ class ServiceAreaController extends BaseController
         $search = mb_strtolower(trim((string) ($validated['search'] ?? '')));
         $paginator = SubSection::query()
             ->where('business_id', $business->id)
-            ->select(['id', 'uuid', 'section_id', 'name', 'is_active', 'created_at'])
+            ->select(['id', 'uuid', 'section_id', 'name', 'is_active', 'is_system_managed', 'created_at'])
             ->with(['section:id,uuid,name'])
             ->withCount('servicePoints')
             ->when($search !== '', function ($query) use ($search) {
@@ -115,6 +115,7 @@ class ServiceAreaController extends BaseController
     public function updateSection(Request $request, Business $business, Section $section)
     {
         $this->authorizeSection($business, $section);
+        abort_if($section->is_system_managed, HTTP_FORBIDDEN, 'System-managed sections cannot be edited.');
         $data = $request->validate(['name' => ['sometimes', 'string', 'max:120'], 'description' => ['nullable', 'string'], 'is_active' => ['sometimes', 'boolean']]);
         $section->update($data);
         return $this->sendResponse(['section' => $section->fresh()], 'Section updated successfully.');
@@ -132,6 +133,7 @@ class ServiceAreaController extends BaseController
     public function updateSubSection(Request $request, Business $business, SubSection $subSection)
     {
         $this->authorizeSubSection($business, $subSection);
+        abort_if($subSection->is_system_managed, HTTP_FORBIDDEN, 'System-managed subsections cannot be edited.');
         $data = $request->validate(['name' => ['sometimes', 'string', 'max:120'], 'description' => ['nullable', 'string'], 'is_active' => ['sometimes', 'boolean']]);
         $subSection->update($data);
         return $this->sendResponse(['sub_section' => $subSection->fresh()], 'Subsection updated successfully.');
@@ -162,6 +164,7 @@ class ServiceAreaController extends BaseController
     {
         abort_unless($servicePoint->business_id === $business->id, HTTP_NOT_FOUND);
         $this->authorizeManage($business);
+        abort_if($servicePoint->is_system_managed, HTTP_FORBIDDEN, 'System-managed service points cannot be edited.');
         $data = $this->servicePointData($request, $business, true);
         $channelSlugs = $data['channel_slugs'] ?? null;
         unset($data['channel_slugs']);
@@ -199,6 +202,7 @@ class ServiceAreaController extends BaseController
         }
         $sectionId = $data['section_id'] ?? $request->input('section_id');
         $section = Section::query()->whereKey($sectionId)->where('business_id', $business->id)->firstOrFail();
+        abort_if($section->is_system_managed, HTTP_FORBIDDEN, 'System-managed sections cannot contain user-managed service points.');
         if (!empty($data['sub_section_id'])) {
             SubSection::query()->whereKey($data['sub_section_id'])->where('section_id', $section->id)->where('business_id', $business->id)->firstOrFail();
         }
@@ -243,7 +247,7 @@ class ServiceAreaController extends BaseController
         ];
     }
 
-    private function authorizeSection(Business $business, Section $section): void { abort_unless($section->business_id === $business->id, HTTP_NOT_FOUND); $this->authorizeManage($business); }
+    private function authorizeSection(Business $business, Section $section): void { abort_unless($section->business_id === $business->id, HTTP_NOT_FOUND); $this->authorizeManage($business); abort_if($section->is_system_managed, HTTP_FORBIDDEN, 'System-managed sections cannot be changed.'); }
     private function authorizeSubSection(Business $business, SubSection $subSection): void { abort_unless($subSection->business_id === $business->id, HTTP_NOT_FOUND); $this->authorizeManage($business); }
 
     private function authorizeManage(Business $business): void

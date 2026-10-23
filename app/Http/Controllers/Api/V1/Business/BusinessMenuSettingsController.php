@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\BaseController;
 use App\Models\Business\Business;
 use App\Models\Business\Timezone;
 use App\Models\Business\OrderingChannel;
+use App\Services\OnlineOrderingAreaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -51,7 +52,7 @@ class BusinessMenuSettingsController extends BaseController
             }
         }
 
-        DB::transaction(function () use ($business, $data) {
+        DB::transaction(function () use ($business, $data, $request) {
             $business->update(collect($data)->except('opening_hours')->all());
             $channelIds = OrderingChannel::query()->pluck('id', 'slug');
             foreach ([
@@ -64,6 +65,11 @@ class BusinessMenuSettingsController extends BaseController
                     $business->orderingChannels()->syncWithoutDetaching([$channelIds[$slug] => ['is_enabled' => (bool) $data[$field]]]);
                 }
             }
+            app(OnlineOrderingAreaService::class)->sync(
+                $business->fresh(),
+                (bool) $data['online_ordering_enabled'],
+                (int) $request->user()->id,
+            );
             $business->openingHours()->delete();
             $business->openingHours()->createMany(array_map(fn ($hour, $index) => $hour + ['sort_order' => $index], $data['opening_hours'], array_keys($data['opening_hours'])));
         });

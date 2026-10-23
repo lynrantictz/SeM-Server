@@ -10,4 +10,9 @@ use Illuminate\Database\Eloquent\Model;
 class Section extends BaseModel
 {
     use SectionAttribute, SectionRelationship;
+
+    protected $casts = [
+        'is_active' => 'boolean',
+        'is_system_managed' => 'boolean',
+    ];
 }

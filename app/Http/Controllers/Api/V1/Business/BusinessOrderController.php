@@ -608,18 +608,39 @@ class BusinessOrderController extends BaseController
         $data = $this->orderPayload($request, $business);
         $updated = DB::transaction(function () use ($business, $order, $data, $role) {
             $record = Order::query()->where('business_id', $business->id)->where('uuid', $order)->lockForUpdate()->firstOrFail();
-            $record->load('status');
-            abort_unless($record->status?->name === 'Pending', Response::HTTP_CONFLICT, 'Only awaiting approval orders can be edited.');
+            $record->load('status', 'paymentStatus', 'payment');
+            $editable = $record->status?->name === 'Pending' || ($record->channel === 'online' && in_array($record->status?->name, ['Awaiting payment', 'Scheduled'], true));
+            abort_unless($editable, Response::HTTP_CONFLICT, 'This order can no longer be edited.');
+            abort_unless($data['channel'] === $record->channel, HTTP_UNPROCESSABLE_ENTITY, 'The ordering channel cannot be changed.');
+            abort_unless(!empty($data['change_reason']), HTTP_UNPROCESSABLE_ENTITY, 'Enter a reason for the order change.');
+            $before = ['scheduled_for' => $record->scheduled_for?->toIso8601String(), 'total' => $record->total_amount, 'items' => $record->items()->with('options')->get()->toArray()];
+            $oldTotal = (float) $record->total_amount;
+            abort_if($record->payment && in_array(strtolower($record->payment->status), ['pending', 'processing'], true), Response::HTTP_CONFLICT, 'Finish or cancel the active payment before editing this order.');
+            if ($record->channel === 'online') {
+                $schedule = \Carbon\Carbon::parse($data['scheduled_for'] ?? '')->utc();
+                abort_unless(!empty($data['scheduled_for']) && $schedule->isFuture() && $schedule->lte(now()->addDays(30)), HTTP_UNPROCESSABLE_ENTITY, 'Choose a future time within 30 days.');
+                $record->business->loadMissing('timezoneDefinition');
+                $timezone = $record->business->timezoneDefinition?->identifier ?: config('app.timezone', 'UTC');
+                $availability = app(MenuAvailabilityService::class)->businessStatus($record->business, $schedule->copy()->setTimezone($timezone));
+                abort_unless($availability['is_open_now'] ?? false, HTTP_UNPROCESSABLE_ENTITY, 'The business is closed at the selected time.');
+                $record->scheduled_for = $schedule;
+                $record->preparation_starts_at = $schedule->copy()->subMinutes((int) config('orders.online_preparation_minutes', 30));
+            }
             $this->assertLockOwner($record);
             $servicePoint = !empty($data['service_point_id']) ? ServicePoint::query()->whereKey($data['service_point_id'])->where('business_id', $business->id)->where('is_active', true)->firstOrFail() : null;
             if ($servicePoint) abort_unless($servicePoint->orderingChannels()->where('slug', $data['channel'])->exists(), HTTP_UNPROCESSABLE_ENTITY, 'This service point is not available for the selected ordering channel.');
             $record->items()->each(fn ($item) => $item->options()->delete());
             $record->items()->delete();
             $record->update(['channel' => $data['channel'], 'service_point_id' => $servicePoint?->id, 'service_point_label' => $servicePoint?->display_name, 'comment' => $data['comment'] ?? null]);
-            (new OrderItemRepository())->store($record, $data['items'], $data['channel']);
+            (new OrderItemRepository())->store($record, $data['items'], $data['channel'], $record->scheduled_for);
             $business->load('promotions');
-            $record->update(app(OrderRepository::class)->totalsFor($business, $record->items()->sum('total_amount')));
-            OrderStatusHistory::query()->create(['order_id' => $record->id, 'from_status_id' => $record->order_status_id, 'to_status_id' => $record->order_status_id, 'changed_by_user_id' => auth()->id(), 'note' => 'Order details updated.']);
+            $totals = app(OrderRepository::class)->totalsFor($business, $record->items()->sum('total_amount'));
+            if ($record->paymentStatus?->name === 'Completed') {
+                unset($totals['paid_amount'], $totals['due_amount']);
+            }
+            $record->update($totals);
+            abort_if($record->paymentStatus?->name === 'Completed' && abs((float) $record->total_amount - $oldTotal) > 0.01, HTTP_UNPROCESSABLE_ENTITY, 'Paid orders cannot change total until a payment adjustment or refund is arranged.');
+            OrderStatusHistory::query()->create(['order_id' => $record->id, 'from_status_id' => $record->order_status_id, 'to_status_id' => $record->order_status_id, 'changed_by_user_id' => auth()->id(), 'note' => 'Order changed: '.$data['change_reason'].' | Before: '.json_encode($before).' | After: '.json_encode(['scheduled_for' => $record->scheduled_for?->toIso8601String(), 'total' => $record->total_amount, 'items' => $data['items']])]);
             return $record;
         });
         return $this->sendResponse(['order' => $this->orderData($this->loadOrder($updated))], 'Order updated successfully.');
@@ -641,8 +662,9 @@ class BusinessOrderController extends BaseController
         abort_unless($this->canCreateOrEdit($role), HTTP_FORBIDDEN, 'Your role cannot edit orders.');
         $lock = DB::transaction(function () use ($business, $order) {
             $record = Order::query()->where('business_id', $business->id)->where('uuid', $order)->lockForUpdate()->firstOrFail();
-            $record->load('status');
-            abort_unless($record->status?->name === 'Pending', Response::HTTP_CONFLICT, 'Only awaiting approval orders can be edited.');
+            $record->load('status', 'paymentStatus');
+            $editable = $record->status?->name === 'Pending' || ($record->channel === 'online' && in_array($record->status?->name, ['Awaiting payment', 'Scheduled'], true));
+            abort_unless($editable, Response::HTTP_CONFLICT, 'This order can no longer be edited.');
             OrderWorkLock::query()->where('expires_at', '<=', now())->delete();
             $lock = OrderWorkLock::query()->where('order_id', $record->id)->lockForUpdate()->first();
             if ($lock && $lock->user_id !== auth()->id()) abort(Response::HTTP_CONFLICT, $lock->user?->name . ' is currently updating this order.');
@@ -665,6 +687,8 @@ class BusinessOrderController extends BaseController
     private function orderPayload(Request $request, Business $business): array
     {
         $data = $request->validate([
+            'scheduled_for' => ['nullable', 'date'],
+            'change_reason' => ['nullable', 'string', 'max:500'],
             'channel' => ['required', 'string', 'max:24'],
             'service_point_id' => ['nullable', 'integer', 'exists:service_points,id'],
             'phone' => ['nullable', 'string', 'max:24'],
@@ -775,7 +799,7 @@ class BusinessOrderController extends BaseController
     private function visibleOrders(Business $business, string $role): Builder
     {
         $query = Order::query()->where('business_id', $business->id);
-        if ($role === 'waiter') return $query->where('channel', 'dine_in');
+        if ($role === 'waiter') return $query->whereIn('channel', ['dine_in', 'online']);
         return $query;
     }
 
