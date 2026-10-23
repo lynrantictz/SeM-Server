@@ -3,14 +3,83 @@
 namespace App\Http\Controllers\Api\V1\Discovery;
 
 use App\Http\Controllers\Api\BaseController;
+use App\Models\Business\OrderingChannel;
 use App\Models\Business\Business;
 use App\Models\Discovery\DiscoveryInteraction;
+use App\Services\MenuAvailabilityService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
 class DiscoveryController extends BaseController
 {
+    public function menu(Request $request, Business $business)
+    {
+        abort_unless($business->is_active, HTTP_NOT_FOUND, 'This business is not available for discovery.');
+
+        $channel = $request->query('channel', 'dine_in');
+        abort_unless(in_array($channel, OrderingChannel::activeSlugs(), true), HTTP_UNPROCESSABLE_ENTITY, 'The ordering channel is invalid.');
+
+        $business->loadMissing('district.city.country');
+        $availability = app(MenuAvailabilityService::class);
+        $menu = $business->categories()->with([
+            'availabilityRules.days',
+            'items' => function ($query): void {
+                $query->where('is_active', true)->where('is_sold_out', false)
+                    ->with([
+                        'availabilityRules.days',
+                        'optionGroups' => fn ($groups) => $groups->where('is_active', true)->with(['options' => fn ($options) => $options->where('is_active', true)]),
+                    ]);
+            },
+        ])
+            ->where('is_active', true)
+            ->orderBy('categories.name')
+            ->get()
+            ->map(function ($category) use ($availability, $business, $channel) {
+                $categoryStatus = $availability->categoryStatus($category, $business, $channel);
+                $category->setRelation('items', $category->items->filter(function ($item) use ($availability, $business, $channel) {
+                    $status = $availability->itemStatus($item, $business, $channel);
+                    $pricing = $availability->itemPricing($item, $business, $channel);
+                    $item->setAttribute('discount', $pricing['discount_percentage']);
+                    $item->setAttribute('discount_percentage', $pricing['discount_percentage']);
+                    $item->setAttribute('final_price', $pricing['final_price']);
+                    $item->setAttribute('discount_amount', $pricing['discount_amount']);
+                    $item->setAttribute('availability', $status);
+
+                    return $status['is_available_now'];
+                })->values());
+                $category->setAttribute('availability', $categoryStatus);
+
+                return $category;
+            })
+            ->filter(fn ($category) => $category->getAttribute('availability')['is_available_now'] && $category->items->isNotEmpty())
+            ->values();
+
+        $country = $business->district?->city?->country;
+        $vat = $business->tax_allowed && $business->tax_status === 'vat_registered'
+            ? $country?->taxes()
+                ->where('is_active', true)
+                ->where(fn ($query) => $query->whereNull('effective_from')->orWhere('effective_from', '<=', now()))
+                ->where(fn ($query) => $query->whereNull('effective_until')->orWhere('effective_until', '>', now()))
+                ->orderByDesc('effective_from')
+                ->first()
+            : null;
+
+        return $this->sendResponse([
+            'business' => [
+                'uuid' => $business->uuid,
+                'name' => $business->name,
+                'logo' => $business->logo_url,
+            ],
+            'menu' => $menu,
+            'pricing' => [
+                'currency' => $country?->currency,
+                'vat_applicable' => $vat !== null,
+                'vat_rate' => $vat?->percent !== null ? (float) $vat->percent : null,
+            ],
+        ], 'Discovery menu retrieved successfully.');
+    }
+
     public function trackInteraction(Request $request)
     {
         $validated = $request->validate([
@@ -157,6 +226,7 @@ class DiscoveryController extends BaseController
                 'city' => $business->district?->city?->name,
                 'country' => $business->district?->city?->country?->name,
                 'image' => $business->image_url,
+                'logo' => $business->logo_url,
                 'rating' => $business->rating ? (float) $business->rating : null,
                 'review_count' => $business->review_count,
                 'opening_hours' => $business->opening_hours,
@@ -168,7 +238,15 @@ class DiscoveryController extends BaseController
                     ->values(),
                 'menu_preview' => $items
                     ->take(3)
-                    ->map(fn ($item) => ['name' => $item->name, 'price' => (float) $item->final_price])
+                    ->map(function ($item) use ($categories) {
+                        $category = $categories->first(fn ($candidate) => $candidate->items->contains('id', $item->id));
+
+                        return [
+                            'name' => $item->name,
+                            'price' => (float) $item->final_price,
+                            'category' => $category?->name,
+                        ];
+                    })
                     ->values(),
                 'search_matches' => $searchMatches,
                 'distance_km' => $business->distance_km ? round((float) $business->distance_km, 1) : null,
