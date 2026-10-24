@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class VendorInvitation extends Model
 {
-    protected $fillable = ['vendor_id', 'user_id', 'token', 'requires_password_setup', 'expires_at', 'accepted_at'];
+    protected $fillable = ['vendor_id', 'user_id', 'token', 'requires_password_setup', 'expires_at', 'accepted_at', 'assign_owner'];
 
     protected $casts = ['requires_password_setup' => 'boolean', 'expires_at' => 'datetime', 'accepted_at' => 'datetime'];
 

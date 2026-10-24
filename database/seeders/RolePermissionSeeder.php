@@ -3,10 +3,10 @@
 namespace Database\Seeders;
 
 use App\Models\Auth\User;
-use Spatie\Permission\Models\Role;
-use Spatie\Permission\Models\Permission;
-use Spatie\Permission\PermissionRegistrar;
 use Illuminate\Database\Seeder;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 class RolePermissionSeeder extends Seeder
 {
@@ -86,7 +86,6 @@ class RolePermissionSeeder extends Seeder
             'menu-items.list',
             'menu-item.activate',
 
-
             // waiter
             'order.create',
             'order.view',
@@ -95,7 +94,7 @@ class RolePermissionSeeder extends Seeder
             'order.approve',
             'order.cancel',
             'order.complete',
-            'order.payment'
+            'order.payment',
 
         ];
 
@@ -110,10 +109,10 @@ class RolePermissionSeeder extends Seeder
         */
 
         // $superAdmin    = Role::firstOrCreate(['name' => 'super-admin', 'guard_name' => 'api']);
-        $owner   = Role::firstOrCreate(['name' => 'owner', 'guard_name' => 'api']);
+        $owner = Role::firstOrCreate(['name' => 'owner', 'guard_name' => 'api']);
         $manager = Role::firstOrCreate(['name' => 'manager', 'guard_name' => 'api']);
-        $counterClerk     = Role::firstOrCreate(['name' => 'counter-clerk', 'guard_name' => 'api']);
-        $waiter        = Role::firstOrCreate(['name' => 'waiter', 'guard_name' => 'api']);
+        $counterClerk = Role::firstOrCreate(['name' => 'counter-clerk', 'guard_name' => 'api']);
+        $waiter = Role::firstOrCreate(['name' => 'waiter', 'guard_name' => 'api']);
 
         /*
         |--------------------------------------------------------------------------
@@ -244,7 +243,7 @@ class RolePermissionSeeder extends Seeder
             'order.approve',
             'order.cancel',
             'order.complete',
-            'order.payment'
+            'order.payment',
         ]);
 
         $waiter->syncPermissions([
@@ -255,7 +254,7 @@ class RolePermissionSeeder extends Seeder
             'order.approve',
             'order.cancel',
             'order.complete',
-            'order.payment'
+            'order.payment',
         ]);
 
         /*
@@ -396,6 +395,8 @@ class RolePermissionSeeder extends Seeder
                 ? Permission::query()->where('guard_name', 'api')->get()
                 : $rolePermissions);
         }
+
+        $this->call(OnboardingAgentRoleSeeder::class);
 
         // Keep the initial operations account fully provisioned when it exists.
         User::query()

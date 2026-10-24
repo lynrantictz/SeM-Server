@@ -15,6 +15,8 @@ return [
         ],
     ],
     'azampay' => [
+        // Direct collection is the current model; gateway processing is deferred.
+        'enabled' => false,
         'environment' => env('AZAMPAY_ENV', 'sandbox'),
         'base_url' => env('AZAMPAY_SANDBOX_BASEURL') ?: 'https://sandbox.azampay.co.tz',
         'token_base_url' => env('AZAMPAY_TOKEN_BASEURL') ?: 'https://authenticator-sandbox.azampay.co.tz',

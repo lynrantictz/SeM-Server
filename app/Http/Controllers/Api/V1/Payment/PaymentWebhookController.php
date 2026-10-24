@@ -21,6 +21,7 @@ class PaymentWebhookController extends Controller
 
     public function handle(Request $request)
     {
+        abort_unless(config('payments.azampay.enabled', false), 422, 'Online gateway payments are currently unavailable.');
         $data = $request->validate([
             'transactionstatus' => ['required', 'string'],
             'utilityref' => ['required', 'string'],

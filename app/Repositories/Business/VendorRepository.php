@@ -2,12 +2,10 @@
 
 namespace App\Repositories\Business;
 
-use App\Models\Business\Vendor;
 use App\Models\Business\Business;
-use App\Repositories\Auth\UserRepository;
+use App\Models\Business\Vendor;
 use App\Repositories\BaseRepository;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 
 class VendorRepository extends BaseRepository
 {
@@ -32,9 +30,9 @@ class VendorRepository extends BaseRepository
             ])
             ->with('country:id,name,iso2,phone_code,flag')
             ->withCount('businesses')
-            ->join('vendor_user', 'vendor_user.vendor_id', '=', 'vendors.id')
+            ->join(auth()->user()->type === 'agent' ? 'agent_vendor_assignments as vendor_user' : 'vendor_user', 'vendor_user.vendor_id', '=', 'vendors.id')
             ->when($search !== '', function ($query) use ($search) {
-                $term = '%' . $search . '%';
+                $term = '%'.$search.'%';
 
                 $query->where(function ($searchQuery) use ($term) {
                     $searchQuery
@@ -89,7 +87,7 @@ class VendorRepository extends BaseRepository
             ])
             ->where('businesses.vendor_id', $vendor->id)
             ->when($search !== '', function ($query) use ($search) {
-                $term = '%' . $search . '%';
+                $term = '%'.$search.'%';
 
                 $query->where(function ($searchQuery) use ($term) {
                     $searchQuery
@@ -106,12 +104,16 @@ class VendorRepository extends BaseRepository
 
     /**
      * Store new Vendor
-     * @param $inputs
-     * @return Vendor
      */
     public function store($inputs): Vendor
     {
         return DB::transaction(function () use ($inputs) {
+            if (auth()->user()->type === 'agent') {
+                $vendor = Vendor::create($inputs);
+                app(\App\Services\OnboardingAgentService::class)->assign(auth()->user(), $vendor, 'all_businesses', []);
+
+                return $vendor;
+            }
             $vendor = auth()->user()->vendors()->create($inputs);
             auth()->user()->vendors()->updateExistingPivot($vendor->id, [
                 'is_primary' => true,
@@ -119,6 +121,7 @@ class VendorRepository extends BaseRepository
                 'access_scope' => 'all_businesses',
                 'is_active' => true,
             ]);
+
             return $vendor;
         });
     }

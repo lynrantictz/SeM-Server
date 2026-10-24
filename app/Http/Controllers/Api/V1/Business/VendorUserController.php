@@ -103,7 +103,7 @@ class VendorUserController extends BaseController
 
         $result = DB::transaction(function () use ($vendor, $validated, $businessIds) {
             $user = User::where('email', strtolower($validated['email']))->first();
-            $requiresPasswordSetup = !$user || !$user->is_active || !$user->email_verified_at;
+            $requiresPasswordSetup = ! $user || ! $user->is_active || ! $user->email_verified_at;
             $user ??= User::create([
                 'name' => $validated['name'],
                 'email' => strtolower($validated['email']),
@@ -150,7 +150,7 @@ class VendorUserController extends BaseController
         });
 
         [$user, $token, $requiresPasswordSetup, $invitationId] = $result;
-        $acceptUrl = rtrim(config('app.business_url'), '/') . '/accept-vendor-invitation?token=' . $token;
+        $acceptUrl = rtrim(config('app.business_url'), '/').'/accept-vendor-invitation?token='.$token;
         $user->notify(new VendorInvitationNotification($vendor, $acceptUrl, $requiresPasswordSetup, $invitationId));
 
         return $this->sendResponse([], 'Vendor user invited successfully.', HTTP_CREATED);
@@ -162,7 +162,7 @@ class VendorUserController extends BaseController
         abort_unless($vendor->users()->whereKey($user->id)->exists(), HTTP_NOT_FOUND, 'Vendor user not found.');
         $validated = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
-            'email' => ['sometimes', 'email', 'max:255', 'unique:users,email,' . $user->id],
+            'email' => ['sometimes', 'email', 'max:255', 'unique:users,email,'.$user->id],
             'is_active' => ['sometimes', 'boolean'],
         ]);
 
@@ -197,7 +197,7 @@ class VendorUserController extends BaseController
         );
 
         $token = Str::random(64);
-        $requiresPasswordSetup = !$user->is_active || !$user->email_verified_at;
+        $requiresPasswordSetup = ! $user->is_active || ! $user->email_verified_at;
         VendorInvitation::where('vendor_id', $vendor->id)->where('user_id', $user->id)->whereNull('accepted_at')->delete();
         $invitation = VendorInvitation::create([
             'vendor_id' => $vendor->id,
@@ -208,7 +208,7 @@ class VendorUserController extends BaseController
         ]);
         $vendor->users()->updateExistingPivot($user->id, ['invited_at' => now(), 'is_active' => false, 'accepted_at' => null, 'revoked_at' => null]);
 
-        $acceptUrl = rtrim(config('app.business_url'), '/') . '/accept-vendor-invitation?token=' . $token;
+        $acceptUrl = rtrim(config('app.business_url'), '/').'/accept-vendor-invitation?token='.$token;
         $user->notify(new VendorInvitationNotification($vendor, $acceptUrl, $requiresPasswordSetup, $invitation->id));
 
         return $this->sendResponse([], 'A new invitation email has been sent.');
@@ -230,6 +230,12 @@ class VendorUserController extends BaseController
                     'is_active' => true,
                     'email_verified_at' => now(),
                 ]);
+            }
+            if ($invitation->assign_owner) {
+                Vendor::whereKey($invitation->vendor_id)->lockForUpdate()->firstOrFail();
+                abort_if($invitation->vendor->users()->wherePivot('is_primary', true)->where('users.id', '!=', $invitation->user_id)->exists(), 409, 'This vendor already has an owner.');
+                $invitation->vendor->users()->updateExistingPivot($invitation->user_id, ['is_primary' => true]);
+                app(\App\Services\OnboardingAgentService::class)->audit('owner.accepted', null, $invitation->vendor_id, ['owner_uuid' => $invitation->user->uuid]);
             }
             $invitation->vendor->users()->updateExistingPivot($invitation->user_id, ['is_active' => true, 'accepted_at' => now(), 'revoked_at' => null]);
             $invitation->update(['accepted_at' => now()]);
@@ -261,6 +267,12 @@ class VendorUserController extends BaseController
         abort_if($invitation->accepted_at || $invitation->expires_at->isPast(), HTTP_UNPROCESSABLE_ENTITY, 'This invitation is no longer available.');
 
         DB::transaction(function () use ($invitation) {
+            if ($invitation->assign_owner) {
+                Vendor::whereKey($invitation->vendor_id)->lockForUpdate()->firstOrFail();
+                abort_if($invitation->vendor->users()->wherePivot('is_primary', true)->where('users.id', '!=', $invitation->user_id)->exists(), 409, 'This vendor already has an owner.');
+                $invitation->vendor->users()->updateExistingPivot($invitation->user_id, ['is_primary' => true]);
+                app(\App\Services\OnboardingAgentService::class)->audit('owner.accepted', null, $invitation->vendor_id, ['owner_uuid' => $invitation->user->uuid]);
+            }
             $invitation->vendor->users()->updateExistingPivot($invitation->user_id, ['is_active' => true, 'accepted_at' => now(), 'revoked_at' => null]);
             $invitation->update(['accepted_at' => now()]);
         });
@@ -275,7 +287,7 @@ class VendorUserController extends BaseController
             ->whereNull('accepted_at')
             ->first();
 
-        if (!$invitation || $invitation->expires_at->isPast()) {
+        if (! $invitation || $invitation->expires_at->isPast()) {
             abort(HTTP_UNPROCESSABLE_ENTITY, 'This invitation is invalid or has expired.');
         }
 

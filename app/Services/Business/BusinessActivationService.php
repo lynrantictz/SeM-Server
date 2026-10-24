@@ -51,17 +51,22 @@ class BusinessActivationService
             ->filter(
             fn (BusinessPaymentMethod $configuration): bool => $this->paymentMethodIsComplete($configuration)
         );
-        $paymentMethodsApproved = $completeMethods->isNotEmpty();
-        $checkoutEnabled = $business->paymentSetting?->provider === 'azampay'
+        $enabledMethodCount = $business->paymentMethods->where('is_enabled', true)->count();
+        $paymentMethodsApproved = $enabledMethodCount > 0
+            && $completeMethods->count() === $enabledMethodCount;
+        // Eligibility is independent of the activation flag that Operations sets.
+        $activationEligible = $documentsApproved && $paymentMethodsApproved;
+        $checkoutEnabled = config('payments.azampay.enabled', false)
+            && $business->paymentSetting?->provider === 'azampay'
             && (bool) $business->paymentSetting->is_checkout_enabled;
         $manualPaymentReady = (bool) $business->is_active
-            && $documentsApproved
-            && $paymentMethodsApproved;
+            && $activationEligible;
         $canAcceptMobileMoney = $manualPaymentReady && $checkoutEnabled;
 
         return [
             'status' => $manualPaymentReady ? 'active' : 'needs_review',
             'business_enabled' => (bool) $business->is_active,
+            'activation_eligible' => $activationEligible,
             'documents_approved' => $documentsApproved,
             'payment_methods_approved' => $paymentMethodsApproved,
             'configured_payment_method_count' => $configuredMethods->count(),
@@ -81,7 +86,7 @@ class BusinessActivationService
             return false;
         }
 
-        if ($configuration->status === 'disabled') {
+        if ($configuration->status !== 'active') {
             return false;
         }
 

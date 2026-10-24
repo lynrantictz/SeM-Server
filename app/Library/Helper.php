@@ -3,11 +3,9 @@
 use App\Enums\User\UserType;
 use App\Models\Location\Country;
 
-if (!function_exists('includeRouteFiles')) {
+if (! function_exists('includeRouteFiles')) {
     /**
      * Include all PHP files in a directory.
-     *
-     * @param string $folder
      */
     function includeRouteFiles(string $folder)
     {
@@ -15,7 +13,7 @@ if (!function_exists('includeRouteFiles')) {
         $it = new \RecursiveIteratorIterator($rdi);
 
         while ($it->valid()) {
-            if (!$it->isDot() && $it->isFile() && $it->isReadable() && $it->current()->getExtension() === 'php') {
+            if (! $it->isDot() && $it->isFile() && $it->isReadable() && $it->current()->getExtension() === 'php') {
                 include $it->key();
             }
 
@@ -24,59 +22,80 @@ if (!function_exists('includeRouteFiles')) {
     }
 }
 
-if (!defined('HTTP_OK')) define('HTTP_OK', 200);
-if (!defined('HTTP_CREATED')) define('HTTP_CREATED', 201);
-if (!defined('HTTP_NO_CONTENT')) define('HTTP_NO_CONTENT', 204);
-if (!defined('HTTP_BAD_REQUEST')) define('HTTP_BAD_REQUEST', 400);
-if (!defined('HTTP_UNAUTHORIZED')) define('HTTP_UNAUTHORIZED', 401);
-if (!defined('HTTP_FORBIDDEN')) define('HTTP_FORBIDDEN', 403);
-if (!defined('HTTP_NOT_FOUND')) define('HTTP_NOT_FOUND', 404);
-if (!defined('HTTP_UNPROCESSABLE_ENTITY')) define('HTTP_UNPROCESSABLE_ENTITY', 422);
-if (!defined('HTTP_INTERNAL_SERVER_ERROR')) define('HTTP_INTERNAL_SERVER_ERROR', 500);
+if (! defined('HTTP_OK')) {
+    define('HTTP_OK', 200);
+}
+if (! defined('HTTP_CREATED')) {
+    define('HTTP_CREATED', 201);
+}
+if (! defined('HTTP_NO_CONTENT')) {
+    define('HTTP_NO_CONTENT', 204);
+}
+if (! defined('HTTP_BAD_REQUEST')) {
+    define('HTTP_BAD_REQUEST', 400);
+}
+if (! defined('HTTP_UNAUTHORIZED')) {
+    define('HTTP_UNAUTHORIZED', 401);
+}
+if (! defined('HTTP_FORBIDDEN')) {
+    define('HTTP_FORBIDDEN', 403);
+}
+if (! defined('HTTP_NOT_FOUND')) {
+    define('HTTP_NOT_FOUND', 404);
+}
+if (! defined('HTTP_UNPROCESSABLE_ENTITY')) {
+    define('HTTP_UNPROCESSABLE_ENTITY', 422);
+}
+if (! defined('HTTP_INTERNAL_SERVER_ERROR')) {
+    define('HTTP_INTERNAL_SERVER_ERROR', 500);
+}
 
-if (!function_exists('business_id')) {
+if (! function_exists('business_id')) {
     function business_id(): int
     {
         return app('business_id');
     }
 }
 
-if (!function_exists('is_owner')) {
+if (! function_exists('is_owner')) {
     function is_owner(): string
     {
-        if(auth()->user()->type != UserType::OWNER->value){
+        if (auth()->user()->type != UserType::OWNER->value) {
             return false;
         }
+
         return true;
     }
 }
 
-if (!function_exists('is_vendor')) {
+if (! function_exists('is_vendor')) {
     function is_vendor(): string
     {
-        if(auth()->user()->type != UserType::VENDOR->value){
+        if (! in_array(auth()->user()->type, [UserType::VENDOR->value, UserType::AGENT->value], true)) {
             return false;
         }
+
         return true;
     }
 }
 
-if (!function_exists('is_business')) {
+if (! function_exists('is_business')) {
     function is_business(): string
     {
-        if(auth()->user()->type != UserType::BUSINESS->value){
+        if (auth()->user()->type != UserType::BUSINESS->value) {
             return false;
         }
+
         return true;
     }
 }
 
-if (!function_exists('setPhoneFormat')) {
+if (! function_exists('setPhoneFormat')) {
     function setPhoneFormat($code, $value)
     {
         $countryCode = Country::query()->where('iso2', $code)->first();
 
-        if (!$value || !$countryCode) {
+        if (! $value || ! $countryCode) {
             return false;
         }
 
@@ -90,6 +109,6 @@ if (!function_exists('setPhoneFormat')) {
             $phone = substr($phone, 1);
         }
 
-        return $countryCode->phone_code . $phone;
+        return $countryCode->phone_code.$phone;
     }
 }

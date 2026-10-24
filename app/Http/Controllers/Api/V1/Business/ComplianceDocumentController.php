@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api\V1\Business;
 use App\Http\Controllers\Api\BaseController;
 use App\Models\Business\Business;
 use App\Models\Business\ComplianceDocument;
-use App\Models\Business\ComplianceDocumentType;
 use App\Models\Business\Vendor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -47,14 +46,21 @@ class ComplianceDocumentController extends BaseController
         $this->ensureCanManageBusiness($business);
         abort_unless($document->business_id === $business->id, HTTP_NOT_FOUND);
 
-        return $this->updateDocument($request, $document);
+        return DB::transaction(function () use ($request, $business, $document) {
+            $business->newQuery()->whereKey($business->id)->lockForUpdate()->firstOrFail();
+
+            return $this->updateDocument($request, $document->fresh());
+        });
     }
 
     public function businessDestroy(Business $business, ComplianceDocument $document): mixed
     {
         $this->ensureCanManageBusiness($business);
         abort_unless($document->business_id === $business->id, HTTP_NOT_FOUND);
-        $this->destroyDocument($document);
+        DB::transaction(function () use ($business, $document) {
+            $business->newQuery()->whereKey($business->id)->lockForUpdate()->firstOrFail();
+            $this->destroyDocument($document->fresh());
+        });
 
         return $this->sendResponse([], 'Business document deleted successfully.');
     }
@@ -92,14 +98,21 @@ class ComplianceDocumentController extends BaseController
         $this->ensureCanManageVendor($vendor);
         abort_unless($document->vendor_id === $vendor->id, HTTP_NOT_FOUND);
 
-        return $this->updateDocument($request, $document);
+        return DB::transaction(function () use ($request, $vendor, $document) {
+            $vendor->newQuery()->whereKey($vendor->id)->lockForUpdate()->firstOrFail();
+
+            return $this->updateDocument($request, $document->fresh());
+        });
     }
 
     public function vendorDestroy(Vendor $vendor, ComplianceDocument $document): mixed
     {
         $this->ensureCanManageVendor($vendor);
         abort_unless($document->vendor_id === $vendor->id, HTTP_NOT_FOUND);
-        $this->destroyDocument($document);
+        DB::transaction(function () use ($vendor, $document) {
+            $vendor->newQuery()->whereKey($vendor->id)->lockForUpdate()->firstOrFail();
+            $this->destroyDocument($document->fresh());
+        });
 
         return $this->sendResponse([], 'Vendor document deleted successfully.');
     }
@@ -110,22 +123,17 @@ class ComplianceDocumentController extends BaseController
             'document_type' => ['required', 'string', 'max:100'],
             'document_number' => ['nullable', 'string', 'max:120'],
             'issued_at' => ['nullable', 'date'],
-            'expires_at' => ['nullable', 'date', 'after_or_equal:issued_at'],
+            'expires_at' => array_merge(['nullable', 'date'], $request->filled('issued_at') ? ['after_or_equal:issued_at'] : []),
             'file' => [
                 'required',
                 'file',
-                'mimes:' . implode(',', config('compliance-documents.upload.mimes', [])),
-                'max:' . config('compliance-documents.upload.max_kilobytes', 10240),
+                'mimes:'.implode(',', config('compliance-documents.upload.mimes', [])),
+                'max:'.config('compliance-documents.upload.max_kilobytes', 10240),
             ],
         ]);
         $definition = $this->availableDocumentTypes($scope, $owner)
             ->firstWhere('key', $validated['document_type']);
         abort_unless($definition, HTTP_UNPROCESSABLE_ENTITY, 'This document type is not available for the selected business.');
-        abort_if(
-            $definition['requires_expiry_date'] && empty($validated['expires_at']),
-            HTTP_UNPROCESSABLE_ENTITY,
-            'An expiry date is required for this document type.'
-        );
 
         $taxDocumentTypes = ['vat_registration_certificate'];
         if ($scope === 'business' && in_array($validated['document_type'], $taxDocumentTypes, true)) {
@@ -150,8 +158,9 @@ class ComplianceDocumentController extends BaseController
         $path = $file->store("compliance-documents/{$scope}/{$owner->uuid}", 'local');
 
         return DB::transaction(function () use ($request, $scope, $owner, $definition, $validated, $file, $path, $taxDocumentTypes): ComplianceDocument {
+            $owner->newQuery()->whereKey($owner->id)->lockForUpdate()->firstOrFail();
             $document = ComplianceDocument::query()->create([
-                $scope . '_id' => $owner->id,
+                $scope.'_id' => $owner->id,
                 'compliance_document_type_id' => $definition['id'],
                 // Keep immutable key/name snapshots so historical records remain
                 // intelligible if Paperstic later renames or retires a type.
@@ -249,21 +258,19 @@ class ComplianceDocumentController extends BaseController
         $validated = $request->validate([
             'document_number' => ['sometimes', 'nullable', 'string', 'max:120'],
             'issued_at' => ['sometimes', 'nullable', 'date'],
-            'expires_at' => ['sometimes', 'nullable', 'date', 'after_or_equal:issued_at'],
+            'expires_at' => ['sometimes', 'nullable', 'date'],
             'file' => [
                 'nullable',
                 'file',
-                'mimes:' . implode(',', config('compliance-documents.upload.mimes', [])),
-                'max:' . config('compliance-documents.upload.max_kilobytes', 10240),
+                'mimes:'.implode(',', config('compliance-documents.upload.mimes', [])),
+                'max:'.config('compliance-documents.upload.max_kilobytes', 10240),
             ],
         ]);
-        $type = $document->documentType;
+        $issuedAt = array_key_exists('issued_at', $validated) ? $validated['issued_at'] : $document->issued_at?->toDateString();
         $expiresAt = array_key_exists('expires_at', $validated) ? $validated['expires_at'] : $document->expires_at?->toDateString();
-        abort_if(
-            $type?->requires_expiry_date && empty($expiresAt),
-            HTTP_UNPROCESSABLE_ENTITY,
-            'An expiry date is required for this document type.'
-        );
+        if ($issuedAt && $expiresAt && \Carbon\Carbon::parse($expiresAt)->lt(\Carbon\Carbon::parse($issuedAt))) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['expires_at' => ['The expiry date must be on or after the issue date.']]);
+        }
 
         $updates = [
             'status' => 'pending',
@@ -315,7 +322,7 @@ class ComplianceDocumentController extends BaseController
 
     private function effectiveStatus(?ComplianceDocument $document): ?string
     {
-        if (!$document) {
+        if (! $document) {
             return null;
         }
 
@@ -332,46 +339,7 @@ class ComplianceDocumentController extends BaseController
      */
     private function availableDocumentTypes(string $scope, Business|Vendor $owner): Collection
     {
-        if ($owner instanceof Business) {
-            $owner->loadMissing('district.city');
-            $countryId = $owner->district?->city?->country_id;
-            $businessTypeId = $owner->business_type_id;
-        } else {
-            $countryId = $owner->country_id;
-            $businessTypeId = null;
-        }
-
-        return ComplianceDocumentType::query()
-            ->where('scope', $scope)
-            ->where('is_active', true)
-            ->with(['rules' => fn ($query) => $query->where('is_active', true)])
-            ->orderBy('sort_order')
-            ->orderBy('name')
-            ->get()
-            ->map(function (ComplianceDocumentType $type) use ($countryId, $businessTypeId) {
-                $rule = $type->rules
-                    ->filter(function ($rule) use ($countryId, $businessTypeId) {
-                        return ($rule->country_id === null || $rule->country_id === $countryId)
-                            && ($rule->business_type_id === null || $rule->business_type_id === $businessTypeId);
-                    })
-                    ->sortByDesc(fn ($rule) => (int) ($rule->country_id !== null) + (int) ($rule->business_type_id !== null))
-                    ->first();
-
-                if (!$rule) {
-                    return null;
-                }
-
-                return [
-                    'id' => $type->id,
-                    'key' => $type->key,
-                    'name' => $type->name,
-                    'requires_expiry_date' => $type->requires_expiry_date,
-                    'reminder_days' => $type->reminder_days ?? [],
-                    'required_for_payment_activation' => $rule->required_for_payment_activation,
-                ];
-            })
-            ->filter()
-            ->values();
+        return app(\App\Services\Business\ComplianceDocumentRequirements::class)->available($scope, $owner);
     }
 
     private function download(ComplianceDocument $document)
@@ -395,7 +363,7 @@ class ComplianceDocumentController extends BaseController
 
     private function canManageVendor(?Vendor $vendor): bool
     {
-        if (!$vendor || auth()->user()->type === 'business') {
+        if (! $vendor || auth()->user()->type === 'business') {
             return false;
         }
 
@@ -441,7 +409,7 @@ class ComplianceDocumentController extends BaseController
 
     private function canManageBusiness(?Business $business): bool
     {
-        if (!$business || auth()->user()->type === 'business') {
+        if (! $business || auth()->user()->type === 'business') {
             return false;
         }
 
@@ -450,7 +418,7 @@ class ComplianceDocumentController extends BaseController
             return true;
         }
 
-        if (!$membership?->pivot->is_active || $membership?->pivot->role !== 'manager') {
+        if (! $membership?->pivot->is_active || $membership?->pivot->role !== 'manager') {
             return false;
         }
 

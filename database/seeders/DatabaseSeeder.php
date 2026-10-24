@@ -30,5 +30,6 @@ class DatabaseSeeder extends Seeder
         // $this->call(DiscoveryVenueSeeder::class);
         // $this->call(SectionAndSubsectionAndCodesSeerder::class);
         $this->call(RolePermissionSeeder::class);
+        $this->call(OnboardingAgentRoleSeeder::class);
     }
 }

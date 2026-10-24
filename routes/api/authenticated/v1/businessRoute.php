@@ -23,7 +23,7 @@ Route::group(['prefix' => 'businesses'], function () {
     Route::post('{business}/payout-accounts', [BusinessPaymentController::class, 'storePayoutAccount']);
     Route::put('{business}/payout-accounts/{payoutAccount}', [BusinessPaymentController::class, 'updatePayoutAccount']);
     Route::post('{business}/payout-accounts/{payoutAccount}/default', [BusinessPaymentController::class, 'makeDefaultPayoutAccount']);
-    Route::get('{business}/payment-providers', [BusinessPaymentController::class, 'providers']);
+    Route::get('{business}/payment-providers', [BusinessPaymentController::class, 'providers'])->middleware(\App\Http\Middleware\EnsureGatewayPaymentsEnabled::class);
     Route::get('{business}/payment-methods', [BusinessPaymentController::class, 'paymentMethods']);
     Route::put('{business}/payment-methods', [BusinessPaymentController::class, 'savePaymentMethods']);
     Route::post('{business}/payment-methods/submit', [BusinessPaymentController::class, 'submitPaymentMethod']);
@@ -31,7 +31,7 @@ Route::group(['prefix' => 'businesses'], function () {
     Route::get('{business}/payment-methods/payment-timing/history', [BusinessPaymentController::class, 'paymentTimingHistory']);
     Route::post('{business}/payment-methods/{methodUuid}/accounts/{accountUuid}/disable-request', [BusinessPaymentController::class, 'requestPaymentMethodAccountDisable']);
     Route::get('{business}/payment-methods/{methodUuid}/accounts/{accountUuid}/history', [BusinessPaymentController::class, 'paymentMethodAccountHistory']);
-    Route::post('{business}/orders/{order}/mno-checkout', [BusinessPaymentController::class, 'checkout']);
+    Route::post('{business}/orders/{order}/mno-checkout', [BusinessPaymentController::class, 'checkout'])->middleware(\App\Http\Middleware\EnsureGatewayPaymentsEnabled::class);
     Route::get('{business}/orders', [BusinessOrderController::class, 'index']);
     Route::get('{business}/reports', [BusinessOrderController::class, 'reports']);
     Route::get('{business}/orders/context', [BusinessOrderController::class, 'context']);
@@ -68,6 +68,8 @@ Route::group(['prefix' => 'businesses'], function () {
     Route::post('{business}/service-points/{servicePoint}/rotate-code', [ServiceAreaController::class, 'rotateCode']);
     Route::get('{business}/logo', [BusinessController::class, 'logo']);
     Route::post('{business}/logo', [BusinessController::class, 'updateLogo']);
+    Route::post('{business}/discovery-image', [BusinessController::class, 'updateDiscoveryImage']);
+    Route::patch('{business}/discovery-profile', [BusinessController::class, 'updateDiscoveryProfile']);
     Route::get('{business}/documents', [ComplianceDocumentController::class, 'businessIndex']);
     Route::post('{business}/documents', [ComplianceDocumentController::class, 'businessStore']);
     Route::get('{business}/documents/{document}/download', [ComplianceDocumentController::class, 'businessDownload']);

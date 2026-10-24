@@ -15,11 +15,11 @@ trait AuthorizesVendorDirectories
         $canAccess = Auth::user()
             ->vendors()
             ->where(function ($query) {
-                $query->where('vendor_user.is_primary', true)
+                $query->where(auth()->user()->vendorMembershipTable().'.is_primary', true)
                     ->orWhere(function ($membershipQuery) {
                         $membershipQuery
-                            ->where('vendor_user.is_active', true)
-                            ->where('vendor_user.role', 'manager');
+                            ->where(auth()->user()->vendorMembershipTable().'.is_active', true)
+                            ->where(auth()->user()->vendorMembershipTable().'.role', 'manager');
                     });
             })
             ->exists();

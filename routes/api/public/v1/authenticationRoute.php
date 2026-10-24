@@ -1,14 +1,14 @@
 <?php
 
-use App\Http\Controllers\Api\V1\Payment\PaymentWebhookController;
 use App\Http\Controllers\Api\V1\Auth\AuthController;
-use App\Http\Controllers\Api\V1\Auth\LoginController;
-use App\Http\Controllers\Api\V1\Auth\OperationsLoginController;
 use App\Http\Controllers\Api\V1\Auth\ForgotPasswordController;
+use App\Http\Controllers\Api\V1\Auth\LoginController;
 use App\Http\Controllers\Api\V1\Auth\OperationsForgotPasswordController;
-use App\Http\Controllers\Api\V1\Auth\ResetForgottenPasswordController;
+use App\Http\Controllers\Api\V1\Auth\OperationsLoginController;
 use App\Http\Controllers\Api\V1\Auth\OperationsResetForgottenPasswordController;
+use App\Http\Controllers\Api\V1\Auth\ResetForgottenPasswordController;
 use App\Http\Controllers\Api\V1\Business\VendorUserController;
+use App\Http\Controllers\Api\V1\Payment\PaymentWebhookController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('login', LoginController::class);
@@ -35,4 +35,7 @@ Route::get('/verify-email', [AuthController::class, 'verifyEmail']);
 Route::post('/resend-verification', [AuthController::class, 'resendVerification'])
     ->middleware('throttle:5,1');
 
-Route::post('/payments/azampay/callback', [PaymentWebhookController::class, 'handle']);
+Route::post('/payments/azampay/callback', [PaymentWebhookController::class, 'handle'])->middleware(\App\Http\Middleware\EnsureGatewayPaymentsEnabled::class);
+
+Route::get('agent-invitations/preview', [\App\Http\Controllers\Api\V1\Auth\AgentInvitationController::class, 'show'])->middleware('throttle:20,1');
+Route::post('agent-invitations/accept', [\App\Http\Controllers\Api\V1\Auth\AgentInvitationController::class, 'accept'])->middleware('throttle:5,1');

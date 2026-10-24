@@ -41,7 +41,7 @@ class LoginController extends BaseController
             ->orWhereRaw('UPPER(code) = ?', [mb_strtoupper($identifier)])
             ->first();
 
-        if (!$user || !Hash::check($request->password, $user->password)) {
+        if (! $user || ! Hash::check($request->password, $user->password)) {
             return $this->sendError(
                 'Invalid credentials.',
                 ['login' => ['Invalid credentials.']]
@@ -55,21 +55,21 @@ class LoginController extends BaseController
             );
         }
 
-        if (!$requiredType && $user->type === UserType::PAPERSTIC->value) {
+        if (! $requiredType && $user->type === UserType::PAPERSTIC->value) {
             return $this->sendError(
                 'Use the Operations portal.',
                 ['account' => ['Paperstic operations accounts must sign in through the Operations portal.']]
             );
         }
 
-        if (!$user->email_verified_at && in_array($user->type, [UserType::OWNER->value, UserType::VENDOR->value, UserType::PAPERSTIC->value], true)) {
+        if (! $user->email_verified_at && in_array($user->type, [UserType::AGENT->value, UserType::OWNER->value, UserType::VENDOR->value, UserType::PAPERSTIC->value], true)) {
             return $this->sendError(
                 'Email Not verified.',
                 ['account' => ['Your email has not been verified.']]
             );
         }
 
-        if (!$user->is_active) {
+        if (! $user->is_active) {
             return $this->sendError(
                 'Account disabled.',
                 ['account' => ['Your account has been disabled.']]
@@ -82,7 +82,7 @@ class LoginController extends BaseController
                 ->whereHas('business', fn ($query) => $query->where('is_active', true))
                 ->exists();
 
-            if (!$hasActiveBusinessAccess) {
+            if (! $hasActiveBusinessAccess) {
                 return $this->sendError(
                     'Staff access is disabled.',
                     ['account' => ['Your staff access is disabled or the assigned business is inactive. Contact your business manager.']]

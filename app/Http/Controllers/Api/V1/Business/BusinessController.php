@@ -180,6 +180,55 @@ class BusinessController extends BaseController
         ], 'Business logo updated successfully.');
     }
 
+    public function updateDiscoveryProfile(Request $request, Business $business)
+    {
+        $this->canManageBusiness($business->vendor, $business);
+        $validated = $request->validate([
+            'discovery_description' => ['present', 'nullable', 'string', 'max:2000'],
+        ]);
+        $description = trim($validated['discovery_description'] ?? '');
+        $business->update(['discovery_description' => $description === '' ? null : $description]);
+
+        return $this->sendResponse(['business' => $business->fresh()], 'Discovery description updated successfully.');
+    }
+
+    public function updateDiscoveryImage(Request $request, Business $business)
+    {
+        $this->canManageBusiness($business->vendor, $business);
+        $validated = $request->validate([
+            'image' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120', 'dimensions:min_width=600,min_height=300,max_width=8000,max_height=8000'],
+        ]);
+
+        $disk = Storage::disk('public');
+        $directory = "business-discovery/{$business->uuid}";
+        $path = $validated['image']->store($directory, 'public');
+        abort_unless($path, 500, 'The discovery image could not be stored.');
+        $url = $disk->url($path);
+        try {
+            $oldUrl = DB::transaction(function () use ($business, $url) {
+                $lockedBusiness = Business::query()->lockForUpdate()->findOrFail($business->id);
+                $oldUrl = $lockedBusiness->image_url;
+                $lockedBusiness->update(['image_url' => $url]);
+
+                return $oldUrl;
+            });
+        } catch (\Throwable $exception) {
+            $disk->delete($path);
+            throw $exception;
+        }
+
+        // Only remove our own previous upload, never external or unrelated images.
+        $prefix = $disk->url($directory).'/';
+        if ($oldUrl && str_starts_with($oldUrl, $prefix)) {
+            $filename = substr($oldUrl, strlen($prefix));
+            if (preg_match('/^[a-zA-Z0-9]+\.(jpg|jpeg|png|webp)$/', $filename)) {
+                $disk->delete($directory.'/'.$filename);
+            }
+        }
+
+        return $this->sendResponse(['business' => $business->fresh()], 'Discovery image updated successfully.');
+    }
+
     /**
      * Remove the specified resource from storage.
      */

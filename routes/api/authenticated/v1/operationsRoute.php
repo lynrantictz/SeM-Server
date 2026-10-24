@@ -1,11 +1,22 @@
 <?php
 
-use App\Http\Controllers\Api\V1\Operations\OperationsDashboardController;
 use App\Http\Controllers\Api\V1\Operations\OperationsBusinessController;
+use App\Http\Controllers\Api\V1\Operations\OperationsDashboardController;
 use App\Http\Controllers\Api\V1\Operations\OperationsVendorController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('operations')->group(function (): void {
+    Route::middleware('permission:operations.kyc.view')->group(function (): void {
+        $controller = \App\Http\Controllers\Api\V1\Operations\OperationsReviewController::class;
+        Route::get('reviews/summary', [$controller, 'summary']);
+        Route::get('reviews', [$controller, 'index']);
+        Route::get('reviews/{scope}/{uuid}', [$controller, 'show'])->whereIn('scope', ['vendor', 'business']);
+        Route::post('reviews/{scope}/{uuid}/decision', [$controller, 'decide'])->whereIn('scope', ['vendor', 'business']);
+        Route::get('review-documents/{uuid}/file', [$controller, 'file']);
+        Route::post('review-documents/{uuid}/decision', [$controller, 'decideDocument']);
+        Route::get('review-notifications', [$controller, 'notifications']);
+        Route::post('review-notifications/read', [$controller, 'readNotifications']);
+    });
     Route::get('dashboard', OperationsDashboardController::class)
         ->middleware('permission:operations.dashboard.view');
 

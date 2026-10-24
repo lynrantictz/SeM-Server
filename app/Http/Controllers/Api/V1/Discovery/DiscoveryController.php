@@ -3,19 +3,22 @@
 namespace App\Http\Controllers\Api\V1\Discovery;
 
 use App\Http\Controllers\Api\BaseController;
-use App\Models\Business\OrderingChannel;
 use App\Models\Business\Business;
+use App\Models\Business\OrderingChannel;
 use App\Models\Discovery\DiscoveryInteraction;
+use App\Services\Discovery\DiscoverableBusinesses;
 use App\Services\MenuAvailabilityService;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class DiscoveryController extends BaseController
 {
+    public function __construct(private readonly DiscoverableBusinesses $discovery) {}
+
     public function menu(Request $request, Business $business)
     {
-        abort_unless($business->is_active, HTTP_NOT_FOUND, 'This business is not available for discovery.');
+        abort_unless($this->discovery->query()->whereKey($business->id)->exists(), HTTP_NOT_FOUND, 'This business is not available for discovery.');
 
         $channel = $request->query('channel', 'dine_in');
         abort_unless(in_array($channel, OrderingChannel::activeSlugs(), true), HTTP_UNPROCESSABLE_ENTITY, 'The ordering channel is invalid.');
@@ -94,9 +97,8 @@ class DiscoveryController extends BaseController
             'event_type' => ['required', 'string', 'in:tap,search,copy_location'],
         ]);
 
-        $business = Business::query()
+        $business = $this->discovery->query()
             ->where('uuid', $validated['business_uuid'])
-            ->where('is_active', true)
             ->firstOrFail();
 
         DB::transaction(function () use ($request, $business, $validated): void {
@@ -117,13 +119,10 @@ class DiscoveryController extends BaseController
             'country_id' => ['nullable', 'integer', 'exists:countries,id'],
         ]);
 
-        $regions = Business::query()
+        $regions = $this->discovery->query()
             ->join('districts', 'districts.id', '=', 'businesses.district_id')
             ->join('cities', 'cities.id', '=', 'districts.city_id')
             ->selectRaw('cities.id, cities.name, AVG(businesses.latitude) as latitude, AVG(businesses.longitude) as longitude')
-            ->where('businesses.is_active', true)
-            ->whereNotNull('businesses.latitude')
-            ->whereNotNull('businesses.longitude')
             ->when($validated['country_id'] ?? null, fn ($query, $countryId) => $query->where('cities.country_id', $countryId))
             ->groupBy('cities.id', 'cities.name')
             ->orderBy('cities.name')
@@ -152,7 +151,7 @@ class DiscoveryController extends BaseController
             'limit' => ['nullable', 'integer', 'between:1,100'],
         ]);
 
-        $query = Business::query()
+        $query = $this->discovery->query()
             ->select('businesses.*')
             ->with([
                 'type:id,name',
@@ -167,12 +166,9 @@ class DiscoveryController extends BaseController
                     ->where('is_active', true)
                     ->with('activeCode'),
             ])
-            ->where('businesses.is_active', true)
-            ->whereNotNull('businesses.latitude')
-            ->whereNotNull('businesses.longitude')
             ->when($validated['q'] ?? null, function ($businesses, $search) {
-                $pattern = '%' . mb_strtolower($search) . '%';
-                $compactPattern = '%' . preg_replace('/\s+/', '', mb_strtolower($search)) . '%';
+                $pattern = '%'.mb_strtolower($search).'%';
+                $compactPattern = '%'.preg_replace('/\s+/', '', mb_strtolower($search)).'%';
 
                 $businesses->where(function ($match) use ($pattern, $compactPattern) {
                     $match->whereRaw('LOWER(businesses.name) LIKE ?', [$pattern])

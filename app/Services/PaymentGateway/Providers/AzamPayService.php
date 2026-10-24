@@ -148,18 +148,21 @@ class AzamPayService implements PaymentGatewayInterface
 
     private function client(): PendingRequest
     {
+        abort_unless(config('payments.azampay.enabled', false), 422, 'Online gateway payments are currently unavailable.');
         return Http::baseUrl($this->baseUrl)->acceptJson()->asJson()
             ->timeout($this->timeoutSeconds)->connectTimeout(5);
     }
 
     private function tokenClient(): PendingRequest
     {
+        abort_unless(config('payments.azampay.enabled', false), 422, 'Online gateway payments are currently unavailable.');
         return Http::baseUrl($this->tokenBaseUrl)->acceptJson()->asJson()
             ->timeout($this->timeoutSeconds)->connectTimeout(5);
     }
 
     private function checkoutClient(): PendingRequest
     {
+        abort_unless(config('payments.azampay.enabled', false), 422, 'Online gateway payments are currently unavailable.');
         return Http::baseUrl($this->baseUrl)->acceptJson()->asJson()
             ->timeout($this->checkoutTimeoutSeconds)->connectTimeout(5);
     }

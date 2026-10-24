@@ -29,15 +29,15 @@ class ForgotPasswordController extends BaseController
 
         $user = ($requiredType
             ? $query->where('type', $requiredType)
-            : $query->whereIn('type', [UserType::OWNER->value, UserType::VENDOR->value]))->first();
+            : $query->whereIn('type', [UserType::AGENT->value, UserType::OWNER->value, UserType::VENDOR->value]))->first();
 
         if ($user && $user->email_verified_at) {
             $token = Password::broker()->createToken($user);
             $baseUrl = $user->type === UserType::PAPERSTIC->value
                 ? config('app.operations_url')
                 : config('app.business_url');
-            $resetUrl = rtrim($baseUrl, '/') . '/reset-password?'
-                . http_build_query(['token' => $token, 'email' => $user->email]);
+            $resetUrl = rtrim($baseUrl, '/').'/reset-password?'
+                .http_build_query(['token' => $token, 'email' => $user->email]);
 
             $user->notify(new PasswordResetApi($resetUrl));
         }

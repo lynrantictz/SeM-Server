@@ -28,6 +28,7 @@ class PaymentSettlementService
         ?int $initiatedByUserId = null,
         string $initiationSource = 'customer',
     ): Payment {
+        abort_unless(config('payments.azampay.enabled', false), 404, 'Sandbox payments are disabled.');
         $payment = DB::transaction(function () use ($order, $accountNumber, $provider, $initiatedByUserId, $initiationSource): Payment {
             $lockedOrder = Order::query()->lockForUpdate()->findOrFail($order->id);
             $existing = Payment::query()
@@ -79,6 +80,7 @@ class PaymentSettlementService
      */
     public function completeSandboxDemo(Payment $payment): Payment
     {
+        abort_unless(config('payments.azampay.enabled', false), 404, 'Sandbox payments are disabled.');
         return DB::transaction(function () use ($payment): Payment {
             $lockedPayment = Payment::query()->lockForUpdate()->findOrFail($payment->id);
 
@@ -186,7 +188,7 @@ class PaymentSettlementService
         $setting = BusinessPaymentSetting::query()->firstOrCreate(
             ['business_id' => $order->business_id],
             [
-                'provider' => 'azampay',
+                'provider' => data_get($payment->metadata, 'mode') === 'manual' ? 'manual' : 'azampay',
                 'currency' => $payment->currency,
                 'commission_basis' => 'subtotal_excluding_tax',
                 'fee_bearer' => 'business',
@@ -215,6 +217,10 @@ class PaymentSettlementService
             ],
         ]);
 
-        app(BusinessPayoutLedgerService::class)->createFromAllocation($payment, $allocation);
+        // Direct receipts stay with the business. Retain fee allocation for
+        // reporting, but never create a payable for money Paperstic did not collect.
+        if (data_get($payment->metadata, 'mode') !== 'manual') {
+            app(BusinessPayoutLedgerService::class)->createFromAllocation($payment, $allocation);
+        }
     }
 }

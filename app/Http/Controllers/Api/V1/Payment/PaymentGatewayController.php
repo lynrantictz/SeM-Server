@@ -264,7 +264,7 @@ class PaymentGatewayController extends BaseController
 
     public function completeSandboxDemo(Request $request, string $order)
     {
-        if (config('payments.azampay.environment') !== 'sandbox') {
+        if (! config('payments.azampay.enabled', false) || config('payments.azampay.environment') !== 'sandbox') {
             return $this->sendError('Sandbox payment completion is not available in the live environment.', [], HTTP_NOT_FOUND);
         }
 

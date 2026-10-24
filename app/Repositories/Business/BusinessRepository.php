@@ -3,8 +3,8 @@
 namespace App\Repositories\Business;
 
 use App\Models\Business\Business;
-use App\Models\Business\Vendor;
 use App\Models\Business\Timezone;
+use App\Models\Business\Vendor;
 use App\Models\Location\District;
 use App\Models\SystemSetting;
 use App\Repositories\BaseRepository;
@@ -38,6 +38,8 @@ class BusinessRepository extends BaseRepository
                 'businesses.name',
                 'businesses.location',
                 'businesses.google_location',
+                'businesses.image_url',
+                'businesses.discovery_description',
                 'businesses.logo_disk',
                 'businesses.logo_path',
                 'businesses.logo_mime_type',
@@ -64,7 +66,7 @@ class BusinessRepository extends BaseRepository
             ->withCount('categories')
             ->when((is_owner() || is_vendor()), function ($query) {
                 $query->join('vendors', 'vendors.id', '=', 'businesses.vendor_id')
-                    ->join('vendor_user', 'vendor_user.vendor_id', '=', 'vendors.id')
+                    ->join(auth()->user()->type === 'agent' ? 'agent_vendor_assignments as vendor_user' : 'vendor_user', 'vendor_user.vendor_id', '=', 'vendors.id')
                     ->where('vendor_user.user_id', auth()->id())
                     ->where(function ($membershipQuery) {
                         $membershipQuery
@@ -86,7 +88,7 @@ class BusinessRepository extends BaseRepository
                     ->select('businesses.id'));
             })
             ->when($search !== '', function ($query) use ($search) {
-                $term = '%' . $search . '%';
+                $term = '%'.$search.'%';
 
                 $query->where(function ($searchQuery) use ($term) {
                     $searchQuery
@@ -108,6 +110,7 @@ class BusinessRepository extends BaseRepository
     public function store(Vendor $vendor, array $inputs)
     {
         return DB::transaction(function () use ($vendor, $inputs) {
+            $contacts = $inputs['contacts'] ?? [];
             $inputs = Arr::except($inputs, ['contacts', 'timezone', 'tax_allowed', 'tax_status']);
             // Orders and staff login codes use deliberately separate namespaces.
             $inputs['order_prefix'] = $this->prefixService->generate($inputs['name']);
@@ -132,8 +135,8 @@ class BusinessRepository extends BaseRepository
             ]);
 
             // contacts is an array of ['contact' => '...'] objects
-            if (!empty($inputs['contacts'])) {
-                $business->contacts()->createMany($this->normalizeContacts($inputs['contacts'], $business->district_id));
+            if ($contacts) {
+                $business->contacts()->createMany($this->normalizeContacts($contacts, $business->district_id));
             }
 
             return $business->load('contacts');
@@ -148,6 +151,7 @@ class BusinessRepository extends BaseRepository
                 $business->contacts()->delete();
                 $business->contacts()->createMany($this->normalizeContacts($inputs['contacts'], $business->district_id));
             }
+
             return $business;
         });
     }
@@ -156,10 +160,10 @@ class BusinessRepository extends BaseRepository
     {
         $district = District::query()->with('city.country')->findOrFail($districtId);
         $country = $district->city?->country?->iso2;
-        if (!$country) {
+        if (! $country) {
             throw new \InvalidArgumentException('The selected district must belong to a country.');
         }
-        $normalizer = new PhoneNumberNormalizer();
+        $normalizer = new PhoneNumberNormalizer;
 
         return collect($contacts)
             ->map(function (array $contact) use ($normalizer, $country) {

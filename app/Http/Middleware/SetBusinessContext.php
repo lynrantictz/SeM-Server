@@ -17,6 +17,16 @@ class SetBusinessContext
     {
         $user = $request->user();
 
+        if ($user && $user->type === 'agent') {
+            abort_unless($user->is_active, 403, 'Your onboarding agent account is disabled.');
+            app(\App\Services\OnboardingAgentService::class)->authorizeRequest($request);
+            $response = $next($request);
+            if (! $request->isMethod('GET') && $response->getStatusCode() < 400 && ! $request->is('v1/logout', 'v1/change-password')) {
+                app(\App\Services\OnboardingAgentService::class)->audit('agent.request', $user->id, $request->attributes->get('onboarding_vendor_id'), ['method' => $request->method(), 'path' => $request->path()]);
+            }
+
+            return $response;
+        }
         // check if user has no business then a user will be a owner which owns different vendors
 
         // if user has no business, skip business context
@@ -24,10 +34,10 @@ class SetBusinessContext
             return $next($request);
         }
 
-        //Must be authenticated
+        // Must be authenticated
         abort_unless($user, Response::HTTP_UNAUTHORIZED, 'unauthenticated');
 
-        //Resolve business from business_users
+        // Resolve business from business_users
         $businessId = $user->businessUser()
             ->where('is_active', true)
             ->value('business_id');
@@ -37,6 +47,7 @@ class SetBusinessContext
 
         // Store business_id for this request
         app()->instance('business_id', (int) $businessId);
+
         return $next($request);
     }
 }

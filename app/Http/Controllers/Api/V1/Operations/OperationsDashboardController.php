@@ -13,7 +13,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
-use OwenIt\Auditing\Models\Audit;
 
 class OperationsDashboardController extends BaseController
 {
@@ -161,21 +160,7 @@ class OperationsDashboardController extends BaseController
             ];
         }
 
-        $recentActivity = $user->can('operations.audit.view')
-            ? Audit::query()
-                ->latest('created_at')
-                ->limit(8)
-                ->get(['id', 'event', 'auditable_type', 'auditable_id', 'user_id', 'created_at'])
-                ->map(fn (Audit $audit) => [
-                    'id' => $audit->id,
-                    'event' => $audit->event,
-                    'resource' => class_basename((string) $audit->auditable_type),
-                    'resource_id' => $audit->auditable_id,
-                    'user_id' => $audit->user_id,
-                    'created_at' => $audit->created_at?->toIso8601String(),
-                ])
-                ->values()
-            : collect();
+        $recentActivity = app(\App\Services\Operations\RecentActivity::class)->forUser($user);
 
         $businessOptions = $user->can('operations.businesses.view')
             ? Business::query()

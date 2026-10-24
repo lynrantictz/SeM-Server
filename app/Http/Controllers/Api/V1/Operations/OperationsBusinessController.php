@@ -4,9 +4,9 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Api\BaseController;
 use App\Models\Business\Business;
-use App\Models\Business\BusinessPayoutAccount;
 use App\Models\Business\BusinessPaymentMethod;
 use App\Models\Business\BusinessPaymentMethodAccount;
+use App\Models\Business\BusinessPayoutAccount;
 use App\Models\Business\BusinessType;
 use App\Models\Business\ComplianceDocument;
 use App\Models\Business\ComplianceDocumentType;
@@ -14,9 +14,9 @@ use App\Models\Business\OnboardingPackage;
 use App\Models\Location\City;
 use App\Models\Location\Country;
 use App\Models\Order\Order;
+use App\Models\Payment\MobileMoneyProvider;
 use App\Models\Section\Section;
 use App\Models\Section\ServicePoint;
-use App\Models\Payment\MobileMoneyProvider;
 use App\Services\Business\BusinessActivationService;
 use App\Services\PhoneNumberNormalizer;
 use Illuminate\Http\JsonResponse;
@@ -28,9 +28,7 @@ use OwenIt\Auditing\Models\Audit;
 
 class OperationsBusinessController extends BaseController
 {
-    public function __construct(private readonly BusinessActivationService $activation)
-    {
-    }
+    public function __construct(private readonly BusinessActivationService $activation) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -48,8 +46,8 @@ class OperationsBusinessController extends BaseController
             ->with(['vendor:id,name', 'type:id,name', 'district:id,name,city_id', 'district.city:id,name,country_id', 'district.city.country:id,name,iso2', 'district.city.country.taxes:id,country_id,percent,is_active,effective_from,effective_until'])
             ->withCount('complianceDocuments')
             ->withCount(['complianceDocuments as pending_documents_count' => fn ($query) => $query->whereIn('status', ['pending', 'in_review', 'needs_review'])])
-            ->when(!empty($filters['search']), function ($query) use ($filters): void {
-                $term = '%' . trim($filters['search']) . '%';
+            ->when(! empty($filters['search']), function ($query) use ($filters): void {
+                $term = '%'.trim($filters['search']).'%';
                 $query->where(function ($search) use ($term): void {
                     $search->where('name', 'ilike', $term)
                         ->orWhere('tin', 'ilike', $term)
@@ -57,9 +55,9 @@ class OperationsBusinessController extends BaseController
                 });
             })
             ->when(($filters['status'] ?? 'all') !== 'all', fn ($query) => $query->where('is_active', ($filters['status'] ?? null) === 'active'))
-            ->when(!empty($filters['country_id']), fn ($query) => $query->whereHas('district.city', fn ($city) => $city->where('country_id', $filters['country_id'])))
-            ->when(!empty($filters['business_type_id']), fn ($query) => $query->where('business_type_id', $filters['business_type_id']))
-            ->when(!empty($filters['city_id']), fn ($query) => $query->whereHas('district.city', fn ($city) => $city->whereKey($filters['city_id'])))
+            ->when(! empty($filters['country_id']), fn ($query) => $query->whereHas('district.city', fn ($city) => $city->where('country_id', $filters['country_id'])))
+            ->when(! empty($filters['business_type_id']), fn ($query) => $query->where('business_type_id', $filters['business_type_id']))
+            ->when(! empty($filters['city_id']), fn ($query) => $query->whereHas('district.city', fn ($city) => $city->whereKey($filters['city_id'])))
             ->orderByDesc('created_at');
 
         $perPage = $filters['per_page'] ?? '10';
@@ -137,7 +135,7 @@ class OperationsBusinessController extends BaseController
 
     public function updateOnboardingPayment(Request $request, string $uuid): JsonResponse
     {
-        $business = Business::query()->with('onboardingPayment')->where('uuid', $uuid)->firstOrFail();
+        $business = Business::query()->where('uuid', $uuid)->firstOrFail();
         $validated = $request->validate([
             'package_id' => ['required', 'integer', 'exists:onboarding_packages,id'],
             'amount_due' => ['required', 'numeric', 'min:0'],
@@ -149,29 +147,57 @@ class OperationsBusinessController extends BaseController
             'paid_at' => ['nullable', 'date'],
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
-        $package = \App\Models\Business\OnboardingPackage::query()->where('is_active', true)->findOrFail($validated['package_id']);
+        $payment = DB::transaction(function () use ($business, $validated, $request) {
+            $business->newQuery()->whereKey($business->id)->lockForUpdate()->firstOrFail();
+            $existing = $business->onboardingPayment()->lockForUpdate()->first();
+            $package = OnboardingPackage::query()->findOrFail($validated['package_id']);
+            if (! $package->is_active && $existing?->package_id !== $package->id) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['package_id' => ['Select an active onboarding package.']]);
+            }
+            $currency = strtoupper($validated['currency']);
+            $allowedCurrencies = [strtoupper($package->currency)];
+            if ($existing?->package_id === $package->id) {
+                $allowedCurrencies[] = strtoupper($existing->currency);
+            }
+            if (! in_array($currency, $allowedCurrencies, true)) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['currency' => ['Currency must match the selected package.']]);
+            }
+            $due = (float) $validated['amount_due'];
+            $paid = (float) ($validated['amount_paid'] ?? 0);
+            if ($validated['status'] === 'paid' && $paid < $due) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['amount_paid' => ['A paid record must cover the full amount due.']]);
+            }
+            if ($validated['status'] === 'partially_paid' && ($paid <= 0 || $paid >= $due)) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['amount_paid' => ['A partial payment must be greater than zero and less than the amount due.']]);
+            }
+            $verified = in_array($validated['status'], ['paid', 'waived'], true);
 
-        $payment = DB::transaction(fn () => $business->onboardingPayment()->updateOrCreate(
-            ['business_id' => $business->id],
-            [...$validated, 'package' => $package->name, 'amount_paid' => $validated['amount_paid'] ?? 0, 'currency' => strtoupper($validated['currency'])],
-        ));
+            return $business->onboardingPayment()->updateOrCreate(['business_id' => $business->id], [
+                ...$validated,
+                'package' => $existing?->package_id === $package->id ? $existing->package : $package->name,
+                'amount_paid' => $paid, 'currency' => $currency,
+                'paid_at' => $validated['status'] === 'paid' ? ($validated['paid_at'] ?? $existing?->paid_at ?? now()) : ($validated['status'] === 'refunded' ? $existing?->paid_at : null),
+                'verified_by' => $verified ? $request->user()->id : null,
+                'verified_at' => $verified ? now() : null,
+            ]);
+        });
 
-        return $this->sendResponse(['onboarding_payment' => $this->onboardingPaymentData($payment)], 'One-time onboarding payment updated.');
+        return $this->sendResponse(['onboarding_payment' => $this->onboardingPaymentData($payment->load('onboardingPackage'))], 'One-time onboarding payment updated.');
     }
 
     public function updatePaymentSetting(Request $request, string $uuid): JsonResponse
     {
         $business = Business::query()->with(['paymentSetting', 'onboardingPayment'])->where('uuid', $uuid)->firstOrFail();
         $validated = $request->validate([
-            'provider' => ['required', 'in:azampay'],
+            'provider' => ['required', 'in:manual'],
             'currency' => ['required', 'string', 'size:3'],
             'commission_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'commission_basis' => ['required', 'in:subtotal_excluding_tax'],
             'fee_bearer' => ['required', 'in:business'],
             'settlement_mode' => ['required', 'in:manual_hold,manual_payout,automatic_payout'],
             'settlement_requirement' => ['required', 'in:required,not_required,alternative_method'],
-            'is_checkout_enabled' => ['required', 'boolean'],
-            'is_settlement_enabled' => ['required', 'boolean'],
+            'is_checkout_enabled' => ['required', 'boolean', 'declined'],
+            'is_settlement_enabled' => ['required', 'boolean', 'declined'],
         ]);
 
         $readiness = $this->activation->status($business);
@@ -431,19 +457,19 @@ class OperationsBusinessController extends BaseController
                 'This business already has another active settlement account. Suspend it before updating this account.',
             );
             $account->update([
-            'provider' => $provider?->code,
-            'wallet_id' => filled($validated['wallet_id'] ?? null) ? trim($validated['wallet_id']) : null,
-            'account_number' => $accountNumber,
-            'phone_number' => $accountNumber,
-            'account_holder_name' => trim($validated['account_holder_name']),
-            'currency' => strtoupper($validated['currency'] ?? $business->paymentSetting?->currency ?? 'TZS'),
-            'verification_status' => 'verified',
-            'status' => 'active',
-            'is_default' => true,
-            'verified_by' => $request->user()->id,
-            'verified_at' => now(),
-            'rejection_reason' => null,
-            'metadata' => ['updated_by_operations' => true],
+                'provider' => $provider?->code,
+                'wallet_id' => filled($validated['wallet_id'] ?? null) ? trim($validated['wallet_id']) : null,
+                'account_number' => $accountNumber,
+                'phone_number' => $accountNumber,
+                'account_holder_name' => trim($validated['account_holder_name']),
+                'currency' => strtoupper($validated['currency'] ?? $business->paymentSetting?->currency ?? 'TZS'),
+                'verification_status' => 'verified',
+                'status' => 'active',
+                'is_default' => true,
+                'verified_by' => $request->user()->id,
+                'verified_at' => now(),
+                'rejection_reason' => null,
+                'metadata' => ['updated_by_operations' => true],
             ]);
         });
 
@@ -461,12 +487,13 @@ class OperationsBusinessController extends BaseController
         $file = $validated['file'];
         DB::transaction(function () use ($account, $file, $business, $request): void {
             $account->update([
-            'verification_document_path' => $file->store("payout-verification/{$business->uuid}", 'local'),
-            'verification_document_filename' => $file->getClientOriginalName(),
-            'verification_document_uploaded_by' => $request->user()->id,
-            'verification_document_uploaded_at' => now(),
+                'verification_document_path' => $file->store("payout-verification/{$business->uuid}", 'local'),
+                'verification_document_filename' => $file->getClientOriginalName(),
+                'verification_document_uploaded_by' => $request->user()->id,
+                'verification_document_uploaded_at' => now(),
             ]);
         });
+
         return $this->sendResponse(['payout_account' => $this->payoutAccountData($account->fresh())], 'AzamPay verification document uploaded.');
     }
 
@@ -476,6 +503,7 @@ class OperationsBusinessController extends BaseController
         $account = $business->payoutAccounts()->where('uuid', $accountUuid)->firstOrFail();
         abort_unless($account->verification_document_path, 404, 'No verification document has been uploaded.');
         abort_unless(Storage::disk('local')->exists($account->verification_document_path), 404, 'The verification document is no longer available.');
+
         return Storage::disk('local')->response($account->verification_document_path, $account->verification_document_filename);
     }
 
@@ -494,12 +522,12 @@ class OperationsBusinessController extends BaseController
                 'This business already has another active settlement account. Suspend it before approving this account.',
             );
             $account->update([
-            'verification_status' => $approved ? 'verified' : ($suspended ? 'verified' : 'needs_update'),
-            'status' => $approved ? 'active' : ($suspended ? 'suspended' : 'pending'),
-            'is_default' => $approved,
-            'verified_by' => $approved ? $request->user()->id : $account->verified_by,
-            'verified_at' => $approved ? now() : $account->verified_at,
-            'rejection_reason' => $approved ? null : ($validated['reason'] ?? 'Settlement account requires correction.'),
+                'verification_status' => $approved ? 'verified' : ($suspended ? 'verified' : 'needs_update'),
+                'status' => $approved ? 'active' : ($suspended ? 'suspended' : 'pending'),
+                'is_default' => $approved,
+                'verified_by' => $approved ? $request->user()->id : $account->verified_by,
+                'verified_at' => $approved ? now() : $account->verified_at,
+                'rejection_reason' => $approved ? null : ($validated['reason'] ?? 'Settlement account requires correction.'),
             ]);
         });
 
@@ -515,6 +543,7 @@ class OperationsBusinessController extends BaseController
             $business->payoutAccounts()->update(['is_default' => false]);
             $account->update(['is_default' => true]);
         });
+
         return $this->sendResponse(['payout_account' => $this->payoutAccountData($account->fresh())], 'Default settlement account updated.');
     }
 
@@ -592,23 +621,31 @@ class OperationsBusinessController extends BaseController
     public function uploadOnboardingProof(Request $request, string $uuid): JsonResponse
     {
         $business = Business::query()->where('uuid', $uuid)->firstOrFail();
-        $payment = $business->onboardingPayment()->firstOrFail();
-        $validated = $request->validate([
-            'file' => ['required', 'file', 'mimes:pdf', 'max:10240'],
-        ]);
-
-        if ($payment->proof_path) {
-            Storage::disk('local')->delete($payment->proof_path);
-        }
+        $validated = $request->validate(['file' => ['required', 'file', 'mimes:pdf', 'max:10240']]);
         $file = $validated['file'];
-        DB::transaction(function () use ($payment, $file, $business, $request): void {
-            $payment->update([
-                'proof_path' => $file->store("onboarding-payments/{$business->uuid}", 'local'),
-                'proof_filename' => $file->getClientOriginalName(),
-                'uploaded_by' => $request->user()->id,
-                'status' => $payment->status === 'paid' ? 'paid' : 'submitted',
-            ]);
-        });
+        $path = null;
+        try {
+            $payment = DB::transaction(function () use ($file, $business, $request, &$path) {
+                $business->newQuery()->whereKey($business->id)->lockForUpdate()->firstOrFail();
+                $payment = $business->onboardingPayment()->lockForUpdate()->firstOrFail();
+                $oldPath = $payment->proof_path;
+                $path = $file->store("onboarding-payments/{$business->uuid}", 'local');
+                $payment->update([
+                    'proof_path' => $path, 'proof_filename' => $file->getClientOriginalName(), 'uploaded_by' => $request->user()->id,
+                    'status' => $payment->status === 'pending' ? 'submitted' : $payment->status,
+                ]);
+                if ($oldPath) {
+                    DB::afterCommit(fn () => Storage::disk('local')->delete($oldPath));
+                }
+
+                return $payment;
+            });
+        } catch (\Throwable $error) {
+            if ($path) {
+                Storage::disk('local')->delete($path);
+            }
+            throw $error;
+        }
 
         return $this->sendResponse(['onboarding_payment' => $this->onboardingPaymentData($payment->fresh('onboardingPackage'))], 'Onboarding payment proof uploaded.');
     }
@@ -662,7 +699,7 @@ class OperationsBusinessController extends BaseController
 
         $query = DB::query()->fromSub($vendorMembers->unionAll($businessMembers), 'team_members')
             ->when($filters['search'] ?? null, function ($query, string $search): void {
-                $term = '%' . trim($search) . '%';
+                $term = '%'.trim($search).'%';
                 $query->where(function ($searchQuery) use ($term): void {
                     $searchQuery->where('name', 'ilike', $term)
                         ->orWhere('code', 'ilike', $term)
@@ -775,8 +812,8 @@ class OperationsBusinessController extends BaseController
                 'statusHistories.changedBy:id,name',
             ])
             ->withCount('items')
-            ->when(!empty($filters['search']), function ($query) use ($filters): void {
-                $term = '%' . trim($filters['search']) . '%';
+            ->when(! empty($filters['search']), function ($query) use ($filters): void {
+                $term = '%'.trim($filters['search']).'%';
                 $query->where(function ($search) use ($term): void {
                     $search->where('number', 'ilike', $term)
                         ->orWhereHas('customer', fn ($customer) => $customer
@@ -785,8 +822,8 @@ class OperationsBusinessController extends BaseController
                 });
             })
             ->when(($filters['status'] ?? 'all') !== 'all', fn ($query) => $query->whereHas('status', fn ($status) => $status->whereRaw('LOWER(name) = ?', [$filters['status']])))
-            ->when(!empty($filters['date_from']), fn ($query) => $query->whereDate('created_at', '>=', $filters['date_from']))
-            ->when(!empty($filters['date_to']), fn ($query) => $query->whereDate('created_at', '<=', $filters['date_to']))
+            ->when(! empty($filters['date_from']), fn ($query) => $query->whereDate('created_at', '>=', $filters['date_from']))
+            ->when(! empty($filters['date_to']), fn ($query) => $query->whereDate('created_at', '<=', $filters['date_to']))
             ->orderBy($filters['sort_by'] ?? 'created_at', $filters['sort_direction'] ?? 'desc');
 
         $perPage = $filters['per_page'] ?? '10';
@@ -844,8 +881,8 @@ class OperationsBusinessController extends BaseController
                     $query->where('status', $status);
                 }
             })
-            ->when(!empty($filters['search']), function ($query) use ($filters): void {
-                $term = '%' . trim($filters['search']) . '%';
+            ->when(! empty($filters['search']), function ($query) use ($filters): void {
+                $term = '%'.trim($filters['search']).'%';
                 $query->where(function ($search) use ($term): void {
                     $search->where('document_type_name', 'ilike', $term)
                         ->orWhere('document_type', 'ilike', $term)
@@ -853,7 +890,7 @@ class OperationsBusinessController extends BaseController
                         ->orWhereHas('business', fn ($business) => $business->where('name', 'ilike', $term));
                 });
             })
-            ->when(!empty($filters['country_id']), fn ($query) => $query->whereHas('business.district.city', fn ($city) => $city->where('country_id', $filters['country_id'])))
+            ->when(! empty($filters['country_id']), fn ($query) => $query->whereHas('business.district.city', fn ($city) => $city->where('country_id', $filters['country_id'])))
             ->orderByRaw("CASE WHEN status IN ('pending', 'in_review', 'needs_review', 'needs_update') THEN 0 ELSE 1 END")
             ->latest()
             ->paginate($filters['per_page'] ?? 25)
@@ -872,7 +909,7 @@ class OperationsBusinessController extends BaseController
         return Storage::disk($document->disk)->response($document->storage_path, $document->original_filename, [
             'Content-Type' => $document->mime_type,
             'X-Content-Type-Options' => 'nosniff',
-            'Content-Disposition' => 'inline; filename="' . addcslashes($document->original_filename, '"\\') . '"',
+            'Content-Disposition' => 'inline; filename="'.addcslashes($document->original_filename, '"\\').'"',
         ]);
     }
 
@@ -899,6 +936,13 @@ class OperationsBusinessController extends BaseController
                 'reviewed_by' => $request->user()->id,
                 'reviewed_at' => now(),
                 'rejection_reason' => $validated['decision'] === 'returned' ? trim($validated['reason']) : null,
+            ]);
+
+            DB::table('operations_review_history')->insert([
+                'scope' => 'business', 'entity_id' => $document->business_id, 'document_id' => $document->id,
+                'decision' => $validated['decision'], 'user_id' => $request->user()->id,
+                'reason' => $validated['decision'] === 'returned' ? trim($validated['reason']) : null,
+                'created_at' => now(),
             ]);
 
             if ($document->business && $document->document_type === 'vat_registration_certificate') {
@@ -928,9 +972,9 @@ class OperationsBusinessController extends BaseController
         if ($validated['is_active']) {
             $readiness = $this->activation->status($business);
             abort_if(
-                ! $readiness['manual_payment_ready'],
+                ! $readiness['activation_eligible'],
                 HTTP_UNPROCESSABLE_ENTITY,
-                'This business cannot be activated until all required documents are approved and at least one payment method is approved and complete.'
+                'This business cannot be activated until all required documents are approved and every enabled payment method is approved and complete.'
             );
         }
         DB::transaction(function () use ($business, $validated): void {
@@ -1015,8 +1059,8 @@ class OperationsBusinessController extends BaseController
             'vat_rate' => $business->district?->city?->country?->relationLoaded('taxes')
                 ? $business->district->city->country->taxes
                     ->filter(fn ($tax) => $tax->is_active
-                        && (!$tax->effective_from || $tax->effective_from->lte(now()))
-                        && (!$tax->effective_until || $tax->effective_until->gt(now())))
+                        && (! $tax->effective_from || $tax->effective_from->lte(now()))
+                        && (! $tax->effective_until || $tax->effective_until->gt(now())))
                     ->sortByDesc('effective_from')
                     ->first()?->percent
                 : null,
@@ -1166,7 +1210,10 @@ class OperationsBusinessController extends BaseController
 
     private function isoDate(mixed $value): ?string
     {
-        if ($value === null || $value === '') return null;
+        if ($value === null || $value === '') {
+            return null;
+        }
+
         return $value instanceof \DateTimeInterface ? $value->format(DATE_ATOM) : (string) $value;
     }
 
@@ -1329,15 +1376,15 @@ class OperationsBusinessController extends BaseController
                 ? $configuration->rejection_reason
                 : null,
             'accounts' => ($accounts ?? $configuration->accounts)->map(fn (BusinessPaymentMethodAccount $account) => [
-                    'uuid' => $account->uuid,
-                    'label' => $account->label,
-                    'bank_name' => $account->bank_name,
-                    'account_number' => $account->account_number,
-                    'account_holder_name' => $account->account_holder_name,
-                    'currency' => $account->currency,
-                    'status' => $account->status,
-                    'is_default' => (bool) $account->is_default,
-                ])->values(),
+                'uuid' => $account->uuid,
+                'label' => $account->label,
+                'bank_name' => $account->bank_name,
+                'account_number' => $account->account_number,
+                'account_holder_name' => $account->account_holder_name,
+                'currency' => $account->currency,
+                'status' => $account->status,
+                'is_default' => (bool) $account->is_default,
+            ])->values(),
         ];
     }
 
@@ -1349,8 +1396,7 @@ class OperationsBusinessController extends BaseController
         }
 
         if ($method->code === 'bank_transfer' || in_array($method->code, ['mpesa_lipa_namba', 'mixx_merchant', 'airtel_money', 'halopesa', 'mobile_money', 'pos_card'], true)) {
-            return $configuration->accounts->contains(fn (BusinessPaymentMethodAccount $account): bool =>
-                $account->is_enabled
+            return $configuration->accounts->contains(fn (BusinessPaymentMethodAccount $account): bool => $account->is_enabled
                 && ($method->code !== 'bank_transfer' || $account->status === 'active')
                 && filled($account->account_number)
                 && filled($account->account_holder_name)

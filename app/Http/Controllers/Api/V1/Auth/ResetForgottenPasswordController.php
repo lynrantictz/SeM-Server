@@ -31,9 +31,9 @@ class ResetForgottenPasswordController extends BaseController
 
         $eligible = ($requiredType
             ? $query->where('type', $requiredType)
-            : $query->whereIn('type', [UserType::OWNER->value, UserType::VENDOR->value]))->exists();
+            : $query->whereIn('type', [UserType::AGENT->value, UserType::OWNER->value, UserType::VENDOR->value]))->exists();
 
-        if (!$eligible) {
+        if (! $eligible) {
             return $this->sendError('This password reset link is invalid or has expired.', [], HTTP_UNPROCESSABLE_ENTITY);
         }
 

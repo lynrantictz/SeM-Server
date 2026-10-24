@@ -24,6 +24,7 @@ class PaymentCheckoutService
         ?int $initiatedByUserId = null,
         string $initiationSource = 'customer',
     ): PaymentCheckoutResult {
+        abort_unless(config('payments.azampay.enabled', false), 422, 'Online gateway payments are currently unavailable. Pay the business directly.');
         $shouldRequestCheckout = false;
         $payment = DB::transaction(function () use ($order, $accountNumber, $provider, $initiatedByUserId, $initiationSource, &$shouldRequestCheckout): Payment {
             $lockedOrder = Order::query()->lockForUpdate()->findOrFail($order->id);
@@ -93,6 +94,9 @@ class PaymentCheckoutService
      */
     public function sendQueuedMnoCheckout(int $paymentId): void
     {
+        if (! config('payments.azampay.enabled', false)) {
+            return;
+        }
         $payment = Payment::query()->find($paymentId);
 
         if (! $payment || ! in_array($payment->status, ['PENDING', 'PROCESSING'], true)
