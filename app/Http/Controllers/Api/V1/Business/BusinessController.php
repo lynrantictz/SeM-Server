@@ -73,10 +73,13 @@ class BusinessController extends BaseController
      */
     public function show(Business $business)
     {
+        abort_unless(auth()->user()->is_active, HTTP_FORBIDDEN, 'Your account is disabled.');
         $business = $this->businesses
             ->getQuery()
             ->whereKey($business->id)
             ->firstOrFail();
+        $business->setAttribute('profile_permissions', app(\App\Services\Business\BusinessProfileAccess::class)->permissions($business));
+        $business->setAttribute('owner_summary', app(\App\Services\VendorOwnerSummary::class)->forVendor($business->vendor));
         $business->setAttribute('activation', $this->activation->status($business));
         $business->setAttribute(
             'platform_commission_rate',
@@ -102,6 +105,13 @@ class BusinessController extends BaseController
     public function update(BusinessRequest $request, Business $business)
     {
         $this->canManageBusiness($business->vendor, $business);
+        if (auth()->user()->type === 'business') {
+            $protectedFields = ['vendor_id', 'is_active', 'tax_status', 'tax_allowed', 'order_prefix', 'code_prefix', 'commission_rate', 'payment_setting'];
+            abort_if($request->hasAny($protectedFields), HTTP_FORBIDDEN, 'Registration, activation and payment configuration cannot be changed through the business profile.');
+            foreach (['name', 'tin', 'business_type_id'] as $field) {
+                abort_if((string) $request->validated($field) !== (string) $business->{$field}, HTTP_FORBIDDEN, 'Only the vendor owner or vendor manager can change registered business details.');
+            }
+        }
         $this->businesses->update($business, $request->validated());
         $data['business'] = $business->fresh()->load([
             'contacts',
@@ -239,20 +249,17 @@ class BusinessController extends BaseController
 
     private function canManageBusiness(Vendor $vendor, ?Business $business = null, bool $creating = false): void
     {
+        if (auth()->user()->type === 'business') {
+            abort_if($creating || !$business, HTTP_FORBIDDEN, 'Staff accounts cannot register businesses.');
+        }
+        if ($business) {
+            abort_unless(app(\App\Services\Business\BusinessProfileAccess::class)->permissions($business)['can_update_profile'], HTTP_FORBIDDEN, 'You do not have permission to update this business.');
+            return;
+        }
         $membership = auth()->user()->vendors()->whereKey($vendor->id)->first();
-        abort_unless($membership, HTTP_FORBIDDEN, 'You do not have access to this vendor.');
-
-        if ($membership->pivot->is_primary) {
-            return;
-        }
-
-        abort_unless($membership->pivot->is_active && $membership->pivot->role === 'manager', HTTP_FORBIDDEN, 'You do not have permission to manage businesses.');
-
-        if ($membership->pivot->access_scope === 'all_businesses') {
-            return;
-        }
-
-        abort_if($creating || ! $business || ! auth()->user()->businesses()->whereKey($business->id)->where('vendor_id', $vendor->id)->exists(), HTTP_FORBIDDEN, 'You only have access to selected businesses.');
+        abort_unless(auth()->user()->is_active && $membership, HTTP_FORBIDDEN, 'You do not have access to this vendor.');
+        if ($membership->pivot->is_primary) return;
+        abort_unless($membership->pivot->is_active && $membership->pivot->role === 'manager' && $membership->pivot->access_scope === 'all_businesses', HTTP_FORBIDDEN, 'A vendor-wide management assignment is required to register a business.');
     }
 
     private function businessPaginatorData($paginator): array

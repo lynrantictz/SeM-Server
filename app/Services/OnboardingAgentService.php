@@ -64,7 +64,10 @@ class OnboardingAgentService
             || $path === 'users/password-reset'
             || preg_match('#^(vendors|businesses|business-types|business-staff-roles|timezones)(/|$)#', $path);
         abort_unless($allowed, 403, 'Onboarding agents cannot access this feature.');
-        abort_if(preg_match('#/(orders|reports|mno-checkout|staff)(/|$)#', $path), 403, 'Onboarding access does not include live orders, reports or staff administration.');
+        abort_if(preg_match('#/(orders|reports|mno-checkout)(/|$)#', $path), 403, 'Onboarding access does not include live orders or reports.');
+        if (preg_match('#/staff(/|$)#', $path)) {
+            abort_unless(preg_match('#^businesses/[^/]+/staff(?:/[^/]+(?:/reset-password)?)?$#', $path), 403, 'Only assigned business staff can be managed during onboarding.');
+        }
         abort_if(preg_match('#/(review|default)(/|$)#', $path), 403, 'Operations approval is required.');
         $vendor = $request->route('vendor');
         if ($vendor) {

@@ -124,7 +124,7 @@ class OperationsBusinessController extends BaseController
             ->groupBy('business_payment_method_id');
 
         return $this->sendResponse([
-            'business' => $this->businessData($business, $paymentMethodAccounts),
+            'business' => [...$this->businessData($business, $paymentMethodAccounts), 'owner_summary' => app(\App\Services\VendorOwnerSummary::class)->forVendor($business->vendor)],
             'documents' => $documents,
             'document_requirements' => $documentRequirements,
             'onboarding_payment' => $this->onboardingPaymentData($business->onboardingPayment),

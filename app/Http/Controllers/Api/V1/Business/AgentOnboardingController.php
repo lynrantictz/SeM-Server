@@ -39,6 +39,7 @@ class AgentOnboardingController extends BaseController
             })->orderBy('vendors.name')->orderBy('vendors.id')->paginate($filters['per_page'] ?? 10)->withQueryString();
         $vendors = $paginator->getCollection()->map(fn ($v) => [
             'uuid' => $v->uuid, 'name' => $v->name, 'scope' => $v->pivot->access_scope, 'stage' => $v->pivot->stage, 'notes' => $v->pivot->notes,
+            'owner_summary' => app(\App\Services\VendorOwnerSummary::class)->forVendor($v),
             'owner' => $v->users()->wherePivot('is_primary', true)->first(['users.name', 'users.email']),
             'owner_invited' => VendorInvitation::where('vendor_id', $v->id)->where('assign_owner', true)->whereNull('accepted_at')->where('expires_at', '>', now())->exists(),
             'businesses' => $v->businesses()->when($v->pivot->access_scope !== 'all_businesses', fn ($q) => $q->whereIn('id', $u->businesses()->wherePivot('is_active', true)->select('businesses.id')))->get(['id', 'uuid', 'name']),
@@ -94,7 +95,17 @@ class AgentOnboardingController extends BaseController
             return [$owner, $token, $invitation];
         });
         [$owner,$token,$invitation] = $result;
-        $owner->notify(new InvitationMail($v, rtrim(config('app.business_url'), '/').'/accept-vendor-invitation?token='.$token, $invitation->requires_password_setup, $invitation->id));
+        $acceptUrl = rtrim(config('app.business_url'), '/').'/accept-vendor-invitation?token='.$token;
+        if (app()->environment('local')) {
+            \Illuminate\Support\Facades\Log::channel('single')->info('Local owner invitation link', [
+                'vendor_uuid' => $v->uuid,
+                'owner_email' => $owner->email,
+                'invitation_id' => $invitation->id,
+                'accept_url' => $acceptUrl,
+                'expires_at' => $invitation->expires_at->toIso8601String(),
+            ]);
+        }
+        $owner->notify(new InvitationMail($v, $acceptUrl, $invitation->requires_password_setup, $invitation->id));
         $service->audit('owner.invited', $u->id, $v->id, ['owner_uuid' => $owner->uuid]);
 
         return $this->sendResponse([],'Owner invitation queued. Ownership activates only after acceptance.');

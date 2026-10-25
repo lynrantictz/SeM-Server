@@ -30,9 +30,10 @@ class BusinessStaffController extends BaseController
             ->when($search !== '', function ($query) use ($search) {
                 $query->whereHas('user', function ($userQuery) use ($search) {
                     $userQuery->where(function ($userQuery) use ($search) {
-                        $userQuery->where('name', 'ilike', "%{$search}%")
-                            ->orWhere('code', 'ilike', "%{$search}%")
-                            ->orWhere('phone', 'ilike', "%{$search}%");
+                        $pattern = '%'.mb_strtolower($search).'%';
+                        $userQuery->whereRaw('LOWER(name) LIKE ?', [$pattern])
+                            ->orWhereRaw('LOWER(code) LIKE ?', [$pattern])
+                            ->orWhereRaw('LOWER(phone) LIKE ?', [$pattern]);
                     });
                 });
             })
@@ -142,6 +143,7 @@ class BusinessStaffController extends BaseController
     public function update(Request $request, Business $business, User $user): mixed
     {
         $this->ensureCanManageBusiness($business);
+        abort_if(auth()->user()->type === 'agent' && $user->type !== 'business', HTTP_FORBIDDEN, 'Onboarding agents can only update business staff accounts.');
         $membership = BusinessUser::query()
             ->where('business_id', $business->id)
             ->where('user_id', $user->id)

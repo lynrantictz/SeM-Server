@@ -88,6 +88,7 @@ class VendorController extends BaseController
     {
         $this->vendorMembership($vendor);
         $data['vendor'] = $vendor->load('country');
+        $vendor->setAttribute('owner_summary', app(\App\Services\VendorOwnerSummary::class)->forVendor($vendor));
         return $this->sendResponse($data, 'Vendor retrieved successfully.', HTTP_OK);
     }
 
@@ -140,6 +141,7 @@ class VendorController extends BaseController
         $this->vendorMembership($vendor, true, true);
         $this->vendors->update($vendor, $request->all());
         $data['vendor'] = $vendor->load('country');
+        $vendor->setAttribute('owner_summary', app(\App\Services\VendorOwnerSummary::class)->forVendor($vendor));
         return $this->sendResponse($data, 'Vendor updated successfully.', HTTP_OK);
     }
 

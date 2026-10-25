@@ -65,7 +65,7 @@ class OperationsVendorController extends BaseController
             ->firstOrFail();
 
         return $this->sendResponse([
-            'vendor' => $this->vendorData($vendor),
+            'vendor' => [...$this->vendorData($vendor), 'owner_summary' => app(\App\Services\VendorOwnerSummary::class)->forVendor($vendor)],
             'businesses' => $vendor->businesses->map(fn ($business) => [
                 'uuid' => $business->uuid,
                 'name' => $business->name,

@@ -154,10 +154,12 @@ class DiscoveryController extends BaseController
         $query = $this->discovery->query()
             ->select('businesses.*')
             ->with([
+                'openingHours',
+                'timezoneDefinition',
                 'type:id,name',
                 'district:id,name,city_id',
                 'district.city:id,name,country_id',
-                'district.city.country:id,name',
+                'district.city.country:id,name,iso2',
                 'categories:id,business_id,name,is_active',
                 'categories.items:id,category_id,name,final_price,is_active',
                 'servicePoints' => fn ($points) => $points
@@ -210,6 +212,7 @@ class DiscoveryController extends BaseController
             $items = $categories->flatMap(fn ($category) => $category->items->where('is_active', true))->values();
             $searchTerm = isset($validated['q']) ? mb_strtolower($validated['q']) : null;
             $searchMatches = collect();
+            $openingStatus = app(\App\Services\Discovery\OpeningHours::class)->status($business);
 
             if ($searchTerm) {
                 $searchMatches = $categories
@@ -233,16 +236,20 @@ class DiscoveryController extends BaseController
                 'district' => $business->district?->name,
                 'city' => $business->district?->city?->name,
                 'country' => $business->district?->city?->country?->name,
+                'country_iso2' => $business->district?->city?->country?->iso2,
                 'image' => $business->image_url,
                 'logo' => $business->logo_url,
                 'online_ordering_enabled' => (bool) $business->online_ordering_enabled,
                 'online_code' => $business->servicePoints->first()?->activeCode?->code,
                 'rating' => $business->rating ? (float) $business->rating : null,
                 'review_count' => $business->review_count,
-                'opening_hours' => $business->opening_hours,
+                'opening_hours' => $openingStatus['opening_hours'],
+                'timezone' => $openingStatus['timezone'],
+                'closes_at' => $openingStatus['closes_at'],
+                'next_opens_at' => $openingStatus['next_opens_at'],
                 'price_range' => $business->price_range,
                 'short_description' => $business->discovery_description,
-                'open_now' => true,
+                'open_now' => $openingStatus['open_now'],
                 'menu_categories' => $categories
                     ->pluck('name')
                     ->values(),

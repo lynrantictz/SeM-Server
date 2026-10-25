@@ -172,6 +172,14 @@ class BusinessOrderController extends BaseController
         ], 'Orders retrieved successfully.');
     }
 
+    public function dashboard(Business $business, \App\Services\Business\DashboardSummary $summary)
+    {
+        abort_unless(auth()->user()->is_active && auth()->user()->type !== 'agent', Response::HTTP_FORBIDDEN);
+        $role = $this->authorizeBusiness($business);
+        abort_unless(in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager'], true), Response::HTTP_FORBIDDEN, 'You do not have permission to view the dashboard.');
+        return $this->sendResponse($summary->forBusiness($business), 'Business dashboard retrieved.');
+    }
+
     public function reports(Request $request, Business $business)
     {
         $role = $this->authorizeBusiness($business);
