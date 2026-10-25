@@ -33,7 +33,7 @@ beforeEach(function () {
 
 it('saves direct payment configuration and rejects gateway activation', function () {
     $url = '/v1/operations/businesses/'.$this->business->uuid.'/payment-setting';
-    $payload = ['provider' => 'manual', 'currency' => 'TZS', 'commission_rate' => 0, 'commission_basis' => 'subtotal_excluding_tax', 'fee_bearer' => 'business', 'settlement_mode' => 'manual_hold', 'settlement_requirement' => 'not_required', 'is_checkout_enabled' => false, 'is_settlement_enabled' => false];
+    $payload = ['provider' => 'manual', 'currency' => 'TZS', 'commission_basis' => 'subtotal_excluding_tax', 'fee_bearer' => 'business', 'settlement_mode' => 'manual_hold', 'settlement_requirement' => 'not_required', 'is_checkout_enabled' => false, 'is_settlement_enabled' => false];
     $this->patchJson($url, $payload)->assertOk()->assertJsonPath('data.payment_setting.provider', 'manual');
     foreach (['provider' => 'azampay', 'is_checkout_enabled' => true, 'is_settlement_enabled' => true] as $field => $value) {
         $this->patchJson($url, [...$payload, $field => $value])->assertUnprocessable()->assertJsonValidationErrors($field);

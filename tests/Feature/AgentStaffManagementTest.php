@@ -28,7 +28,7 @@ beforeEach(function () {
     $this->role = BusinessStaffRole::create(['name' => 'Waiter', 'slug' => 'waiter', 'is_active' => true]);
     $this->payload = ['name' => 'Test staff', 'business_staff_role_id' => $this->role->id, 'phone' => '255712345678', 'title' => 'Waiter'];
     app(OnboardingAgentService::class)->assign($this->agent, $this->vendor, 'selected_businesses', [$this->business->id]);
-    $this->url = '/v1/businesses/'.$this->business->uuid.'/staff';
+    $this->url = '/v1/businesses/' . $this->business->uuid . '/staff';
     $this->actingAs($this->agent, 'api');
 });
 it('lets an assigned agent list add edit and reset staff using the existing workflow', function () {
@@ -38,25 +38,25 @@ it('lets an assigned agent list add edit and reset staff using the existing work
     $staff = User::where('name', 'Test Staff')->firstOrFail();
     expect($staff->type)->toBe('business');
     expect($staff->must_change_password)->toBeTruthy();
-    $this->getJson($this->url.'?search=Test&per_page=10')->assertOk()->assertJsonPath('data.staff.meta.total', 1);
-    $this->putJson($this->url.'/'.$staff->uuid, ['name' => 'Updated staff', 'title' => 'Lead waiter', 'is_active' => false])->assertOk();
+    $this->getJson($this->url . '?search=Test&per_page=10')->assertOk()->assertJsonPath('data.staff.meta.total', 1);
+    $this->putJson($this->url . '/' . $staff->uuid, ['name' => 'Updated staff', 'title' => 'Lead waiter', 'is_active' => false])->assertOk();
     expect($staff->fresh()->name)->toBe('Updated Staff');
     expect((bool) $staff->fresh()->is_active)->toBeFalse();
-    $this->postJson($this->url.'/'.$staff->uuid.'/reset-password')->assertOk();
+    $this->postJson($this->url . '/' . $staff->uuid . '/reset-password')->assertOk();
     expect(DB::table('onboarding_audits')->where('agent_id', $this->agent->id)->where('action', 'agent.request')->count())->toBeGreaterThanOrEqual(3);
 });
 it('supports a vendor-wide agent assignment for staff onboarding', function () {
     app(OnboardingAgentService::class)->assign($this->agent, $this->vendor, 'all_businesses', []);
-    $this->postJson('/v1/businesses/'.$this->other->uuid.'/staff', $this->payload)->assertCreated();
+    $this->postJson('/v1/businesses/' . $this->other->uuid . '/staff', $this->payload)->assertCreated();
 });
 it('denies staff operations for an unassigned business', function () {
-    $url = '/v1/businesses/'.$this->other->uuid.'/staff';
+    $url = '/v1/businesses/' . $this->other->uuid . '/staff';
     $this->getJson($url)->assertForbidden();
     $this->postJson($url, $this->payload)->assertForbidden();
     $this->postJson($this->url, $this->payload)->assertCreated();
     $staff = User::where('name', 'Test Staff')->firstOrFail();
-    $this->putJson($url.'/'.$staff->uuid, ['name' => 'Forbidden'])->assertForbidden();
-    $this->postJson($url.'/'.$staff->uuid.'/reset-password')->assertForbidden();
+    $this->putJson($url . '/' . $staff->uuid, ['name' => 'Forbidden'])->assertForbidden();
+    $this->postJson($url . '/' . $staff->uuid . '/reset-password')->assertForbidden();
     expect($staff->fresh()->name)->toBe('Test Staff');
 });
 it('blocks staff access when the assignment or agent account is disabled', function () {
@@ -69,11 +69,11 @@ it('blocks staff access when the assignment or agent account is disabled', funct
 });
 it('keeps live orders reports operations and ownership administration out of agent access', function () {
     foreach (['orders', 'reports', 'dashboard'] as $path) {
-        $this->getJson('/v1/businesses/'.$this->business->uuid.'/'.$path)->assertForbidden();
+        $this->getJson('/v1/businesses/' . $this->business->uuid . '/' . $path)->assertForbidden();
     }
-    $this->getJson('/v1/operations/businesses/'.$this->business->uuid)->assertForbidden();
+    $this->getJson('/v1/operations/businesses/' . $this->business->uuid)->assertForbidden();
     $owner = User::create(['name' => 'Owner', 'email' => 'staff-test-owner@example.test', 'password' => 'Example@2026', 'type' => 'owner', 'is_active' => true]);
     $owner->businesses()->attach($this->business->id, ['business_role' => 'vendor_manager', 'title' => 'Owner', 'is_active' => true]);
-    $this->putJson($this->url.'/'.$owner->uuid, ['is_active' => false])->assertForbidden();
+    $this->putJson($this->url . '/' . $owner->uuid, ['is_active' => false])->assertForbidden();
     expect((bool) $owner->fresh()->is_active)->toBeTrue();
 });

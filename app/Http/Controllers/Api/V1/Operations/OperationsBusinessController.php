@@ -191,7 +191,7 @@ class OperationsBusinessController extends BaseController
         $validated = $request->validate([
             'provider' => ['required', 'in:manual'],
             'currency' => ['required', 'string', 'size:3'],
-            'commission_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'commission_rate' => [\Illuminate\Validation\Rule::prohibitedIf(app(\App\Services\Business\BusinessCommissionService::class)->installed()), 'nullable', 'numeric', 'min:0', 'max:100'],
             'commission_basis' => ['required', 'in:subtotal_excluding_tax'],
             'fee_bearer' => ['required', 'in:business'],
             'settlement_mode' => ['required', 'in:manual_hold,manual_payout,automatic_payout'],
@@ -200,6 +200,7 @@ class OperationsBusinessController extends BaseController
             'is_settlement_enabled' => ['required', 'boolean', 'declined'],
         ]);
 
+        if (app(\App\Services\Business\BusinessCommissionService::class)->installed()) unset($validated['commission_rate']);
         $readiness = $this->activation->status($business);
         $onboardingPaid = in_array($business->onboardingPayment?->status, ['paid', 'waived'], true);
         $defaultAccount = $business->payoutAccounts()
@@ -979,6 +980,7 @@ class OperationsBusinessController extends BaseController
         }
         DB::transaction(function () use ($business, $validated): void {
             $business->update(['is_active' => $validated['is_active']]);
+            if ($validated['is_active']) app(\App\Services\Business\BusinessBillingService::class)->startTrial($business);
         });
 
         return $this->sendResponse([
@@ -1107,7 +1109,7 @@ class OperationsBusinessController extends BaseController
             'payment_setting' => $business->relationLoaded('paymentSetting') && $business->paymentSetting ? [
                 'provider' => $business->paymentSetting->provider,
                 'currency' => $business->paymentSetting->currency,
-                'commission_rate' => $business->paymentSetting->commission_rate,
+                'commission_rate' => (string) app(\App\Services\Business\BusinessCommissionService::class)->rate($business),
                 'commission_basis' => $business->paymentSetting->commission_basis,
                 'fee_bearer' => $business->paymentSetting->fee_bearer,
                 'settlement_mode' => $business->paymentSetting->settlement_mode,

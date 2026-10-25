@@ -18,6 +18,12 @@ Route::get('business-staff-roles', [BusinessStaffRoleController::class, 'index']
 Route::get('timezones', [TimezoneController::class, 'index']);
 
 Route::group(['prefix' => 'businesses'], function () {
+    Route::get('{business}/billing/invoices/{invoice}', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'invoice']);
+    Route::get('{business}/commission-policies', [\App\Http\Controllers\Api\V1\Business\BusinessCommissionController::class, 'index']);
+    Route::get('{business}/commission-policies/{policy}/fees', [\App\Http\Controllers\Api\V1\Business\BusinessCommissionController::class, 'fees']);
+    Route::get('{business}/billing/invoices/{invoice}/pdf', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'pdf']);
+    Route::get('{business}/billing/payments', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'payments']);
+    Route::get('{business}/billing', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'show']);
     Route::get('{business}/payout-settings', [BusinessPaymentController::class, 'payoutSettings']);
     Route::post('{business}/onboarding-payment/proof', [BusinessPaymentController::class, 'uploadOnboardingProof']);
     Route::post('{business}/payout-accounts', [BusinessPaymentController::class, 'storePayoutAccount']);

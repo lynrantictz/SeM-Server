@@ -54,9 +54,12 @@ class OrderRepository extends BaseRepository
      */
     public function store(Code $code, $inputs, string $channel = 'dine_in', ?Customer $verifiedCustomer = null): object
     {
+        $billingBusiness = $code->codable->business()->first();
+        if ($billingBusiness) app(\App\Services\Business\BusinessOrderingRestrictionService::class)->sync($billingBusiness);
         return DB::transaction(function () use ($code, $inputs, $channel, $verifiedCustomer) {
             // Lock the business row for update to prevent race conditions
             $business = $code->codable->business()->lockForUpdate()->first();
+            app(\App\Services\Business\BusinessBillingService::class)->assertCanOrder($business);
             // Increment the order number
             $business->current_order_number += 1;
             // Generate the order_number
@@ -106,8 +109,10 @@ class OrderRepository extends BaseRepository
     /** Store an authenticated staff order without requiring a public QR code. */
     public function storeForStaff(Business $business, array $inputs, int $userId): Order
     {
+        app(\App\Services\Business\BusinessOrderingRestrictionService::class)->sync($business);
         return DB::transaction(function () use ($business, $inputs, $userId) {
             $business = Business::query()->lockForUpdate()->findOrFail($business->id);
+            app(\App\Services\Business\BusinessBillingService::class)->assertCanOrder($business);
             $channel = $inputs['channel'];
             abort_unless($business->orderingChannels()->where('ordering_channels.slug', $channel)->where('ordering_channels.is_active', true)->wherePivot('is_enabled', true)->exists(), 422, 'The selected ordering channel is not enabled for this business.');
 

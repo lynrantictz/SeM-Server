@@ -17,3 +17,7 @@ Schedule::command('orders:cleanup-expired-checkouts')
 Schedule::command('orders:cleanup-checkout-sessions')
     ->daily()
     ->withoutOverlapping();
+
+Schedule::command('billing:process')->everyFiveMinutes()->withoutOverlapping();
+
+Schedule::command('billing:sync-restrictions')->everyMinute()->withoutOverlapping();

@@ -83,8 +83,10 @@ class BusinessController extends BaseController
         $business->setAttribute('activation', $this->activation->status($business));
         $business->setAttribute(
             'platform_commission_rate',
-            (float) SystemSetting::valueFor('payments.default_commission_rate'),
+            app(\App\Services\Business\BusinessCommissionService::class)->rate($business),
         );
+
+        if ($business->paymentSetting) $business->paymentSetting->setAttribute('commission_rate', (string) app(\App\Services\Business\BusinessCommissionService::class)->rate($business));
 
         return $this->sendResponse([
             'business' => $business,

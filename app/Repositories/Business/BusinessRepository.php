@@ -134,6 +134,8 @@ class BusinessRepository extends BaseRepository
                 'is_settlement_enabled' => false,
             ]);
 
+            app(\App\Services\Business\BusinessCommissionService::class)->initialize($business);
+
             // contacts is an array of ['contact' => '...'] objects
             if ($contacts) {
                 $business->contacts()->createMany($this->normalizeContacts($contacts, $business->district_id));

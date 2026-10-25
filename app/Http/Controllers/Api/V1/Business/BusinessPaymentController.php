@@ -237,7 +237,6 @@ class BusinessPaymentController extends BaseController
                 [
                     'provider' => $business->paymentSetting?->provider ?? 'manual',
                     'currency' => $business->paymentSetting?->currency ?? 'TZS',
-                    'commission_rate' => $business->paymentSetting?->commission_rate ?? SystemSetting::valueFor('payments.default_commission_rate'),
                     'commission_basis' => $business->paymentSetting?->commission_basis ?? 'subtotal_excluding_tax',
                     'fee_bearer' => $business->paymentSetting?->fee_bearer ?? 'business',
                     'settlement_mode' => $business->paymentSetting?->settlement_mode ?? 'manual_hold',
@@ -367,7 +366,6 @@ class BusinessPaymentController extends BaseController
             [
                 'provider' => $business->paymentSetting?->provider ?? 'manual',
                 'currency' => $business->paymentSetting?->currency ?? 'TZS',
-                'commission_rate' => $business->paymentSetting?->commission_rate ?? SystemSetting::valueFor('payments.default_commission_rate'),
                 'commission_basis' => $business->paymentSetting?->commission_basis ?? 'subtotal_excluding_tax',
                 'fee_bearer' => $business->paymentSetting?->fee_bearer ?? 'business',
                 'settlement_mode' => $business->paymentSetting?->settlement_mode ?? 'manual_hold',
@@ -500,7 +498,7 @@ class BusinessPaymentController extends BaseController
                 'country_phone_code' => $business->district?->city?->country?->phone_code,
                 'currency' => $business->paymentSetting?->currency ?: 'TZS',
             ],
-            'payment_setting' => $business->paymentSetting,
+            'payment_setting' => $business->paymentSetting ? [...$business->paymentSetting->toArray(), 'commission_rate' => (string) app(\App\Services\Business\BusinessCommissionService::class)->rate($business)] : null,
             'payout_accounts' => $accounts->map(fn (BusinessPayoutAccount $account) => $this->payoutAccountData($account))->values(),
             'payout_readiness' => [
                 'business_active' => $activation['business_enabled'],

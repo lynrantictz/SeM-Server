@@ -6,6 +6,8 @@ use App\Http\Controllers\Api\V1\Operations\OperationsVendorController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('operations')->group(function (): void {
+    Route::get('billing/restrictions', [\App\Http\Controllers\Api\V1\Operations\OperationsBillingController::class, 'restrictions']);
+    Route::get('billing', [\App\Http\Controllers\Api\V1\Operations\OperationsBillingController::class, 'index']);
     Route::middleware('permission:operations.kyc.view')->group(function (): void {
         $controller = \App\Http\Controllers\Api\V1\Operations\OperationsReviewController::class;
         Route::get('reviews/summary', [$controller, 'summary']);
@@ -21,6 +23,17 @@ Route::prefix('operations')->group(function (): void {
         ->middleware('permission:operations.dashboard.view');
 
     Route::middleware('permission:operations.businesses.view')->group(function (): void {
+        Route::get('businesses/{business}/billing/invoices/{invoice}', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'operationsInvoice']);
+        Route::get('businesses/{business}/commission-policies', [\App\Http\Controllers\Api\V1\Business\BusinessCommissionController::class, 'operationsIndex']);
+        Route::get('businesses/{business}/commission-policies/{policy}/fees', [\App\Http\Controllers\Api\V1\Business\BusinessCommissionController::class, 'operationsFees']);
+        Route::post('businesses/{business}/commission-policies', [\App\Http\Controllers\Api\V1\Business\BusinessCommissionController::class, 'store']);
+        Route::patch('businesses/{business}/commission-policies/{policy}', [\App\Http\Controllers\Api\V1\Business\BusinessCommissionController::class, 'update']);
+        Route::post('businesses/{business}/commission-policies/{policy}/cancel', [\App\Http\Controllers\Api\V1\Business\BusinessCommissionController::class, 'cancel']);
+        Route::get('businesses/{business}/billing/invoices/{invoice}/pdf', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'operationsPdf']);
+        Route::get('businesses/{business}/billing', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'operationsShow']);
+        Route::patch('businesses/{business}/billing', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'update']);
+        Route::post('businesses/{business}/billing/invoices/{invoice}/receipts', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'receipt']);
+        Route::patch('businesses/{business}/billing/invoices/{invoice}/deadline', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'extend']);
         Route::get('vendors', [OperationsVendorController::class, 'index']);
         Route::get('vendors/{uuid}', [OperationsVendorController::class, 'show']);
         Route::get('businesses', [OperationsBusinessController::class, 'index']);

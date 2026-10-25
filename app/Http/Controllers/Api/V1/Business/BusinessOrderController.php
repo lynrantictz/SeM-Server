@@ -111,6 +111,7 @@ class BusinessOrderController extends BaseController
 
         return $this->sendResponse([
             'role' => $role,
+            'ordering_restricted' => app(\App\Services\Business\BusinessBillingService::class)->restricted($business),
             'default_tab' => $this->defaultTab($role),
             'counts' => $counts,
             'payment_methods' => $business->paymentMethods()
@@ -623,6 +624,18 @@ class BusinessOrderController extends BaseController
             abort_unless(!empty($data['change_reason']), HTTP_UNPROCESSABLE_ENTITY, 'Enter a reason for the order change.');
             $before = ['scheduled_for' => $record->scheduled_for?->toIso8601String(), 'total' => $record->total_amount, 'items' => $record->items()->with('options')->get()->toArray()];
             $oldTotal = (float) $record->total_amount;
+            $billingRestricted = app(\App\Services\Business\BusinessBillingService::class)->restricted($business);
+            if ($billingRestricted) {
+                $remaining = $record->items()->with(['item', 'options.itemOption'])->get()->keyBy(fn ($line) => $line->item?->uuid);
+                $used = [];
+                foreach ($data['items'] as $line) {
+                    $original = $remaining->get($line['uuid']);
+                    $used[$line['uuid']] = ($used[$line['uuid']] ?? 0) + $line['quantity'];
+                    abort_unless($original && $used[$line['uuid']] <= $original->quantity, 423, 'New items cannot be added while new ordering is paused.');
+                    $allowedOptions = $original->options->map(fn ($option) => $option->itemOption?->uuid)->filter()->all();
+                    foreach ($line['options'] ?? [] as $option) abort_unless(in_array($option['uuid'], $allowedOptions, true), 423, 'New options cannot be added while new ordering is paused.');
+                }
+            }
             abort_if($record->payment && in_array(strtolower($record->payment->status), ['pending', 'processing'], true), Response::HTTP_CONFLICT, 'Finish or cancel the active payment before editing this order.');
             if ($record->channel === 'online') {
                 $schedule = \Carbon\Carbon::parse($data['scheduled_for'] ?? '')->utc();
@@ -646,6 +659,7 @@ class BusinessOrderController extends BaseController
             if ($record->paymentStatus?->name === 'Completed') {
                 unset($totals['paid_amount'], $totals['due_amount']);
             }
+            if ($billingRestricted) abort_if((float) $totals['total_amount'] > $oldTotal + 0.005, 423, 'The order amount cannot increase while new ordering is paused.');
             $record->update($totals);
             abort_if($record->paymentStatus?->name === 'Completed' && abs((float) $record->total_amount - $oldTotal) > 0.01, HTTP_UNPROCESSABLE_ENTITY, 'Paid orders cannot change total until a payment adjustment or refund is arranged.');
             OrderStatusHistory::query()->create(['order_id' => $record->id, 'from_status_id' => $record->order_status_id, 'to_status_id' => $record->order_status_id, 'changed_by_user_id' => auth()->id(), 'note' => 'Order changed: '.$data['change_reason'].' | Before: '.json_encode($before).' | After: '.json_encode(['scheduled_for' => $record->scheduled_for?->toIso8601String(), 'total' => $record->total_amount, 'items' => $data['items']])]);
@@ -965,6 +979,7 @@ class BusinessOrderController extends BaseController
                     'price_adjustment' => (float) $option->price_adjustment,
                 ])->values(),
             ])->values(),
+            'paperstic_fee' => in_array($this->authorizeBusiness($order->business), ['owner', 'vendor_manager', 'business_manager', 'manager'], true) ? app(\App\Services\Business\BusinessBillingService::class)->orderFee($order) : null,
             'total_items_amount' => (float) $order->total_items_amount,
             'tax_amount' => (float) $order->tax_amount,
             'total_amount' => (float) $order->total_amount,

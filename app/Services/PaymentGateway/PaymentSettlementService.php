@@ -134,7 +134,8 @@ class PaymentSettlementService
     ): Payment {
         return DB::transaction(function () use ($order, $paymentMethodId, $amount, $reference, $confirmedByUserId, $confirmationSource, $paymentAccountUuid): Payment {
             $lockedOrder = Order::query()->lockForUpdate()->findOrFail($order->id);
-            $due = (float) ($lockedOrder->due_amount ?: $lockedOrder->total_amount);
+            abort_if($lockedOrder->payments()->where('status', 'SUCCESS')->exists() || $lockedOrder->paymentStatus?->name === 'Completed', 409, 'Payment has already been recorded for this order.');
+            $due = (float) ($lockedOrder->due_amount ?? $lockedOrder->total_amount);
             if ($amount <= 0 || abs($amount - $due) > 0.01) {
                 throw new RuntimeException('The confirmed payment amount must match the outstanding order amount.');
             }
@@ -198,8 +199,9 @@ class PaymentSettlementService
         $commissionBase = $setting->commission_basis === 'subtotal_excluding_tax'
             ? (float) $order->total_items_amount
             : (float) $payment->amount;
-        $commissionRate = $setting->commission_rate ?? SystemSetting::valueFor('payments.default_commission_rate');
-        $commission = round($commissionBase * ((float) $commissionRate / 100), 2);
+        $fee = app(\App\Services\Business\BusinessBillingService::class)->syncFee($order);
+        $commissionRate = $fee?->rate ?? $setting->commission_rate ?? SystemSetting::valueFor('payments.default_commission_rate');
+        $commission = $fee ? (float) $fee->amount : round($commissionBase * ((float) $commissionRate / 100), 2);
 
         $allocation = PaymentAllocation::query()->firstOrCreate(['payment_id' => $payment->id], [
             'business_id' => $order->business_id,
