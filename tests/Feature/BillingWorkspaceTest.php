@@ -89,3 +89,22 @@ it('denies billing workspaces and payment history to frontline staff and agents'
     $this->operator->update(['type' => 'agent']);
     $this->actingAs($this->operator, 'api')->getJson('/v1/operations/billing')->assertForbidden();
 });
+
+it('counts all unpaid business invoices across pages and excludes settled or unrelated invoices', function () {
+    $this->actingAs($this->owner, 'api');
+    $url = '/v1/businesses/'.$this->business->uuid.'/billing';
+    $this->getJson($url)->assertOk()->assertJsonPath('data.unpaid_invoice_count', 0);
+    for ($i = 0; $i < 12; $i++) {
+        workspaceInvoice($this, ['paid_amount' => $i === 0 ? 100 : 0, 'period_to' => now()->subDays($i)]);
+    }
+    workspaceInvoice($this, ['paid_amount' => 300, 'status' => 'paid', 'period_to' => now()->subDays(12)]);
+    workspaceInvoice($this, ['credit_amount' => 300, 'status' => 'paid', 'period_to' => now()->subDays(13)]);
+    $other = $this->business->replicate(['uuid']);
+    $other->code_prefix = Str::random(8);
+    $other->order_prefix = Str::random(8);
+    $other->save();
+    workspaceInvoice($this, ['business_id' => $other->id]);
+    $this->getJson($url.'?per_page=10&page=2')->assertOk()
+        ->assertJsonPath('data.unpaid_invoice_count', 12)
+        ->assertJsonCount(4, 'data.invoices.data');
+});

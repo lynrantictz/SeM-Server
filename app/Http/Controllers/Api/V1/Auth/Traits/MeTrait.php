@@ -38,6 +38,13 @@ trait MeTrait
             $user->businesses->filter(fn ($business) => (bool) $business->pivot->is_active)->values()
         );
 
+        $businesses = $user->vendors->flatMap(fn ($vendor) => $vendor->businesses)->concat($user->businesses);
+        $verifiedIds = app(\App\Services\Discovery\DiscoverableBusinesses::class)->verifiedQuery()
+            ->whereIn('businesses.id', $businesses->pluck('id')->unique())->pluck('businesses.id')->flip();
+        foreach ($businesses as $business) {
+            $business->setAttribute('is_verified', $verifiedIds->has($business->id));
+        }
+
         return $user;
     }
 }

@@ -74,6 +74,7 @@ class BusinessBillingController extends BaseController
             'effective_fee_starts_at' => $this->billing->feeStartsAt($policy)?->toIso8601String(),
             'timezone' => $business->timezoneDefinition?->identifier ?: $business->timezone ?: 'UTC',
             'ordering_restricted' => $this->billing->restricted($business), 'accrued' => $accrued, 'balances' => $balance,
+            'unpaid_invoice_count' => BusinessInvoice::where('business_id', $business->id)->whereRaw('total > paid_amount + credit_amount')->count(),
             'invoices' => $invoices->through(fn ($invoice) => $this->invoiceData($invoice, $operations)),
         ], 'Business billing retrieved.');
     }

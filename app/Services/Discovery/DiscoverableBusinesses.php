@@ -10,10 +10,15 @@ class DiscoverableBusinesses
 {
     public function query(): Builder
     {
+        return $this->verifiedQuery()
+            ->whereNotNull('businesses.latitude')
+            ->whereNotNull('businesses.longitude');
+    }
+
+    public function verifiedQuery(): Builder
+    {
         $query = Business::query()
             ->where('businesses.is_active', true)
-            ->whereNotNull('businesses.latitude')
-            ->whereNotNull('businesses.longitude')
             ->whereHas('vendor')
             ->whereHas('district.city');
 

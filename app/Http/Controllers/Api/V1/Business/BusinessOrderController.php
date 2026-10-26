@@ -183,6 +183,7 @@ class BusinessOrderController extends BaseController
 
     public function reports(Request $request, Business $business)
     {
+        abort_unless(auth()->user()->is_active && auth()->user()->type !== 'agent', Response::HTTP_FORBIDDEN);
         $role = $this->authorizeBusiness($business);
         abort_unless(in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager'], true), Response::HTTP_FORBIDDEN, 'You do not have permission to view business reports.');
         $validated = $request->validate([
@@ -190,10 +191,14 @@ class BusinessOrderController extends BaseController
             'date_from' => ['nullable', 'date_format:Y-m-d'],
             'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
             'page' => ['nullable', 'integer', 'min:1'],
-            'per_page' => ['nullable', 'integer', Rule::in([10, 25, 50, 75, 100])],
+            'per_page' => ['nullable', 'integer', Rule::in([10, 15, 25, 50, 75, 100])],
             'search' => ['nullable', 'string', 'max:100'],
             'section_id' => ['nullable', 'integer'],
             'sub_section_id' => ['nullable', 'integer'],
+            'payment_method_key' => ['sometimes', 'string', 'max:100'],
+            'currency' => ['nullable', 'string', 'max:10'],
+            'payment_status' => ['nullable', 'string', 'max:80'],
+            'order_status' => ['nullable', 'string', 'max:80'],
         ]);
 
         $from = $validated['date_from'] ?? now()->subDays(29)->toDateString();
@@ -276,18 +281,7 @@ class BusinessOrderController extends BaseController
         }
 
         if ($view === 'payments') {
-            $payments = DB::table('payments')
-                ->join('orders', 'orders.id', '=', 'payments.order_id')
-                ->leftJoin('payment_methods', 'payment_methods.id', '=', 'orders.payment_method_id')
-                ->where('orders.business_id', $business->id)
-                ->whereBetween('orders.created_at', [$from . ' 00:00:00', $to . ' 23:59:59'])
-                ->tap($applyServicePointFilter)
-                ->selectRaw("COALESCE(payment_methods.name, payments.provider, 'Not recorded') as method, payments.status, COUNT(*) as count, SUM(payments.amount) as amount")
-                ->groupBy('payment_methods.name', 'payments.provider', 'payments.status')
-                ->orderByDesc('amount')
-                ->paginate($perPage);
-
-            return $this->sendResponse(['view' => $view, 'date_from' => $from, 'date_to' => $to, 'rows' => ['data' => $payments->items(), 'meta' => ['current_page' => $payments->currentPage(), 'last_page' => $payments->lastPage(), 'per_page' => $payments->perPage(), 'total' => $payments->total(), 'from' => $payments->firstItem(), 'to' => $payments->lastItem()]]], 'Payment report retrieved successfully.');
+            return $this->sendResponse(['view' => $view, ...app(\App\Services\Business\PaymentMethodReport::class)->forBusiness($business, $validated)], 'Payment report retrieved successfully.');
         }
 
         $base = $orders();
