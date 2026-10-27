@@ -93,3 +93,52 @@ it('separates currencies pending balances and billable fees from estimates and c
     $this->getJson($this->url.'&payment_method_key='.$this->method.'&currency=USD')->assertOk()->assertJsonPath('data.rows.meta.total', 1);
     $this->getJson($this->url.'&payment_method_key='.$this->method.'&currency=TZS&payment_status=Pending')->assertOk()->assertJsonPath('data.rows.meta.total', 1);
 });
+
+it('lists order report fees and receiving accounts with local-day filtering pagination and matching exports', function () {
+    $configuration = $this->business->paymentMethods()->create(['payment_method_id' => $this->method, 'is_enabled' => true, 'status' => 'active']);
+    $account = $configuration->accounts()->create(['bank_name' => 'Equity Bank', 'account_holder_name' => 'Registered Owner', 'account_number' => '074937392', 'currency' => 'TZS']);
+    $order = reportOrder($this, ['number' => 'REPORT-ACCOUNT', 'channel' => 'dine_in', 'paid_amount' => 7000, 'due_amount' => 3000], 2);
+    foreach (['FAILED', 'SUCCESS'] as $status) {
+        Payment::create(['order_id' => $order->id, 'external_id' => Str::random(12), 'account_number' => 'manual', 'provider' => 'manual', 'amount' => 7000, 'currency' => 'TZS', 'status' => $status, 'metadata' => ['payment_account_uuid' => $account->uuid]]);
+    }
+    for ($i = 0; $i < 15; $i++) {
+        reportOrder($this, ['channel' => 'dine_in']);
+    }
+    reportOrder($this, ['created_at' => '2026-10-25 20:59:59']);
+    reportOrder($this, ['created_at' => '2026-10-26 21:00:00']);
+    $url = '/v1/businesses/'.$this->business->uuid.'/reports';
+    $query = '?view=orders&date_from=2026-10-26&date_to=2026-10-26&channel=dine_in&payment_method='.$this->method;
+    $this->getJson($url.$query.'&per_page=15&page=2')->assertOk()->assertJsonPath('data.orders.meta.total', 16)->assertJsonCount(1, 'data.orders.data')->assertJsonPath('data.timezone', 'Africa/Dar_es_Salaam');
+    $this->getJson($url.$query.'&search=report-account')->assertOk()->assertJsonPath('data.orders.meta.total', 1)
+        ->assertJsonPath('data.orders.data.0.receiving_account_name', 'Registered Owner')->assertJsonPath('data.orders.data.0.receiving_account_number', '074937392')
+        ->assertJsonPath('data.orders.data.0.paid_amount', 7000)->assertJsonPath('data.orders.data.0.due_amount', 3000)
+        ->assertJsonPath('data.orders.data.0.commission_base', 10000)->assertJsonPath('data.orders.data.0.commission_rate', 2)->assertJsonPath('data.orders.data.0.commission_amount', 200);
+    $response = $this->get($url.'/orders/export'.$query.'&per_page=15&page=2')->assertOk()->assertDownload('Paperstic-orders-2026-10-26-to-2026-10-26.xlsx');
+    $zip = new ZipArchive;
+    $path = $response->baseResponse->getFile()->getPathname();
+    expect($zip->open($path))->toBeTrue();
+    $xml = $zip->getFromName('xl/worksheets/sheet1.xml');
+    $zip->close();
+    unlink($path);
+    expect(substr_count($xml, '<row>'))->toBe(17);
+    expect($xml)->toContain('REPORT-ACCOUNT', 'Registered Owner', '074937392', '<v>7000</v>', '<v>3000</v>', '<v>200</v>')->not->toContain('Equity Bank');
+    $this->getJson($url.$query.'&order_status_id=99999')->assertOk()->assertJsonPath('data.orders.meta.total', 0);
+    $this->getJson($url.$query.'&payment_status_id=99999')->assertOk()->assertJsonPath('data.orders.meta.total', 0);
+    $this->getJson($url.$query.'&sort=unknown')->assertUnprocessable();
+});
+
+it('keeps missing and zero order fees distinct and enforces report export permissions', function () {
+    reportOrder($this, ['number' => 'REPORT-ZERO'], 0);
+    reportOrder($this, ['number' => 'REPORT-MISSING'], null);
+    $base = '/v1/businesses/'.$this->business->uuid.'/reports';
+    $query = '?view=orders&date_from=2026-10-26&date_to=2026-10-26';
+    $this->getJson($base.$query.'&search=report-zero')->assertOk()->assertJsonPath('data.orders.data.0.commission_rate', 0)->assertJsonPath('data.orders.data.0.commission_amount', 0);
+    $this->getJson($base.$query.'&search=report-missing')->assertOk()->assertJsonPath('data.orders.data.0.commission_rate', null)->assertJsonPath('data.orders.data.0.commission_amount', null);
+    $waiter = User::create(['name' => 'Waiter', 'email' => 'orders-report-waiter@example.test', 'password' => 'Example@2026', 'type' => 'business', 'is_active' => true]);
+    $waiter->businesses()->attach($this->business->id, ['business_role' => 'waiter', 'title' => 'Waiter', 'is_active' => true]);
+    $this->actingAs($waiter, 'api')->getJson($base.$query)->assertForbidden();
+    $this->get($base.'/orders/export'.$query)->assertForbidden();
+    $waiter->businesses()->updateExistingPivot($this->business->id, ['business_role' => 'manager']);
+    $this->getJson($base.$query)->assertOk();
+    $this->get($base.'/orders/export'.$query)->assertOk();
+});

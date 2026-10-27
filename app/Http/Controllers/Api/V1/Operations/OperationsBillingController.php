@@ -85,7 +85,7 @@ class OperationsBillingController extends BaseController
         $user = $request->user();
         abort_unless($user?->is_active && $user->type !== 'agent' && $user->can('operations.businesses.view') && ($user->can('operations.settlements.view') || $user->can('operations.settlements.manage')), 403);
         abort_unless(app(BusinessBillingService::class)->installed(), 503, 'Run the pending billing migrations.');
-        $data = $request->validate(['view' => ['nullable', 'in:overview,invoices,payments,schedules'], 'search' => ['nullable', 'string', 'max:160'], 'business_uuid' => ['nullable', 'uuid'], 'status' => ['nullable', 'in:all,outstanding,unpaid,overdue,paid,draft'], 'per_page' => ['nullable', 'integer', 'in:10,15,25,50,100'], 'page' => ['nullable', 'integer', 'min:1']]);
+        $data = $request->validate(['view' => ['nullable', 'in:overview,invoices,payments,schedules'], 'search' => ['nullable', 'string', 'max:160'], 'business_uuid' => ['nullable', 'uuid'], 'status' => ['nullable', 'in:all,outstanding,unpaid,overdue,paid,draft'], 'date_field' => ['nullable', 'in:issued,due,period'], 'from' => ['nullable', 'date_format:Y-m-d'], 'to' => ['nullable', 'date_format:Y-m-d', \Illuminate\Validation\Rule::when($request->filled('from'), 'after_or_equal:from')], 'per_page' => ['nullable', 'integer', 'in:10,15,25,50,100'], 'page' => ['nullable', 'integer', 'min:1']]);
         $search = trim($data['search'] ?? '');
         $business = $data['business_uuid'] ?? null;
         $invoices = BusinessInvoice::query()->whereHas('business', function ($query) use ($business) {
@@ -94,7 +94,20 @@ class OperationsBillingController extends BaseController
             }
         });
         if ($search !== '') {
-            $invoices->where(fn ($q) => $q->where('number', 'like', '%'.$search.'%')->orWhereHas('business', fn ($b) => $b->where('name', 'like', '%'.$search.'%')));
+            $invoices->where(fn ($q) => $q->whereLike('number', '%'.$search.'%')->orWhereHas('business', fn ($b) => $b->whereLike('name', '%'.$search.'%')));
+        }
+        // Invoice periods are half-open [from, to); filter dates are inclusive UTC days.
+        if ($export || in_array($data['view'] ?? 'overview', ['overview', 'invoices'], true)) {
+            $field = $data['date_field'] ?? 'issued';
+            $column = $field === 'due' ? 'due_at' : 'created_at';
+            if (! empty($data['from'])) {
+                $start = \Carbon\CarbonImmutable::parse($data['from'], 'UTC')->startOfDay();
+                $invoices->where($field === 'period' ? 'period_to' : $column, $field === 'period' ? '>' : '>=', $start);
+            }
+            if (! empty($data['to'])) {
+                $end = \Carbon\CarbonImmutable::parse($data['to'], 'UTC')->addDay()->startOfDay();
+                $invoices->where($field === 'period' ? 'period_from' : $column, '<', $end);
+            }
         }
         $outstanding = fn ($q) => $q->whereRaw('total > paid_amount + credit_amount');
         $counts = ['restricted_businesses' => $this->liveRestricted()->count(), 'invoices' => (clone $invoices)->count(), 'unpaid' => $outstanding(clone $invoices)->count(), 'overdue' => $outstanding(clone $invoices)->whereNotNull('sent_at')->where('due_at', '<=', now())->count()];
@@ -107,7 +120,7 @@ class OperationsBillingController extends BaseController
                 $rows->where('businesses.uuid', $business);
             }
             if ($search !== '') {
-                $rows->where(fn ($q) => $q->where('businesses.name', 'like', '%'.$search.'%')->orWhere('invoices.number', 'like', '%'.$search.'%')->orWhere('receipts.reference', 'like', '%'.$search.'%'));
+                $rows->where(fn ($q) => $q->whereLike('businesses.name', '%'.$search.'%')->orWhereLike('invoices.number', '%'.$search.'%')->orWhereLike('receipts.reference', '%'.$search.'%'));
             }
             $rows = $rows->orderByDesc('receipts.id')->select(['receipts.uuid', 'receipts.kind', 'receipts.amount', 'receipts.reference', 'receipts.notes', 'receipts.created_at', 'invoices.uuid as invoice_uuid', 'invoices.number as invoice_number', 'invoices.currency', 'businesses.uuid as business_uuid', 'businesses.name as business_name'])->paginate($size)->through(function ($row) {
                 if (isset($row->created_at)) {
@@ -125,7 +138,7 @@ class OperationsBillingController extends BaseController
                 $rows->where('businesses.uuid', $business);
             }
             if ($search !== '') {
-                $rows->where('businesses.name', 'like', '%'.$search.'%');
+                $rows->whereLike('businesses.name', '%'.$search.'%');
             }
             $rows = $rows->orderBy('businesses.name')->select(['businesses.uuid as business_uuid', 'businesses.name as business_name', 'policies.frequency', 'policies.interval_days', 'policies.next_invoice_at', 'policies.automatic_invoicing', 'policies.enforce_overdue', 'policies.grace_hours', 'policies.billing_email'])->paginate($size)->through(function ($row) {
                 if (isset($row->created_at)) {

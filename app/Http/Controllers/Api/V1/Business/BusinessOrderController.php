@@ -181,7 +181,12 @@ class BusinessOrderController extends BaseController
         return $this->sendResponse($summary->forBusiness($business), 'Business dashboard retrieved.');
     }
 
-    public function reports(Request $request, Business $business)
+    public function exportOrdersReport(Request $request, Business $business)
+    {
+        return $this->reports($request, $business, true);
+    }
+
+    public function reports(Request $request, Business $business, bool $exportOrders = false)
     {
         abort_unless(auth()->user()->is_active && auth()->user()->type !== 'agent', Response::HTTP_FORBIDDEN);
         $role = $this->authorizeBusiness($business);
@@ -199,11 +204,17 @@ class BusinessOrderController extends BaseController
             'currency' => ['nullable', 'string', 'max:10'],
             'payment_status' => ['nullable', 'string', 'max:80'],
             'order_status' => ['nullable', 'string', 'max:80'],
+            'channel' => ['nullable', 'string', 'max:80'],
+            'payment_method' => ['nullable', 'integer', 'min:1'],
+            'order_status_id' => ['nullable', 'integer', 'min:1'],
+            'payment_status_id' => ['nullable', 'integer', 'min:1'],
+            'sort' => ['nullable', 'in:date,number,total,paid,due,base,rate,fee'],
+            'direction' => ['nullable', 'in:asc,desc'],
         ]);
 
         $from = $validated['date_from'] ?? now()->subDays(29)->toDateString();
         $to = $validated['date_to'] ?? now()->toDateString();
-        $view = $validated['view'] ?? 'overview';
+        $view = $exportOrders ? 'orders' : ($validated['view'] ?? 'overview');
         $perPage = $validated['per_page'] ?? 10;
         $sectionId = $validated['section_id'] ?? null;
         $subSectionId = $validated['sub_section_id'] ?? null;
@@ -231,38 +242,10 @@ class BusinessOrderController extends BaseController
             });
 
         if ($view === 'orders') {
-            $query = $orders()->with(['status:id,name', 'paymentStatus:id,name', 'paymentMethod:id,name', 'customer:id,phone,phone_e164'])
-                ->orderByDesc('created_at');
-            $search = trim((string) ($validated['search'] ?? ''));
-            if ($search !== '') {
-                $query->where(function (Builder $builder) use ($search) {
-                    $builder->where('number', 'ilike', "%{$search}%")
-                        ->orWhereHas('customer', fn (Builder $customer) => $customer->where('phone_e164', 'ilike', "%{$search}%"));
-                });
-            }
-            $page = $query->paginate($perPage)->withQueryString();
-
-            return $this->sendResponse([
-                'view' => $view,
-                'date_from' => $from,
-                'date_to' => $to,
-                'orders' => [
-                    'data' => collect($page->items())->map(fn (Order $order) => [
-                        'number' => $order->number,
-                        'created_at' => $order->created_at,
-                        'channel' => $order->channel,
-                        'status' => $order->status?->name,
-                        'payment_status' => $order->paymentStatus?->name,
-                        'payment_method' => $order->paymentMethod?->name,
-                        'customer_phone' => $this->businessCustomerPhone($order),
-                        'total_amount' => (float) $order->total_amount,
-                        'tax_amount' => (float) $order->tax_amount,
-                        'paid_amount' => (float) ($order->paid_amount ?? 0),
-                        'due_amount' => (float) ($order->due_amount ?? 0),
-                    ])->values(),
-                    'meta' => ['current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'per_page' => $page->perPage(), 'total' => $page->total(), 'from' => $page->firstItem(), 'to' => $page->lastItem()],
-                ],
-            ], 'Order report retrieved successfully.');
+            $report = app(\App\Services\Business\OrdersReport::class);
+            return $exportOrders
+                ? $report->export($business, $validated)
+                : $this->sendResponse($report->forBusiness($business, $validated), 'Order report retrieved successfully.');
         }
 
         if ($view === 'products') {

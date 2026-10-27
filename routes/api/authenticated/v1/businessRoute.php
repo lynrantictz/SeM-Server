@@ -1,16 +1,16 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Business\BusinessController;
+use App\Http\Controllers\Api\V1\Business\BusinessMenuSettingsController;
 use App\Http\Controllers\Api\V1\Business\BusinessOrderController;
+use App\Http\Controllers\Api\V1\Business\BusinessPaymentController;
 use App\Http\Controllers\Api\V1\Business\BusinessStaffController;
 use App\Http\Controllers\Api\V1\Business\BusinessStaffRoleController;
 use App\Http\Controllers\Api\V1\Business\BusinessTypeController;
-use App\Http\Controllers\Api\V1\Business\BusinessMenuSettingsController;
-use App\Http\Controllers\Api\V1\Business\BusinessPaymentController;
-use App\Http\Controllers\Api\V1\Business\TimezoneController;
 use App\Http\Controllers\Api\V1\Business\ComplianceDocumentController;
-use App\Http\Controllers\Api\V1\Section\ServiceAreaController;
+use App\Http\Controllers\Api\V1\Business\TimezoneController;
 use App\Http\Controllers\Api\V1\Menu\MenuManagementController;
+use App\Http\Controllers\Api\V1\Section\ServiceAreaController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('business-types', [BusinessTypeController::class, 'index']);
@@ -18,6 +18,10 @@ Route::get('business-staff-roles', [BusinessStaffRoleController::class, 'index']
 Route::get('timezones', [TimezoneController::class, 'index']);
 
 Route::group(['prefix' => 'businesses'], function () {
+    Route::get('{business}/billing/invoices', [\App\Http\Controllers\Api\V1\Business\BusinessInvoiceTableController::class, 'invoices']);
+    Route::get('{business}/billing/invoices/export', [\App\Http\Controllers\Api\V1\Business\BusinessInvoiceTableController::class, 'export']);
+    Route::get('{business}/billing/invoices/{invoice}/orders', [\App\Http\Controllers\Api\V1\Business\BusinessInvoiceTableController::class, 'orders']);
+    Route::get('{business}/billing/invoices/{invoice}/orders/export', [\App\Http\Controllers\Api\V1\Business\BusinessInvoiceTableController::class, 'exportOrders']);
     Route::get('{business}/billing/invoices/{invoice}', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'invoice']);
     Route::get('{business}/commission-policies', [\App\Http\Controllers\Api\V1\Business\BusinessCommissionController::class, 'index']);
     Route::get('{business}/commission-policies/{policy}/fees', [\App\Http\Controllers\Api\V1\Business\BusinessCommissionController::class, 'fees']);
@@ -40,6 +44,7 @@ Route::group(['prefix' => 'businesses'], function () {
     Route::post('{business}/orders/{order}/mno-checkout', [BusinessPaymentController::class, 'checkout'])->middleware(\App\Http\Middleware\EnsureGatewayPaymentsEnabled::class);
     Route::get('{business}/orders', [BusinessOrderController::class, 'index']);
     Route::get('{business}/dashboard', [BusinessOrderController::class, 'dashboard']);
+    Route::get('{business}/reports/orders/export', [BusinessOrderController::class, 'exportOrdersReport']);
     Route::get('{business}/reports', [BusinessOrderController::class, 'reports']);
     Route::get('{business}/orders/context', [BusinessOrderController::class, 'context']);
     Route::get('{business}/orders/menu-items', [BusinessOrderController::class, 'menuItems']);

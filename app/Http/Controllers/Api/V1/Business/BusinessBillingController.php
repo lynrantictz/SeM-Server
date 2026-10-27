@@ -89,7 +89,7 @@ class BusinessBillingController extends BaseController
         $this->access($business);
         abort_unless($invoice->business_id === $business->id, 404);
 
-        return $this->sendResponse(['invoice' => $this->invoiceData($invoice->load(['items', 'receipts']), false)], 'Invoice retrieved.');
+        return $this->sendResponse(['invoice' => $this->invoiceData($invoice->load('receipts'), false)], 'Invoice retrieved.');
     }
 
     public function operationsInvoice(Business $business, BusinessInvoice $invoice)

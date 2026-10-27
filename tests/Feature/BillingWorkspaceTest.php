@@ -148,3 +148,114 @@ it('exports immutable invoice order fees even when the original order is unavail
     $this->get($this->url.'/invoices/'.$foreign->uuid.'/orders/export')->assertNotFound();
     $this->actingAs($this->owner, 'api')->get($this->url.'/invoices/'.$invoice->uuid.'/orders/export')->assertForbidden();
 });
+
+it('filters invoice dates inclusively on the server and exports the same search and status matches', function () {
+    $first = workspaceInvoice($this, ['number' => 'DATE-FIRST', 'created_at' => '2026-10-01 00:00:00', 'period_from' => '2026-09-24', 'period_to' => '2026-10-01', 'due_at' => '2026-10-04 23:59:59']);
+    $last = workspaceInvoice($this, ['number' => 'DATE-LAST', 'created_at' => '2026-10-02 23:59:59', 'period_from' => '2026-10-01', 'period_to' => '2026-10-02', 'due_at' => '2026-10-05 00:00:00', 'paid_amount' => 100]);
+    workspaceInvoice($this, ['number' => 'DATE-OUTSIDE', 'created_at' => '2026-10-03 00:00:00', 'period_from' => '2026-10-02', 'period_to' => '2026-10-03']);
+    workspaceInvoice($this, ['number' => 'DATE-PAID', 'created_at' => '2026-10-02 12:00:00', 'period_to' => '2026-10-04', 'paid_amount' => 300, 'status' => 'paid']);
+    $filters = 'view=invoices&status=outstanding&search=bILLING%20rESTAURANT&date_field=issued&from=2026-10-01&to=2026-10-02';
+    $this->getJson('/v1/operations/billing?'.$filters)->assertOk()->assertJsonPath('data.rows.total', 2)->assertJsonPath('data.rows.data.0.uuid', $last->uuid);
+    $xml = billingWorkbookXml($this->get('/v1/operations/billing/export?'.$filters)->assertOk());
+    expect($xml)->toContain('DATE-FIRST', 'DATE-LAST')->not->toContain('DATE-OUTSIDE', 'DATE-PAID');
+    $this->getJson('/v1/operations/billing?search=date-first')->assertOk()->assertJsonPath('data.rows.total', 1)->assertJsonPath('data.rows.data.0.uuid', $first->uuid);
+    $this->getJson('/v1/operations/billing?date_field=due&from=2026-10-04&to=2026-10-04')->assertOk()->assertJsonPath('data.rows.total', 1)->assertJsonPath('data.rows.data.0.uuid', $first->uuid);
+    $this->getJson('/v1/operations/billing?date_field=period&from=2026-10-01&to=2026-10-01')->assertOk()->assertJsonPath('data.rows.total', 1)->assertJsonPath('data.rows.data.0.uuid', $last->uuid);
+    $this->getJson('/v1/operations/billing?from=2026-10-02&to=2026-10-01')->assertUnprocessable();
+    $this->getJson('/v1/operations/billing/export?from=invalid')->assertUnprocessable();
+});
+
+it('paginates filtered invoices on the backend and searches payment and schedule business names case insensitively', function () {
+    for ($i = 0; $i < 17; $i++) {
+        $invoice = workspaceInvoice($this, ['number' => 'PAGINATED-'.$i, 'period_to' => now()->subDays($i)]);
+    }
+    $invoice->receipts()->create(['kind' => 'payment', 'amount' => 10, 'reference' => 'TEST-REF', 'recorded_by' => $this->operator->id]);
+    $response = $this->getJson('/v1/operations/billing?view=invoices&status=outstanding&search=paginated&per_page=15&page=2')->assertOk()->assertJsonPath('data.rows.total', 17)->assertJsonPath('data.rows.current_page', 2)->assertJsonPath('data.rows.last_page', 2)->assertJsonCount(2, 'data.rows.data');
+    $this->getJson('/v1/operations/billing?view=payments&search=bILLING%20rESTAURANT')->assertOk()->assertJsonPath('data.rows.total', 1);
+    $this->getJson('/v1/operations/billing?view=schedules&search=bILLING%20rESTAURANT')->assertOk()->assertJsonPath('data.rows.total', 1);
+});
+
+it('serves business invoice tables with scoped filters sorting pagination and full Excel exports', function () {
+    $this->actingAs($this->owner, 'api');
+    $url = '/v1/businesses/'.$this->business->uuid.'/billing/invoices';
+    for ($i = 0; $i < 16; $i++) {
+        workspaceInvoice($this, ['number' => 'BUSINESS-'.str_pad($i, 2, '0', STR_PAD_LEFT), 'period_to' => now()->subDays($i), 'created_at' => '2026-10-24 23:59:59', 'paid_amount' => $i === 0 ? 100 : 0]);
+    }
+    workspaceInvoice($this, ['number' => 'BUSINESS-PAID', 'period_to' => now()->subDays(20), 'paid_amount' => 300, 'status' => 'paid']);
+    $foreign = workspaceInvoice($this, ['number' => 'BUSINESS-FOREIGN', 'business_id' => 9999, 'period_to' => now()->subDays(21)]);
+    $filters = '?status=outstanding&search=business&from=2026-10-24&to=2026-10-24&sort=number&direction=asc&per_page=15&page=2';
+    $this->getJson($url.$filters)->assertOk()->assertJsonPath('data.invoices.total', 16)->assertJsonPath('data.invoices.current_page', 2)->assertJsonCount(1, 'data.invoices.data')->assertJsonPath('data.invoices.data.0.number', 'BUSINESS-15');
+    $xml = billingWorkbookXml($this->get($url.'/export'.$filters)->assertOk()->assertDownload('Paperstic-invoices.xlsx'));
+    expect(substr_count($xml, '<row>'))->toBe(17);
+    expect($xml)->toContain('BUSINESS-00', 'BUSINESS-15')->not->toContain('BUSINESS-FOREIGN', 'BUSINESS-PAID');
+    $this->getJson($url.'?status=paid')->assertOk()->assertJsonPath('data.invoices.total', 1);
+    $this->getJson($url.'?from=2026-10-25&to=2026-10-24')->assertUnprocessable();
+    $this->getJson($url.'?sort=unsafe')->assertUnprocessable();
+    $this->getJson($url.'/'.$foreign->uuid.'/orders')->assertNotFound();
+});
+
+it('paginates and filters individual invoice order fees while retaining invoice snapshots in exports', function () {
+    $this->actingAs($this->owner, 'api');
+    $invoice = workspaceInvoice($this, ['number' => 'FEE-TABLE']);
+    $status = DB::table('order_statuses')->first()->id;
+    $method = DB::table('payment_methods')->insertGetId(['name' => 'Test cash']);
+    $paymentStatus = DB::table('payment_statuses')->insertGetId(['name' => 'Test paid']);
+    for ($i = 0; $i < 17; $i++) {
+        $order = DB::table('orders')->insertGetId(['uuid' => Str::uuid(), 'business_id' => $this->business->id, 'number' => 'FEE-ORDER-'.$i, 'channel' => 'dine_in', 'order_status_id' => $status, 'payment_method_id' => $method, 'payment_status_id' => $paymentStatus, 'created_at' => '2026-10-24 23:59:59', 'total_items_amount' => 90000]);
+        $fee = DB::table('order_platform_fees')->insertGetId(['uuid' => Str::uuid(), 'business_id' => $this->business->id, 'order_id' => $order, 'currency' => 'TZS', 'rate' => 9, 'base_amount' => 90000, 'amount' => 8100, 'reason' => 'standard']);
+        $invoice->items()->create(['order_platform_fee_id' => $fee, 'order_number' => 'FEE-ORDER-'.$i, 'base_amount' => 10000, 'rate' => 3, 'amount' => 300]);
+    }
+    $url = '/v1/businesses/'.$this->business->uuid.'/billing/invoices/'.$invoice->uuid.'/orders';
+    $filters = '?channel=dine_in&payment_method='.$method.'&order_status='.$status.'&payment_status='.$paymentStatus.'&from=2026-10-24&to=2026-10-24&sort=fee&direction=asc&per_page=15&page=2';
+    $this->getJson($url.$filters)->assertOk()->assertJsonPath('data.orders.total', 17)->assertJsonPath('data.orders.current_page', 2)->assertJsonCount(2, 'data.orders.data')->assertJsonPath('data.orders.data.0.rate', 3)->assertJsonPath('data.orders.data.0.amount', 300)->assertJsonPath('data.options.methods.0.label', 'Test cash');
+    $xml = billingWorkbookXml($this->get($url.'/export'.$filters)->assertOk()->assertDownload('Paperstic-FEE-TABLE-orders.xlsx'));
+    expect(substr_count($xml, '<row>'))->toBe(18);
+    expect($xml)->toContain('<v>10000</v>', '<v>3</v>', '<v>300</v>')->not->toContain('<v>8100</v>');
+    $this->getJson($url.'?search=fee-order-16')->assertOk()->assertJsonPath('data.orders.total', 1);
+    $this->getJson($url.'?payment_method=99999')->assertOk()->assertJsonPath('data.orders.total', 0);
+    $this->getJson($url.'?from=2026-10-25')->assertOk()->assertJsonPath('data.orders.total', 0);
+    $this->getJson($url.'?per_page=12')->assertUnprocessable();
+});
+
+it('denies business invoice table and export endpoints to unrelated owners agents and frontline staff', function () {
+    $invoice = workspaceInvoice($this);
+    $url = '/v1/businesses/'.$this->business->uuid.'/billing/invoices';
+    $this->owner->vendors()->detach();
+    $this->actingAs($this->owner, 'api');
+    foreach ([$url, $url.'/export', $url.'/'.$invoice->uuid.'/orders', $url.'/'.$invoice->uuid.'/orders/export'] as $path) {
+        $this->get($path)->assertForbidden();
+    }
+    $this->owner->update(['type' => 'business']);
+    $this->owner->businesses()->attach($this->business->id, ['business_role' => 'waiter', 'title' => 'Waiter', 'is_active' => true]);
+    $this->getJson($url)->assertForbidden();
+    $this->owner->update(['type' => 'agent']);
+    $this->getJson($url)->assertForbidden();
+});
+
+it('shows and exports the latest payment receiving account without duplicating invoice orders or exposing other businesses accounts', function () {
+    $this->actingAs($this->owner, 'api');
+    $invoice = workspaceInvoice($this, ['number' => 'ACCOUNT-FEES']);
+    $method = DB::table('payment_methods')->insertGetId(['name' => 'Example bank']);
+    $configuration = $this->business->paymentMethods()->create(['payment_method_id' => $method, 'is_enabled' => true, 'status' => 'active']);
+    $old = $configuration->accounts()->create(['bank_name' => 'Earlier bank', 'account_number' => '111111', 'account_holder_name' => 'Owner', 'currency' => 'TZS']);
+    $account = $configuration->accounts()->create(['bank_name' => 'Equity Bank', 'account_number' => '074937392', 'account_holder_name' => 'Registered Business', 'currency' => 'TZS']);
+    $other = $this->business->replicate(['uuid']);
+    $other->code_prefix = Str::random(8);
+    $other->order_prefix = Str::random(8);
+    $other->save();
+    $foreignConfig = $other->paymentMethods()->create(['payment_method_id' => $method, 'is_enabled' => true, 'status' => 'active']);
+    $foreign = $foreignConfig->accounts()->create(['bank_name' => 'Foreign bank', 'account_number' => '987654', 'account_holder_name' => 'Foreign owner', 'currency' => 'TZS']);
+    $orderId = DB::table('orders')->insertGetId(['uuid' => Str::uuid(), 'business_id' => $this->business->id, 'number' => 'ORDER-ACCOUNT', 'payment_method_id' => $method, 'order_status_id' => 1, 'created_at' => now()]);
+    $feeId = DB::table('order_platform_fees')->insertGetId(['uuid' => Str::uuid(), 'business_id' => $this->business->id, 'order_id' => $orderId, 'currency' => 'TZS', 'rate' => 3, 'base_amount' => 10000, 'amount' => 300, 'reason' => 'standard']);
+    $invoice->items()->create(['order_platform_fee_id' => $feeId, 'order_number' => 'ORDER-ACCOUNT', 'base_amount' => 10000, 'rate' => 3, 'amount' => 300]);
+    foreach ([$old, $account] as $paymentAccount) {
+        DB::table('payments')->insert(['uuid' => Str::uuid(), 'order_id' => $orderId, 'external_id' => Str::random(), 'account_number' => 'bank_transfer', 'provider' => 'bank_transfer', 'amount' => 10000, 'currency' => 'TZS', 'status' => 'SUCCESS', 'metadata' => json_encode(['payment_account_uuid' => $paymentAccount->uuid])]);
+    }
+    $url = '/v1/businesses/'.$this->business->uuid.'/billing/invoices/'.$invoice->uuid.'/orders';
+    $this->getJson($url)->assertOk()->assertJsonPath('data.orders.total', 1)->assertJsonPath('data.orders.data.0.receiving_account_name', 'Registered Business')->assertJsonPath('data.orders.data.0.receiving_account_number', '074937392')->assertJsonMissingPath('data.orders.data.0.order_id');
+    $xml = billingWorkbookXml($this->get($url.'/export')->assertOk());
+    expect($xml)->toContain('Registered Business', '074937392')->not->toContain('Equity Bank', 'Earlier bank');
+    DB::table('payments')->insert(['uuid' => Str::uuid(), 'order_id' => $orderId, 'external_id' => Str::random(), 'account_number' => 'bank_transfer', 'provider' => 'bank_transfer', 'amount' => 10000, 'currency' => 'TZS', 'status' => 'SUCCESS', 'metadata' => json_encode(['payment_account_uuid' => $foreign->uuid])]);
+    $this->getJson($url)->assertOk()->assertJsonPath('data.orders.total', 1)->assertJsonPath('data.orders.data.0.receiving_account_name', null)->assertJsonPath('data.orders.data.0.receiving_account_number', null);
+    $this->actingAs($this->operator, 'api')->getJson($url)->assertForbidden();
+});
