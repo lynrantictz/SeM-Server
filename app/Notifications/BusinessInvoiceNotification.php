@@ -20,8 +20,13 @@ class BusinessInvoiceNotification extends Notification
         $pdf = app(\App\Services\Business\BusinessInvoicePdfService::class);
         $viewData = $pdf->viewData($this->invoice);
 
-        return (new MailMessage)->subject(($this->reminder ? 'Payment reminder: ' : 'Paperstic invoice: ').$this->invoice->number)
+        $message = (new MailMessage)->subject(($this->reminder ? 'Payment reminder: ' : 'Paperstic invoice: ').$this->invoice->number)
             ->view('emails.business-invoice', [...$viewData, 'reminder' => $this->reminder, 'url' => rtrim(config('app.business_url'), '/').'/businesses/'.$this->invoice->business->uuid.'?section=billing'])
             ->attachData($pdf->render($this->invoice), $pdf->filename($this->invoice), ['mime' => 'application/pdf']);
+        if (app()->environment(['local', 'testing']) && $this->invoice->business?->vendor?->email === 'billing-demo-vendor@paperstic.test') {
+            $message->mailer('log');
+        }
+
+        return $message;
     }
 }

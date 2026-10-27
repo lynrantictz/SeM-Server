@@ -6,7 +6,10 @@ use App\Http\Controllers\Api\V1\Operations\OperationsVendorController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('operations')->group(function (): void {
+    Route::get('billing/demo', [\App\Http\Controllers\Api\V1\Operations\LocalBillingDemoController::class, 'index']);
+    Route::post('billing/demo/run', [\App\Http\Controllers\Api\V1\Operations\LocalBillingDemoController::class, 'run']);
     Route::get('billing/restrictions', [\App\Http\Controllers\Api\V1\Operations\OperationsBillingController::class, 'restrictions']);
+    Route::get('billing/export', [\App\Http\Controllers\Api\V1\Operations\OperationsBillingController::class, 'export']);
     Route::get('billing', [\App\Http\Controllers\Api\V1\Operations\OperationsBillingController::class, 'index']);
     Route::middleware('permission:operations.kyc.view')->group(function (): void {
         $controller = \App\Http\Controllers\Api\V1\Operations\OperationsReviewController::class;
@@ -29,6 +32,7 @@ Route::prefix('operations')->group(function (): void {
         Route::post('businesses/{business}/commission-policies', [\App\Http\Controllers\Api\V1\Business\BusinessCommissionController::class, 'store']);
         Route::patch('businesses/{business}/commission-policies/{policy}', [\App\Http\Controllers\Api\V1\Business\BusinessCommissionController::class, 'update']);
         Route::post('businesses/{business}/commission-policies/{policy}/cancel', [\App\Http\Controllers\Api\V1\Business\BusinessCommissionController::class, 'cancel']);
+        Route::get('businesses/{business}/billing/invoices/{invoice}/orders/export', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'operationsOrdersExport']);
         Route::get('businesses/{business}/billing/invoices/{invoice}/pdf', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'operationsPdf']);
         Route::get('businesses/{business}/billing', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'operationsShow']);
         Route::patch('businesses/{business}/billing', [\App\Http\Controllers\Api\V1\Business\BusinessBillingController::class, 'update']);

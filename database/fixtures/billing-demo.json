@@ -1,0 +1,272 @@
+[
+  {
+    "key": "hyatt",
+    "name": "Hyatt Regency The Kilimanjaro",
+    "type": "Hotel",
+    "hotel_stars": 5,
+    "latitude": -6.81673,
+    "longitude": 39.29316,
+    "district": "Ilala",
+    "address": "24 Kivukoni Front",
+    "source": "https://www.asbhospitality.co/portfolio/hyatt-regency-dar-es-salaam/",
+    "assets": {
+      "logo": {
+        "path": "billing-demo/hyatt/logo.png",
+        "source": "https://www.asbhospitality.co/wp-content/uploads/2023/04/hotel-category-2.png",
+        "mime": "image/png",
+        "sha256": "c7aa00689f4ddec8712461855131cd89abd21cc69bb1f5c90743b884698da832",
+        "bytes": 2570
+      },
+      "discovery": {
+        "path": "billing-demo/hyatt/discovery.jpg",
+        "source": "https://www.asbhospitality.co/wp-content/uploads/2023/04/HYATT-REGENCY-DAR-ES-SALAAM-Category-Banner.jpg",
+        "mime": "image/jpeg",
+        "sha256": "f21ffc7df651361f811607cdd4e84f6dad60606196e1b13f465ac427b58f1577",
+        "bytes": 242972
+      }
+    }
+  },
+  {
+    "key": "johari",
+    "name": "Johari Rotana",
+    "type": "Hotel",
+    "hotel_stars": 5,
+    "latitude": -6.819809635,
+    "longitude": 39.28686231,
+    "district": "Ilala",
+    "address": "Sokoine Drive",
+    "source": "https://www.rotana.com/rotanahotelandresorts/tanzania/daressalaam/joharirotana",
+    "assets": {
+      "logo": {
+        "path": "billing-demo/johari/logo.png",
+        "source": "https://cdb.rotana.com/rcnimagelib/lgo_1755351265_1441_140_b.png",
+        "mime": "image/png",
+        "sha256": "3ff2f13e90cb645dd4ae53870ba39291519cc90ff6fcef6969fcd49e79f02a8d",
+        "bytes": 16266
+      },
+      "discovery": {
+        "path": "billing-demo/johari/discovery.jpg",
+        "source": "https://media.rotana.com/urpt/140/109",
+        "mime": "image/jpeg",
+        "sha256": "e9908c90df79070fd33071400e73655e186448f4740e6d1de7ab8ecd21e67a3c",
+        "bytes": 214824
+      }
+    }
+  },
+  {
+    "key": "southernsun",
+    "name": "Southern Sun Dar es Salaam",
+    "type": "Hotel",
+    "hotel_stars": 4,
+    "latitude": -6.811506,
+    "longitude": 39.293651,
+    "district": "Ilala",
+    "address": "Garden Avenue",
+    "source": "https://www.southernsun.com/southern-sun-dar-es-salaam",
+    "assets": {
+      "logo": {
+        "path": "billing-demo/southernsun/logo.png",
+        "source": "https://drsprnoe9nnhf.cloudfront.net/southernsun-04222022/cms/imagepool/5f49543b41da9.png",
+        "mime": "image/png",
+        "sha256": "c3f3bdc06d4082ab7ce1f3ac474ad0579ff3ba97de8d2b2719e75b1a15b838aa",
+        "bytes": 19024
+      },
+      "discovery": {
+        "path": "billing-demo/southernsun/discovery.jpg",
+        "source": "https://drsprnoe9nnhf.cloudfront.net/southernsun-04222022/cms/cache/v2/57de7e51883e1.jpg/1200x630/fit;c:379,0,1349,1181/80/ccdba2dd4b7ea4f87e2b74b8e2c92f6a.jpg",
+        "mime": "image/jpeg",
+        "sha256": "c8e3b93b73123ec1dea5393f394b29b0c383a2b7d47d9146ade4a17cd95c13f7",
+        "bytes": 176847
+      }
+    }
+  },
+  {
+    "key": "peacock",
+    "name": "Peacock Hotel",
+    "type": "Hotel",
+    "hotel_stars": 3,
+    "latitude": -6.818015,
+    "longitude": 39.280713,
+    "district": "Ilala",
+    "address": "Bibi Titi Mohamed Street",
+    "source": "https://peacock-hotel.com/",
+    "assets": {
+      "logo": {
+        "path": "billing-demo/peacock/logo.png",
+        "source": "https://peacock-hotel.com/wp-content/uploads/2022/04/LOGO_LOGO-300x66-1.png",
+        "mime": "image/png",
+        "sha256": "eb8e9fb59ee58ab44eea8dd06a472f741138b9fe6590583b1cac2407a2c6f89b",
+        "bytes": 5422
+      },
+      "discovery": {
+        "path": "billing-demo/peacock/discovery.jpg",
+        "source": "https://peacock-hotel.com/wp-content/uploads/2022/04/About-1.jpg",
+        "mime": "image/jpeg",
+        "sha256": "3d888b2ee929da2784e07cdcb42bac9adb25b9afa42d5731da05e2c097dadeac",
+        "bytes": 108358
+      }
+    }
+  },
+  {
+    "key": "serena",
+    "name": "Dar es Salaam Serena Hotel",
+    "type": "Hotel",
+    "hotel_stars": 5,
+    "latitude": -6.81342,
+    "longitude": 39.28946,
+    "district": "Ilala",
+    "address": "Ohio Street",
+    "source": "https://www.serenahotels.com/dar-es-salaam",
+    "assets": {
+      "logo": {
+        "path": "billing-demo/serena/logo.svg",
+        "source": "https://image-tc.galaxy.tf/wisvg-d3avzfsiagbwj6gslv3w16f7w/serenadaressalaam-small.svg",
+        "mime": "image/svg+xml",
+        "sha256": "5cc1bd2bb9748a31f2ea4877ff7ba88509c1ebd6476d4c855bb582d5f6d4eff5",
+        "bytes": 11200
+      },
+      "discovery": {
+        "path": "billing-demo/serena/discovery.jpg",
+        "source": "https://image-tc.galaxy.tf/wijpeg-5orqw2i32s5e5d6vne86ehae/swimming-pool-2.jpg?width=1400",
+        "mime": "image/jpeg",
+        "sha256": "0db04556896244cb0c562197b8f6b5dbd57cf496bdacf12429754ca37b8eb4e4",
+        "bytes": 240664
+      }
+    }
+  },
+  {
+    "key": "epidor",
+    "name": "Epi d’Or",
+    "type": "Coffee Shop",
+    "hotel_stars": null,
+    "latitude": -6.752,
+    "longitude": 39.278,
+    "district": "Kinondoni",
+    "address": "520 Haile Selassie Road, Masaki",
+    "source": "https://epidor.co.tz/restaurant/",
+    "assets": {
+      "logo": {
+        "path": "billing-demo/epidor/logo.png",
+        "source": "https://epidor.co.tz/wp-content/uploads/2023/07/epi-dor_2colors_wide_logo_no_background-e1505645945954.png",
+        "mime": "image/png",
+        "sha256": "95a7fbf64cef09cb6b91819e44881369550db65667b8e6c6d1e90fd7729c54ea",
+        "bytes": 1987
+      },
+      "discovery": {
+        "path": "billing-demo/epidor/discovery.jpg",
+        "source": "https://epidor.co.tz/wp-content/uploads/2023/08/Screenshot_3.jpg",
+        "mime": "image/jpeg",
+        "sha256": "cff0c376c4c799a4716f698699bd1a2d7f02bf716eb590ad338871260ad1ed08",
+        "bytes": 27715
+      }
+    }
+  },
+  {
+    "key": "karambezi",
+    "name": "Karambezi Café",
+    "type": "Coffee Shop",
+    "hotel_stars": null,
+    "latitude": -6.7397656,
+    "longitude": 39.284985,
+    "district": "Kinondoni",
+    "address": "Sea Cliff Hotel, Toure Drive",
+    "source": "https://www.karambezicafe.com/",
+    "assets": {
+      "logo": {
+        "path": "billing-demo/karambezi/logo.png",
+        "source": "https://www.karambezicafe.com/wp-content/uploads/2018/09/KC-Logo-Re-design-2017-Kilomsberg-1b-OL.png",
+        "mime": "image/png",
+        "sha256": "d6021bdd8de039200451a951719dfd53393bc9dbd4bfd23fbb0a3ffee2b52be4",
+        "bytes": 8114
+      },
+      "discovery": {
+        "path": "billing-demo/karambezi/discovery.jpg",
+        "source": "https://www.karambezicafe.com/wp-content/uploads/2016/04/cropped-Main-Header-BG-1.jpg",
+        "mime": "image/jpeg",
+        "sha256": "1ea71ef8d8198c7fa21bb78015f546a82f13f47af8f6f310635773ef6a8e21d0",
+        "bytes": 190045
+      }
+    }
+  },
+  {
+    "key": "addis",
+    "name": "Addis in Dar",
+    "type": "Restaurant",
+    "hotel_stars": null,
+    "latitude": -6.77336,
+    "longitude": 39.26279,
+    "district": "Kinondoni",
+    "address": "17 Ursino Street, Regent Estate",
+    "source": "https://addisindar.com/",
+    "assets": {
+      "logo": {
+        "path": "billing-demo/addis/logo.png",
+        "source": "https://addisindar.com/wp-content/uploads/2021/10/Addis-in-Dar-logo.png",
+        "mime": "image/png",
+        "sha256": "64e49bd8be9f2cdf5c55e9b4119461d9d151cef35e2d890b72095443488cb83f",
+        "bytes": 140477
+      },
+      "discovery": {
+        "path": "billing-demo/addis/discovery.jpg",
+        "source": "https://addisindar.com/wp-content/uploads/2022/03/addisdar-banner1.jpg",
+        "mime": "image/jpeg",
+        "sha256": "2294475ca6450b41e20900f5d81feff8608c7be136b5fa1e8509666cded12642",
+        "bytes": 656091
+      }
+    }
+  },
+  {
+    "key": "wafa",
+    "name": "Wafa Restaurant",
+    "type": "Restaurant",
+    "hotel_stars": null,
+    "latitude": -6.7874417,
+    "longitude": 39.2638177,
+    "district": "Kinondoni",
+    "address": "Dar Wafa, Dar es Salaam",
+    "source": "https://darwafa.com/food-drinks/",
+    "assets": {
+      "logo": {
+        "path": "billing-demo/wafa/logo.jpg",
+        "source": "https://i0.wp.com/darwafa.com/wp-content/uploads/2023/02/cropped-cropped-darwafa_Logo-Vectors_220222_page-0001-1.jpg?fit=481%2C408&ssl=1",
+        "mime": "image/jpeg",
+        "sha256": "fbe679f574b077bddcfe4f140e44d93d718d99cbb34c3696faf5a12da13f15f9",
+        "bytes": 15869
+      },
+      "discovery": {
+        "path": "billing-demo/wafa/discovery.jpg",
+        "source": "https://darwafa.com/wp-content/uploads/2023/02/IMG_4306-scaled.jpg",
+        "mime": "image/jpeg",
+        "sha256": "4aa31b1a8fc3b954c9db7543a2705ca9c70fc064fb8c5c70e445acb4c120618f",
+        "bytes": 811136
+      }
+    }
+  },
+  {
+    "key": "palm",
+    "name": "The Palm Brasserie",
+    "type": "Restaurant",
+    "hotel_stars": null,
+    "latitude": -6.81669,
+    "longitude": 39.29306,
+    "district": "Ilala",
+    "address": "Hyatt Regency, 24 Kivukoni Front",
+    "source": "https://www.asbhospitality.co/portfolio/hyatt-regency-dar-es-salaam/",
+    "assets": {
+      "logo": {
+        "path": "billing-demo/palm/logo.png",
+        "source": "https://www.asbhospitality.co/wp-content/uploads/2023/04/hotel-category-2.png",
+        "mime": "image/png",
+        "sha256": "c7aa00689f4ddec8712461855131cd89abd21cc69bb1f5c90743b884698da832",
+        "bytes": 2570
+      },
+      "discovery": {
+        "path": "billing-demo/palm/discovery.jpg",
+        "source": "https://www.asbhospitality.co/wp-content/uploads/2023/04/Hyatt-Regency-Dar-es-Salaam-The-Kilimanjaro-P122-The-Palm-Brasserie-Restaurant.jpg",
+        "mime": "image/jpeg",
+        "sha256": "2db8b496ffddfe3aab74c4abc226d4ac9152212edf2f514bd3f6a80b5b50d73e",
+        "bytes": 156331
+      }
+    }
+  }
+]

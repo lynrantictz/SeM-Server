@@ -105,6 +105,23 @@ class BusinessBillingController extends BaseController
         return $this->download($business, $invoice, false);
     }
 
+    public function operationsOrdersExport(Business $business, BusinessInvoice $invoice)
+    {
+        $this->access($business, true);
+        abort_unless($invoice->business_id === $business->id, 404);
+        $rows = (function () use ($invoice) {
+            foreach ($invoice->items()->orderBy('id')->lazy(500)->chunk(500) as $items) {
+                $fees = \App\Models\Business\OrderPlatformFee::whereIn('id', $items->pluck('order_platform_fee_id'))->with(['order.status', 'order.paymentStatus', 'order.paymentMethod', 'order.orderingChannel'])->get()->keyBy('id');
+                foreach ($items as $item) {
+                    $order = $fees->get($item->order_platform_fee_id)?->order;
+                    yield [$invoice->number, $item->order_number, $order?->created_at?->toIso8601String(), $order?->orderingChannel?->name ?? $order?->channel, $order?->paymentMethod?->name, $order?->status?->name, $order?->paymentStatus?->name, $invoice->currency, (float) $item->base_amount, (float) $item->rate, (float) $item->amount];
+                }
+            }
+        })();
+
+        return \App\Support\ExcelWorkbook::download('Paperstic-'.preg_replace('/[^A-Za-z0-9_-]/', '-', $invoice->number).'-orders.xlsx', ['Invoice', 'Order', 'Order date (UTC)', 'Ordering channel (current)', 'Payment method (current)', 'Order status (current)', 'Payment status (current)', 'Currency', 'Invoiced commission base', 'Invoiced commission rate (%)', 'Invoiced Paperstic fee'], $rows);
+    }
+
     public function operationsPdf(Business $business, BusinessInvoice $invoice)
     {
         return $this->download($business, $invoice, true);

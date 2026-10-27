@@ -75,12 +75,17 @@ class OperationsBillingController extends BaseController
         return $this->sendResponse(['restrictions' => $page], 'Ordering restrictions retrieved.');
     }
 
-    public function index(Request $request)
+    public function export(Request $request)
+    {
+        return $this->index($request, true);
+    }
+
+    public function index(Request $request, bool $export = false)
     {
         $user = $request->user();
         abort_unless($user?->is_active && $user->type !== 'agent' && $user->can('operations.businesses.view') && ($user->can('operations.settlements.view') || $user->can('operations.settlements.manage')), 403);
         abort_unless(app(BusinessBillingService::class)->installed(), 503, 'Run the pending billing migrations.');
-        $data = $request->validate(['view' => ['nullable', 'in:overview,invoices,payments,schedules'], 'search' => ['nullable', 'string', 'max:160'], 'business_uuid' => ['nullable', 'uuid'], 'status' => ['nullable', 'in:all,unpaid,overdue,paid,draft'], 'per_page' => ['nullable', 'integer', 'in:10,15,25,50,100'], 'page' => ['nullable', 'integer', 'min:1']]);
+        $data = $request->validate(['view' => ['nullable', 'in:overview,invoices,payments,schedules'], 'search' => ['nullable', 'string', 'max:160'], 'business_uuid' => ['nullable', 'uuid'], 'status' => ['nullable', 'in:all,outstanding,unpaid,overdue,paid,draft'], 'per_page' => ['nullable', 'integer', 'in:10,15,25,50,100'], 'page' => ['nullable', 'integer', 'min:1']]);
         $search = trim($data['search'] ?? '');
         $business = $data['business_uuid'] ?? null;
         $invoices = BusinessInvoice::query()->whereHas('business', function ($query) use ($business) {
@@ -94,7 +99,7 @@ class OperationsBillingController extends BaseController
         $outstanding = fn ($q) => $q->whereRaw('total > paid_amount + credit_amount');
         $counts = ['restricted_businesses' => $this->liveRestricted()->count(), 'invoices' => (clone $invoices)->count(), 'unpaid' => $outstanding(clone $invoices)->count(), 'overdue' => $outstanding(clone $invoices)->whereNotNull('sent_at')->where('due_at', '<=', now())->count()];
         $balances = (clone $invoices)->selectRaw('currency, SUM(CASE WHEN total > paid_amount + credit_amount THEN total - paid_amount - credit_amount ELSE 0 END) AS outstanding, SUM(paid_amount) AS paid, SUM(CASE WHEN paid_amount + credit_amount > total THEN paid_amount + credit_amount - total ELSE 0 END) AS credit')->groupBy('currency')->get();
-        $view = $data['view'] ?? 'overview';
+        $view = $export ? 'invoices' : ($data['view'] ?? 'overview');
         $size = $data['per_page'] ?? 10;
         if ($view === 'payments') {
             $rows = DB::table('business_invoice_receipts as receipts')->join('business_invoices as invoices', 'invoices.id', '=', 'receipts.business_invoice_id')->join('businesses', 'businesses.id', '=', 'invoices.business_id');
@@ -134,7 +139,7 @@ class OperationsBillingController extends BaseController
             });
         } else {
             $status = $data['status'] ?? 'all';
-            if ($status === 'unpaid') {
+            if (in_array($status, ['unpaid', 'outstanding'], true)) {
                 $outstanding($invoices);
             } elseif ($status === 'overdue') {
                 $outstanding($invoices)->whereNotNull('sent_at')->where('due_at', '<=', now());
@@ -143,8 +148,18 @@ class OperationsBillingController extends BaseController
             } elseif ($status === 'draft') {
                 $invoices->whereNull('sent_at')->whereRaw('total > paid_amount + credit_amount');
             }
-            $rows = $invoices->with('business:id,uuid,name')->latest('id')->paginate($size)->through(fn ($invoice) => [
-                'uuid' => $invoice->uuid, 'number' => $invoice->number, 'currency' => $invoice->currency, 'total' => $invoice->total, 'outstanding' => $invoice->outstanding(), 'due_at' => $invoice->due_at,
+            if ($export) {
+                $rows = (function () use ($invoices) {
+                    foreach ($invoices->with('business:id,uuid,name')->withExists(['receipts as deadline_extended' => fn ($q) => $q->where('kind', 'extension')])->latest('id')->lazy(500) as $invoice) {
+                        $summary = $invoice->summary();
+                        yield [$invoice->business->name, $invoice->number, $invoice->period_from?->toIso8601String(), $invoice->period_to?->toIso8601String(), $invoice->created_at?->toIso8601String(), $invoice->due_at?->toIso8601String(), $invoice->deadline_extended ? 'Extended' : 'Original', $invoice->sent_at && $invoice->due_at?->lte(now()) && $invoice->outstanding() > 0 ? 'overdue' : $invoice->status, $invoice->currency, $summary['order_count'], $summary['gross_sales'] === null ? null : (float) $summary['gross_sales'], (float) $invoice->total, (float) $invoice->paid_amount, (float) $invoice->credit_amount, $invoice->outstanding()];
+                    }
+                })();
+
+                return \App\Support\ExcelWorkbook::download('Paperstic-invoices.xlsx', ['Business', 'Invoice number', 'Billing period start (UTC)', 'Billing period end (exclusive, UTC)', 'Issued on (UTC)', 'Payment due (UTC)', 'Deadline', 'Status', 'Currency', 'Orders', 'Gross sales', 'Paperstic fee', 'Amount paid', 'Credits', 'Outstanding'], $rows);
+            }
+            $rows = $invoices->with('business:id,uuid,name')->withExists(['receipts as deadline_extended' => fn ($q) => $q->where('kind', 'extension')])->latest('id')->paginate($size)->through(fn ($invoice) => [
+                'uuid' => $invoice->uuid, 'number' => $invoice->number, 'currency' => $invoice->currency, 'total' => $invoice->total, 'outstanding' => $invoice->outstanding(), 'due_at' => $invoice->due_at, 'period_from' => $invoice->period_from, 'period_to' => $invoice->period_to, 'created_at' => $invoice->created_at, 'deadline_extended' => (bool) $invoice->deadline_extended,
                 'status' => $invoice->sent_at && $invoice->due_at?->lte(now()) && $invoice->outstanding() > 0 ? 'overdue' : $invoice->status,
                 'business_uuid' => $invoice->business->uuid, 'business_name' => $invoice->business->name,
             ]);

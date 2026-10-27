@@ -108,3 +108,43 @@ it('counts all unpaid business invoices across pages and excludes settled or unr
         ->assertJsonPath('data.unpaid_invoice_count', 12)
         ->assertJsonCount(4, 'data.invoices.data');
 });
+
+function billingWorkbookXml($response): string
+{
+    $path = $response->baseResponse->getFile()->getPathname();
+    $zip = new ZipArchive;
+    expect($zip->open($path))->toBeTrue();
+    $xml = $zip->getFromName('xl/worksheets/sheet1.xml');
+    expect(simplexml_load_string($zip->getFromName('xl/workbook.xml')))->not->toBeFalse();
+    $zip->close();
+    unlink($path);
+    expect(simplexml_load_string($xml))->not->toBeFalse();
+
+    return $xml;
+}
+
+it('exports all matching outstanding invoices across pages with dates and numeric totals', function () {
+    for ($i = 0; $i < 16; $i++) {
+        workspaceInvoice($this, ['number' => 'EXPORT-'.$i, 'period_to' => now()->subDays($i), 'paid_amount' => $i === 0 ? 100 : 0]);
+    }
+    workspaceInvoice($this, ['number' => 'SETTLED', 'status' => 'paid', 'paid_amount' => 300, 'period_to' => now()->subDays(20)]);
+    $this->getJson('/v1/operations/billing?status=outstanding')->assertOk()->assertJsonPath('data.rows.total', 16)->assertJsonStructure(['data' => ['rows' => ['data' => [['period_from', 'period_to', 'created_at', 'due_at', 'deadline_extended']]]]]);
+    $response = $this->get('/v1/operations/billing/export?status=outstanding&search=EXPORT&per_page=10&page=2')->assertOk()->assertDownload('Paperstic-invoices.xlsx');
+    $xml = billingWorkbookXml($response);
+    expect(substr_count($xml, '<row>'))->toBe(17);
+    expect($xml)->toContain('EXPORT-0', 'EXPORT-15', '<v>200</v>', 'Billing period start (UTC)', 'Payment due (UTC)')->not->toContain('SETTLED');
+    $xml = billingWorkbookXml($this->get('/v1/operations/billing/export?status=paid')->assertOk());
+    expect($xml)->toContain('SETTLED')->not->toContain('EXPORT-');
+    $this->actingAs($this->owner, 'api')->get('/v1/operations/billing/export')->assertForbidden();
+});
+
+it('exports immutable invoice order fees even when the original order is unavailable and denies mismatched access', function () {
+    $invoice = workspaceInvoice($this, ['number' => 'ORDER-EXPORT']);
+    $invoice->items()->create(['order_platform_fee_id' => 99999, 'order_number' => '=UNTRUSTED()', 'base_amount' => 10000, 'rate' => 3, 'amount' => 300]);
+    $response = $this->get($this->url.'/invoices/'.$invoice->uuid.'/orders/export')->assertOk()->assertDownload('Paperstic-ORDER-EXPORT-orders.xlsx');
+    $xml = billingWorkbookXml($response);
+    expect($xml)->toContain('=UNTRUSTED()', '<v>10000</v>', '<v>3</v>', '<v>300</v>')->not->toContain('<f>');
+    $foreign = workspaceInvoice($this, ['business_id' => 99999, 'period_to' => now()->subMonth()]);
+    $this->get($this->url.'/invoices/'.$foreign->uuid.'/orders/export')->assertNotFound();
+    $this->actingAs($this->owner, 'api')->get($this->url.'/invoices/'.$invoice->uuid.'/orders/export')->assertForbidden();
+});
