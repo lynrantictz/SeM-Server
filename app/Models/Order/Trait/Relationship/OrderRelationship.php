@@ -10,6 +10,7 @@ use App\Models\Order\OrderFeedback;
 use App\Models\Order\OrderItem;
 use App\Models\Order\OrderStatus;
 use App\Models\Order\OrderStatusHistory;
+use App\Models\Order\OrderAssignmentHistory;
 use App\Models\Location\Tax;
 use App\Models\Payment\Payment;
 use App\Models\Payment\PaymentMethod;
@@ -50,6 +51,11 @@ trait OrderRelationship
     public function statusHistories()
     {
         return $this->hasMany(OrderStatusHistory::class)->orderBy('created_at');
+    }
+
+    public function assignmentHistories()
+    {
+        return $this->hasMany(OrderAssignmentHistory::class)->orderBy('created_at');
     }
 
     public function paymentMethod()

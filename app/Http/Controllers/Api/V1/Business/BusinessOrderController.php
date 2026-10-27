@@ -5,10 +5,12 @@ namespace App\Http\Controllers\Api\V1\Business;
 use App\Http\Controllers\Api\BaseController;
 use App\Models\Auth\User;
 use App\Models\Business\Business;
+use App\Models\Business\BusinessUser;
 use App\Models\Business\BusinessPaymentMethod;
 use App\Models\Menu\Category;
 use App\Models\Menu\Item;
 use App\Models\Order\Order;
+use App\Models\Order\OrderAssignmentHistory;
 use App\Models\Order\OrderPaymentLink;
 use App\Models\Order\OrderStaffNote;
 use App\Models\Order\OrderStatus;
@@ -94,6 +96,9 @@ class BusinessOrderController extends BaseController
                 'statusHistories.fromStatus:id,name',
                 'statusHistories.toStatus:id,name',
                 'statusHistories.changedBy:id,name',
+                'assignmentHistories.previousWaiter:id,name',
+                'assignmentHistories.waiter:id,name',
+                'assignmentHistories.changedBy:id,name',
                 'staffNotes.author:id,name',
                 'workLock.user:id,name',
             ])
@@ -110,6 +115,7 @@ class BusinessOrderController extends BaseController
 
         return $this->sendResponse([
             'role' => $role,
+            'assignable_waiters' => $this->assignableWaiters($business, $role),
             'ordering_restricted' => app(\App\Services\Business\BusinessBillingService::class)->restricted($business),
             'default_tab' => $this->defaultTab($role),
             'counts' => $counts,
@@ -159,7 +165,7 @@ class BusinessOrderController extends BaseController
                 ->sortBy('name')
                 ->values(),
             'orders' => [
-                'data' => collect($orders->items())->map(fn (Order $order) => $this->orderData($order))->values(),
+                'data' => collect($orders->items())->map(fn (Order $order) => $this->orderData($order, $role))->values(),
                 'meta' => [
                     'current_page' => $orders->currentPage(),
                     'last_page' => $orders->lastPage(),
@@ -489,7 +495,57 @@ class BusinessOrderController extends BaseController
             SendOrderPaymentRequestWhatsApp::dispatch($issued['link']->uuid, $issued['token'])->onQueue(config('whatsapp.queue'));
         }
 
-        return $this->sendResponse(['order' => $this->orderData($updated)], 'Order updated successfully.');
+        return $this->sendResponse(['order' => $this->orderData($updated, $role)], 'Order updated successfully.');
+    }
+
+    public function assignWaiter(Request $request, Business $business, string $order)
+    {
+        $role = $this->authorizeBusiness($business);
+        abort_unless($this->canReassignWaiter($role), HTTP_FORBIDDEN, 'Your role cannot assign orders to waiters.');
+        $validated = $request->validate([
+            'waiter_user_id' => ['required', 'integer', 'exists:users,id'],
+        ]);
+
+        $waiterMembership = BusinessUser::query()
+            ->where('business_id', $business->id)
+            ->where('user_id', $validated['waiter_user_id'])
+            ->where('business_role', 'waiter')
+            ->where('is_active', true)
+            ->whereHas('user', fn (Builder $user) => $user->where('type', 'business')->where('is_active', true))
+            ->firstOrFail();
+
+        $updated = DB::transaction(function () use ($business, $order, $waiterMembership) {
+            $record = Order::query()
+                ->where('business_id', $business->id)
+                ->where('uuid', $order)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $status = OrderStatus::query()->findOrFail($record->order_status_id)->name;
+            abort_unless(! in_array($status, ['Completed', 'Cancelled', 'Refunded'], true), Response::HTTP_CONFLICT,
+                'A closed order cannot be reassigned.');
+
+            OrderWorkLock::query()->where('expires_at', '<=', now())->delete();
+            $lock = OrderWorkLock::query()->where('order_id', $record->id)->lockForUpdate()->first();
+            abort_unless(! $lock || $lock->user_id === auth()->id(), Response::HTTP_CONFLICT,
+                ($lock?->user?->name ?? 'Another staff member') . ' is currently updating this order.');
+
+            $previousWaiterId = $record->assigned_to_user_id;
+            if ((int) $previousWaiterId !== (int) $waiterMembership->user_id) {
+                $record->assigned_to_user_id = $waiterMembership->user_id;
+                $record->save();
+                OrderAssignmentHistory::query()->create([
+                    'order_id' => $record->id,
+                    'previous_waiter_id' => $previousWaiterId,
+                    'waiter_id' => $waiterMembership->user_id,
+                    'changed_by_user_id' => auth()->id(),
+                ]);
+            }
+
+            return $this->loadOrder($record);
+        });
+
+        return $this->sendResponse(['order' => $this->orderData($updated, $role)], 'Order waiter assigned successfully.');
     }
 
     public function paymentQr(Business $business, string $order, GuestOrderSessionService $guestSessions)
@@ -601,7 +657,7 @@ class BusinessOrderController extends BaseController
         abort_unless($this->canCreateOrEdit($role), HTTP_FORBIDDEN, 'Your role cannot create orders.');
         $data = $this->orderPayload($request, $business);
         $order = (new OrderRepository())->storeForStaff($business, $data, auth()->id());
-        return $this->sendResponse(['order' => $this->orderData($this->loadOrder($order))], 'Order created and sent to the kitchen.', HTTP_CREATED);
+        return $this->sendResponse(['order' => $this->orderData($this->loadOrder($order), $role)], 'Order created and sent to the kitchen.', HTTP_CREATED);
     }
 
     public function update(Request $request, Business $business, string $order)
@@ -659,7 +715,7 @@ class BusinessOrderController extends BaseController
             OrderStatusHistory::query()->create(['order_id' => $record->id, 'from_status_id' => $record->order_status_id, 'to_status_id' => $record->order_status_id, 'changed_by_user_id' => auth()->id(), 'note' => 'Order changed: '.$data['change_reason'].' | Before: '.json_encode($before).' | After: '.json_encode(['scheduled_for' => $record->scheduled_for?->toIso8601String(), 'total' => $record->total_amount, 'items' => $data['items']])]);
             return $record;
         });
-        return $this->sendResponse(['order' => $this->orderData($this->loadOrder($updated))], 'Order updated successfully.');
+        return $this->sendResponse(['order' => $this->orderData($this->loadOrder($updated), $role)], 'Order updated successfully.');
     }
 
     public function storeNote(Request $request, Business $business, string $order)
@@ -728,6 +784,30 @@ class BusinessOrderController extends BaseController
         return in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager', 'counter', 'counter-clerk', 'waiter'], true);
     }
 
+    private function canReassignWaiter(string $role): bool
+    {
+        return in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager', 'counter', 'counter-clerk', 'vendor_viewer'], true);
+    }
+
+    private function assignableWaiters(Business $business, string $role): array
+    {
+        if (! $this->canReassignWaiter($role)) return [];
+
+        return BusinessUser::query()
+            ->where('business_id', $business->id)
+            ->where('business_role', 'waiter')
+            ->where('is_active', true)
+            ->whereHas('user', fn (Builder $user) => $user->where('type', 'business')->where('is_active', true))
+            ->with('user:id,name')
+            ->get()
+            ->map(fn (BusinessUser $membership) => [
+                'id' => $membership->user_id,
+                'name' => $membership->user?->name,
+            ])
+            ->values()
+            ->all();
+    }
+
     private function staffMenuItemData(Item $item, Business $business, string $channel): array
     {
         $pricing = app(MenuAvailabilityService::class)->itemPricing($item, $business, $channel);
@@ -772,6 +852,7 @@ class BusinessOrderController extends BaseController
             'items:id,order_id,item_id,quantity,unit_price,final_price,total_amount,comment', 'items.item:id,uuid,name', 'items.options:id,order_item_id,name,price_adjustment',
             'items.options.itemOption:id,uuid',
             'statusHistories.fromStatus:id,name', 'statusHistories.toStatus:id,name', 'statusHistories.changedBy:id,name',
+            'assignmentHistories.previousWaiter:id,name', 'assignmentHistories.waiter:id,name', 'assignmentHistories.changedBy:id,name',
             'business:id', 'business.paymentSetting:business_id,currency',
             'business.paymentMethods:id,uuid,business_id,payment_method_id',
             'business.paymentMethods.accounts:id,uuid,business_payment_method_id,label,bank_name,account_number,account_holder_name,currency',
@@ -800,7 +881,12 @@ class BusinessOrderController extends BaseController
     private function visibleOrders(Business $business, string $role): Builder
     {
         $query = Order::query()->where('business_id', $business->id);
-        if ($role === 'waiter') return $query->whereIn('channel', ['dine_in', 'online']);
+        if ($role === 'waiter') {
+            return $query->where(function (Builder $owned) {
+                $owned->where('approver_id', auth()->id())
+                    ->orWhere('assigned_to_user_id', auth()->id());
+            });
+        }
         return $query;
     }
 
@@ -826,8 +912,10 @@ class BusinessOrderController extends BaseController
             'ready' => in_array($role, ['kitchen', 'chef'], true),
             'serve' => in_array($role, ['counter', 'counter-clerk'], true)
                 || $role === 'waiter',
-            'mark_paid', 'complete' => in_array($role, ['counter', 'counter-clerk'], true)
-                || ($action === 'mark_paid' && $role === 'waiter'),
+            'mark_paid' => in_array($role, ['counter', 'counter-clerk'], true)
+                || $role === 'waiter',
+            'complete' => in_array($role, ['counter', 'counter-clerk'], true)
+                || $role === 'waiter',
             'confirm_cash' => in_array($role, ['counter', 'counter-clerk'], true)
                 || ($role === 'waiter' && $channel === 'dine_in'),
             default => false,
@@ -876,13 +964,6 @@ class BusinessOrderController extends BaseController
 
         $query = $this->applyTab($this->visibleOrders($business, $role), $tab);
 
-        if ($role === 'waiter' && $tab === 'paid') {
-            $query->where(function (Builder $paidOrder) {
-                $paidOrder->where('approver_id', auth()->id())
-                    ->orWhereHas('payment', fn (Builder $payment) => $payment->where('confirmed_by_user_id', auth()->id()));
-            });
-        }
-
         return $query;
     }
 
@@ -891,7 +972,7 @@ class BusinessOrderController extends BaseController
         return OrderStatus::query()->whereIn('name', $names)->pluck('id')->all();
     }
 
-    private function orderData(Order $order): array
+    private function orderData(Order $order, string $role): array
     {
         $point = $order->servicePoint;
         $servedAt = $order->relationLoaded('statusHistories')
@@ -958,7 +1039,7 @@ class BusinessOrderController extends BaseController
                     'price_adjustment' => (float) $option->price_adjustment,
                 ])->values(),
             ])->values(),
-            'paperstic_fee' => in_array($this->authorizeBusiness($order->business), ['owner', 'vendor_manager', 'business_manager', 'manager'], true) ? app(\App\Services\Business\BusinessBillingService::class)->orderFee($order) : null,
+            'paperstic_fee' => in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager'], true) ? app(\App\Services\Business\BusinessBillingService::class)->orderFee($order) : null,
             'total_items_amount' => (float) $order->total_items_amount,
             'tax_amount' => (float) $order->tax_amount,
             'total_amount' => (float) $order->total_amount,
@@ -985,6 +1066,14 @@ class BusinessOrderController extends BaseController
                     'to' => $entry->toStatus?->name,
                     'by' => $entry->changedBy?->name,
                     'note' => $entry->note,
+                    'at' => $entry->created_at,
+                ])->values()
+                : [],
+            'assignment_history' => $order->relationLoaded('assignmentHistories')
+                ? $order->assignmentHistories->map(fn (OrderAssignmentHistory $entry) => [
+                    'previous_waiter' => $entry->previousWaiter?->name,
+                    'waiter' => $entry->waiter?->name,
+                    'changed_by' => $entry->changedBy?->name,
                     'at' => $entry->created_at,
                 ])->values()
                 : [],
