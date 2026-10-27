@@ -23,22 +23,23 @@ trait MeTrait
             ]);
         }
 
-        if ($user->type === 'agent') {
-            $allowed = $user->businesses->where('pivot.is_active', true)->pluck('id');
-            $vendors = $user->vendors->where('pivot.is_active', true)->values();
-            foreach ($vendors as $vendor) {
-                if ($vendor->pivot->access_scope !== 'all_businesses') {
-                    $vendor->setRelation('businesses', $vendor->businesses->whereIn('id', $allowed)->values());
-                }
+        $allowedBusinessIds = $user->businesses->where('pivot.is_active', true)->pluck('id');
+        $vendors = $user->vendors->filter(fn ($vendor) => (bool) $vendor->pivot->is_active)->values();
+        foreach ($vendors as $vendor) {
+            if (! $vendor->pivot->is_primary && $vendor->pivot->access_scope !== 'all_businesses') {
+                $vendor->setRelation('businesses', $vendor->businesses->whereIn('id', $allowedBusinessIds)->values());
             }
-            $user->setRelation('vendors', $vendors);
         }
-        $user->setRelation(
-            'businesses',
-            $user->businesses->filter(fn ($business) => (bool) $business->pivot->is_active)->values()
-        );
-
-        $businesses = $user->vendors->flatMap(fn ($vendor) => $vendor->businesses)->concat($user->businesses);
+        $user->setRelation('vendors', $vendors);
+        $businesses = $user->type === 'business'
+            ? $user->businesses->filter(fn ($business) => (bool) $business->pivot->is_active)->values()
+            : $user->vendors->flatMap(fn ($vendor) => $vendor->businesses);
+        $userBusinesses = $user->businesses
+            ->filter(fn ($business) => (bool) $business->pivot->is_active);
+        if ($user->type !== 'business') {
+            $userBusinesses = $userBusinesses->whereIn('id', $businesses->pluck('id'));
+        }
+        $user->setRelation('businesses', $userBusinesses->values());
         $verifiedIds = app(\App\Services\Discovery\DiscoverableBusinesses::class)->verifiedQuery()
             ->whereIn('businesses.id', $businesses->pluck('id')->unique())->pluck('businesses.id')->flip();
         foreach ($businesses as $business) {

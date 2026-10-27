@@ -29,7 +29,7 @@ class VendorUserController extends BaseController
     private function ensureOwner(Vendor $vendor): void
     {
         $membership = auth()->user()->vendors()->whereKey($vendor->id)->first();
-        abort_unless($membership && $membership->pivot->is_primary, HTTP_FORBIDDEN, 'Only this vendor owner can manage vendor users.');
+        abort_unless(auth()->user()->is_active && $membership && $membership->pivot->is_active && $membership->pivot->is_primary, HTTP_FORBIDDEN, 'Only this vendor owner can manage vendor users.');
     }
 
     public function index(Request $request, Vendor $vendor)
@@ -234,7 +234,7 @@ class VendorUserController extends BaseController
             if ($invitation->assign_owner) {
                 Vendor::whereKey($invitation->vendor_id)->lockForUpdate()->firstOrFail();
                 abort_if($invitation->vendor->users()->wherePivot('is_primary', true)->where('users.id', '!=', $invitation->user_id)->exists(), 409, 'This vendor already has an owner.');
-                $invitation->vendor->users()->updateExistingPivot($invitation->user_id, ['is_primary' => true]);
+                $invitation->vendor->users()->updateExistingPivot($invitation->user_id, ['is_primary' => true, 'role' => 'owner', 'access_scope' => 'all_businesses']);
                 app(\App\Services\OnboardingAgentService::class)->audit('owner.accepted', null, $invitation->vendor_id, ['owner_uuid' => $invitation->user->uuid]);
             }
             $invitation->vendor->users()->updateExistingPivot($invitation->user_id, ['is_active' => true, 'accepted_at' => now(), 'revoked_at' => null]);
@@ -270,7 +270,7 @@ class VendorUserController extends BaseController
             if ($invitation->assign_owner) {
                 Vendor::whereKey($invitation->vendor_id)->lockForUpdate()->firstOrFail();
                 abort_if($invitation->vendor->users()->wherePivot('is_primary', true)->where('users.id', '!=', $invitation->user_id)->exists(), 409, 'This vendor already has an owner.');
-                $invitation->vendor->users()->updateExistingPivot($invitation->user_id, ['is_primary' => true]);
+                $invitation->vendor->users()->updateExistingPivot($invitation->user_id, ['is_primary' => true, 'role' => 'owner', 'access_scope' => 'all_businesses']);
                 app(\App\Services\OnboardingAgentService::class)->audit('owner.accepted', null, $invitation->vendor_id, ['owner_uuid' => $invitation->user->uuid]);
             }
             $invitation->vendor->users()->updateExistingPivot($invitation->user_id, ['is_active' => true, 'accepted_at' => now(), 'revoked_at' => null]);

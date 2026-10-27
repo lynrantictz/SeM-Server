@@ -9,26 +9,19 @@ class BusinessProfileAccess
     public function permissions(Business $business): array
     {
         $user = auth()->user();
-        $manage = false;
-        $registration = false;
-        if ($user?->is_active) {
-            if ($user->type === 'business') {
-                $manage = $user->businesses()->whereKey($business->id)->wherePivot('is_active', true)
-                    ->wherePivot('business_role', 'business_manager')->exists();
-            } else {
-                $membership = $user->vendors()->whereKey($business->vendor_id)->first();
-                $manage = (bool) ($membership && ($membership->pivot->is_primary
-                    || ($membership->pivot->is_active && $membership->pivot->role === 'manager'
-                        && ($membership->pivot->access_scope === 'all_businesses'
-                            || $user->businesses()->whereKey($business->id)->wherePivot('is_active', true)->exists()))));
-                $registration = $manage;
-            }
-        }
+        $role = $user ? app(VendorBusinessAccess::class)->roleFor($user, $business) : null;
+        $canManage = in_array($role, ['owner', 'vendor_manager', 'business_manager'], true);
+        $registration = $role === 'owner'
+            || ($role === 'vendor_manager' && $user?->vendors()
+                ->whereKey($business->vendor_id)
+                ->wherePivot('access_scope', 'all_businesses')
+                ->exists());
 
         return [
-            'can_update_profile' => $manage,
-            'can_manage_operations' => $manage,
-            'can_manage_staff' => $manage,
+            'can_view_profile' => $role !== null && $role !== 'vendor_viewer',
+            'can_update_profile' => $canManage,
+            'can_manage_operations' => $canManage,
+            'can_manage_staff' => $canManage,
             'can_manage_registration' => $registration,
         ];
     }

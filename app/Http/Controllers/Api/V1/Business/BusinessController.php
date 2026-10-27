@@ -79,6 +79,7 @@ class BusinessController extends BaseController
             ->whereKey($business->id)
             ->firstOrFail();
         $business->setAttribute('profile_permissions', app(\App\Services\Business\BusinessProfileAccess::class)->permissions($business));
+        abort_unless($business->profile_permissions['can_view_profile'], HTTP_FORBIDDEN, 'You do not have access to this business.');
         $business->setAttribute('owner_summary', app(\App\Services\VendorOwnerSummary::class)->forVendor($business->vendor));
         $business->setAttribute('activation', $this->activation->status($business));
         $business->setAttribute(
@@ -259,7 +260,7 @@ class BusinessController extends BaseController
             return;
         }
         $membership = auth()->user()->vendors()->whereKey($vendor->id)->first();
-        abort_unless(auth()->user()->is_active && $membership, HTTP_FORBIDDEN, 'You do not have access to this vendor.');
+        abort_unless(auth()->user()->is_active && $membership && $membership->pivot->is_active, HTTP_FORBIDDEN, 'You do not have access to this vendor.');
         if ($membership->pivot->is_primary) return;
         abort_unless($membership->pivot->is_active && $membership->pivot->role === 'manager' && $membership->pivot->access_scope === 'all_businesses', HTTP_FORBIDDEN, 'A vendor-wide management assignment is required to register a business.');
     }

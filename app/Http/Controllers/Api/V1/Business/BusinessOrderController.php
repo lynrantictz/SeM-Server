@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api\V1\Business;
 use App\Http\Controllers\Api\BaseController;
 use App\Models\Auth\User;
 use App\Models\Business\Business;
-use App\Models\Business\BusinessUser;
 use App\Models\Business\BusinessPaymentMethod;
 use App\Models\Menu\Category;
 use App\Models\Menu\Item;
@@ -186,7 +185,22 @@ class BusinessOrderController extends BaseController
         return $this->reports($request, $business, true);
     }
 
-    public function reports(Request $request, Business $business, bool $exportOrders = false)
+    public function exportPaymentsReport(Request $request, Business $business)
+    {
+        return $this->reports($request, $business, false, true);
+    }
+
+    public function exportProductsReport(Request $request, Business $business)
+    {
+        return $this->reports($request, $business, false, false, true);
+    }
+
+    public function exportSalesReport(Request $request, Business $business)
+    {
+        return $this->reports($request, $business, false, false, false, true);
+    }
+
+    public function reports(Request $request, Business $business, bool $exportOrders = false, bool $exportPayments = false, bool $exportProducts = false, bool $exportSales = false)
     {
         abort_unless(auth()->user()->is_active && auth()->user()->type !== 'agent', Response::HTTP_FORBIDDEN);
         $role = $this->authorizeBusiness($business);
@@ -208,13 +222,14 @@ class BusinessOrderController extends BaseController
             'payment_method' => ['nullable', 'integer', 'min:1'],
             'order_status_id' => ['nullable', 'integer', 'min:1'],
             'payment_status_id' => ['nullable', 'integer', 'min:1'],
-            'sort' => ['nullable', 'in:date,number,total,paid,due,base,rate,fee'],
+            'sort' => ['nullable', Rule::in(($exportProducts || $request->input('view') === 'products') ? ['section', 'subsection', 'category', 'product', 'quantity', 'orders', 'discount', 'revenue'] : ((($exportPayments || $request->input('view') === 'payments') && ! $request->has('payment_method_key')) ? ['method', 'orders', 'total', 'paid', 'due', 'fee'] : ['date', 'number', 'total', 'paid', 'due', 'base', 'rate', 'fee']))],
             'direction' => ['nullable', 'in:asc,desc'],
+            'sales_scope' => ['nullable', 'in:confirmed,all'],
         ]);
 
         $from = $validated['date_from'] ?? now()->subDays(29)->toDateString();
         $to = $validated['date_to'] ?? now()->toDateString();
-        $view = $exportOrders ? 'orders' : ($validated['view'] ?? 'overview');
+        $view = $exportOrders ? 'orders' : ($exportPayments ? 'payments' : ($exportProducts ? 'products' : ($exportSales ? 'sales' : ($validated['view'] ?? 'overview'))));
         $perPage = $validated['per_page'] ?? 10;
         $sectionId = $validated['section_id'] ?? null;
         $subSectionId = $validated['sub_section_id'] ?? null;
@@ -249,22 +264,24 @@ class BusinessOrderController extends BaseController
         }
 
         if ($view === 'products') {
-            $products = DB::table('order_items')
-                ->join('orders', 'orders.id', '=', 'order_items.order_id')
-                ->leftJoin('items', 'items.id', '=', 'order_items.item_id')
-                ->where('orders.business_id', $business->id)
-                ->whereBetween('orders.created_at', [$from . ' 00:00:00', $to . ' 23:59:59'])
-                ->tap($applyServicePointFilter)
-                ->selectRaw("COALESCE(items.name, 'Menu item') as name, SUM(order_items.quantity) as quantity, SUM(order_items.total_amount) as revenue")
-                ->groupBy('items.name')
-                ->orderByDesc('revenue')
-                ->paginate($perPage);
-
-            return $this->sendResponse(['view' => $view, 'date_from' => $from, 'date_to' => $to, 'rows' => ['data' => $products->items(), 'meta' => ['current_page' => $products->currentPage(), 'last_page' => $products->lastPage(), 'per_page' => $products->perPage(), 'total' => $products->total(), 'from' => $products->firstItem(), 'to' => $products->lastItem()]]], 'Product report retrieved successfully.');
+            $report = app(\App\Services\Business\ProductsReport::class);
+            return $exportProducts ? $report->forBusiness($business, $validated, true) : $this->sendResponse($report->forBusiness($business, $validated), 'Product report retrieved successfully.');
         }
 
         if ($view === 'payments') {
-            return $this->sendResponse(['view' => $view, ...app(\App\Services\Business\PaymentMethodReport::class)->forBusiness($business, $validated)], 'Payment report retrieved successfully.');
+            $report = app(\App\Services\Business\PaymentMethodReport::class);
+            return $exportPayments ? $report->forBusiness($business, $validated, true) : $this->sendResponse(['view' => $view, ...$report->forBusiness($business, $validated)], 'Payment report retrieved successfully.');
+        }
+
+        if ($view === 'overview') {
+            return $this->sendResponse(app(\App\Services\Business\OverviewReport::class)->forBusiness($business, $validated), 'Business overview retrieved successfully.');
+        }
+
+        if ($view === 'sales') {
+            $report = app(\App\Services\Business\SalesReport::class);
+            return $exportSales
+                ? $report->forBusiness($business, $validated, true)
+                : $this->sendResponse($report->forBusiness($business, $validated), 'Business sales report retrieved successfully.');
         }
 
         $base = $orders();
@@ -677,7 +694,8 @@ class BusinessOrderController extends BaseController
 
     public function releaseLock(Business $business, string $order)
     {
-        $this->authorizeBusiness($business);
+        $role = $this->authorizeBusiness($business);
+        abort_unless($this->canCreateOrEdit($role), HTTP_FORBIDDEN, 'Your role cannot edit orders.');
         $record = Order::query()->where('business_id', $business->id)->where('uuid', $order)->firstOrFail();
         OrderWorkLock::query()->where('order_id', $record->id)->where('user_id', auth()->id())->delete();
         return $this->sendResponse([], 'Order lock released.');
@@ -771,28 +789,12 @@ class BusinessOrderController extends BaseController
     {
         /** @var User $user */
         $user = auth()->user();
-        $staffMembership = BusinessUser::query()
-            ->where('business_id', $business->id)
-            ->where('user_id', $user->id)
-            ->where('is_active', true)
-            ->first();
+        $role = app(\App\Services\Business\VendorBusinessAccess::class)->roleFor($user, $business);
+        abort_unless($role, HTTP_FORBIDDEN, $user->type === 'business' && ! $user->is_active
+            ? 'Your staff account is inactive.'
+            : 'You do not have access to this business.');
 
-        if ($user->type === 'business') {
-            abort_unless($staffMembership, HTTP_FORBIDDEN, 'You do not have access to this business.');
-            abort_unless((bool) $user->is_active, HTTP_FORBIDDEN, 'Your staff account is inactive.');
-            return $staffMembership->business_role;
-        }
-
-        $vendorAccess = $user->vendors()->whereKey($business->vendor_id)->first();
-        abort_unless($vendorAccess, HTTP_FORBIDDEN, 'You do not have access to this business.');
-        if ($vendorAccess->pivot->is_primary) return 'owner';
-        abort_unless($vendorAccess->pivot->is_active && $vendorAccess->pivot->role === 'manager', HTTP_FORBIDDEN,
-            'You do not have permission to view business orders.');
-        if ($vendorAccess->pivot->access_scope !== 'all_businesses') {
-            abort_unless($user->businesses()->whereKey($business->id)->wherePivot('is_active', true)->exists(),
-                HTTP_FORBIDDEN, 'You do not have access to this business.');
-        }
-        return 'vendor_manager';
+        return $role;
     }
 
     private function visibleOrders(Business $business, string $role): Builder

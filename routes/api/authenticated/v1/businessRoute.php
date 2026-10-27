@@ -44,6 +44,9 @@ Route::group(['prefix' => 'businesses'], function () {
     Route::post('{business}/orders/{order}/mno-checkout', [BusinessPaymentController::class, 'checkout'])->middleware(\App\Http\Middleware\EnsureGatewayPaymentsEnabled::class);
     Route::get('{business}/orders', [BusinessOrderController::class, 'index']);
     Route::get('{business}/dashboard', [BusinessOrderController::class, 'dashboard']);
+    Route::get('{business}/reports/products/export', [BusinessOrderController::class, 'exportProductsReport']);
+    Route::get('{business}/reports/sales/export', [BusinessOrderController::class, 'exportSalesReport']);
+    Route::get('{business}/reports/payments/export', [BusinessOrderController::class, 'exportPaymentsReport']);
     Route::get('{business}/reports/orders/export', [BusinessOrderController::class, 'exportOrdersReport']);
     Route::get('{business}/reports', [BusinessOrderController::class, 'reports']);
     Route::get('{business}/orders/context', [BusinessOrderController::class, 'context']);

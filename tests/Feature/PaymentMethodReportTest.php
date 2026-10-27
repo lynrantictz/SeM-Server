@@ -142,3 +142,62 @@ it('keeps missing and zero order fees distinct and enforces report export permis
     $this->getJson($base.$query)->assertOk();
     $this->get($base.'/orders/export'.$query)->assertOk();
 });
+
+it('filters, sorts and exports all payment method summaries across pages without duplicating retries', function () {
+    $order = reportOrder($this, ['number' => 'PAYMENTS-FILTER', 'channel' => 'dine_in']);
+    foreach (['FAILED', 'SUCCESS'] as $status) {
+        Payment::create(['order_id' => $order->id, 'external_id' => Str::random(12), 'account_number' => 'manual', 'provider' => 'manual', 'amount' => 10000, 'currency' => 'TZS', 'status' => $status]);
+    }
+    for ($i = 0; $i < 15; $i++) {
+        $method = DB::table('payment_methods')->insertGetId(['name' => 'Method '.str_pad($i, 2, '0', STR_PAD_LEFT)]);
+        reportOrder($this, ['payment_method_id' => $method, 'channel' => 'dine_in']);
+    }
+    reportOrder($this, ['channel' => 'online']);
+    $query = '?view=payments&date_from=2026-10-26&date_to=2026-10-26&channel=dine_in&sort=method&direction=asc&per_page=15&page=2';
+    $base = '/v1/businesses/'.$this->business->uuid.'/reports';
+    $this->getJson($base.$query)->assertOk()->assertJsonPath('data.rows.meta.total', 16)->assertJsonCount(1, 'data.rows.data');
+    $filtered = $this->getJson($base.$query.'&payment_method='.$this->method)->assertOk()->assertJsonPath('data.rows.meta.total', 1);
+    $this->getJson($base.$query.'&page=1&payment_method='.$this->method)->assertOk()->assertJsonPath('data.rows.data.0.orders', 1);
+    $response = $this->get($base.'/payments/export'.$query)->assertOk()->assertDownload('Paperstic-payments-2026-10-26-to-2026-10-26.xlsx');
+    $zip = new ZipArchive;
+    $path = $response->baseResponse->getFile()->getPathname();
+    expect($zip->open($path))->toBeTrue();
+    $xml = $zip->getFromName('xl/worksheets/sheet1.xml');
+    $zip->close();
+    unlink($path);
+    expect(substr_count($xml, '<row>'))->toBe(17);
+    expect($xml)->toContain('M-Pesa', 'Method 00', 'Method 14');
+    $this->getJson($base.$query.'&search=method%2000&page=1')->assertOk()->assertJsonPath('data.rows.meta.total', 1)->assertJsonPath('data.rows.data.0.method', 'Method 00');
+    $this->getJson($base.$query.'&payment_status_id=99999')->assertOk()->assertJsonPath('data.rows.meta.total', 0);
+    $this->getJson($base.$query.'&sort=date')->assertUnprocessable();
+});
+
+it('exports payment method order details with recorded account and saved fees while preserving access control', function () {
+    $configuration = $this->business->paymentMethods()->create(['payment_method_id' => $this->method, 'is_enabled' => true, 'status' => 'active']);
+    $account = $configuration->accounts()->create(['bank_name' => 'A bank', 'account_holder_name' => 'Registered Owner', 'account_number' => '074937392', 'currency' => 'TZS']);
+    $order = reportOrder($this, ['number' => 'DETAIL-ACCOUNT', 'channel' => 'dine_in', 'paid_amount' => 7000, 'due_amount' => 3000], 2);
+    Payment::create(['order_id' => $order->id, 'external_id' => 'DETAIL-REF', 'account_number' => 'manual', 'provider' => 'manual', 'amount' => 7000, 'currency' => 'TZS', 'status' => 'SUCCESS', 'metadata' => ['payment_account_uuid' => $account->uuid]]);
+    for ($i = 0; $i < 15; $i++) {
+        reportOrder($this, ['channel' => 'dine_in']);
+    }
+    reportOrder($this, ['channel' => 'online']);
+    $base = '/v1/businesses/'.$this->business->uuid.'/reports';
+    $query = '?view=payments&date_from=2026-10-26&date_to=2026-10-26&payment_method_key='.$this->method.'&currency=TZS&channel=dine_in&sort=date&direction=desc&per_page=15&page=2';
+    $this->getJson($base.$query)->assertOk()->assertJsonPath('data.rows.meta.total', 16)->assertJsonCount(1, 'data.rows.data');
+    $this->getJson($base.$query.'&search=DETAIL-ACCOUNT&page=1')->assertOk()->assertJsonPath('data.rows.data.0.receiving_account', 'Registered Owner · 074937392')->assertJsonPath('data.rows.data.0.commission_base', 10000)->assertJsonPath('data.rows.data.0.rate', 2);
+    $response = $this->get($base.'/payments/export'.$query)->assertOk()->assertDownload('Paperstic-payment-orders-2026-10-26-to-2026-10-26.xlsx');
+    $zip = new ZipArchive;
+    $path = $response->baseResponse->getFile()->getPathname();
+    expect($zip->open($path))->toBeTrue();
+    $xml = $zip->getFromName('xl/worksheets/sheet1.xml');
+    $zip->close();
+    unlink($path);
+    expect(substr_count($xml, '<row>'))->toBe(17);
+    expect($xml)->toContain('DETAIL-ACCOUNT', 'Registered Owner', '074937392', '<v>7000</v>', '<v>3000</v>', '<v>200</v>')->not->toContain('A bank');
+    $this->getJson($base.$query.'&search=DETAIL-ACCOUNT&page=1&payment_status=Pending')->assertOk()->assertJsonPath('data.rows.meta.total', 0);
+    $staff = User::create(['name' => 'Waiter', 'email' => 'payment-export-waiter@example.test', 'password' => 'Example@2026', 'type' => 'business', 'is_active' => true]);
+    $staff->businesses()->attach($this->business->id, ['business_role' => 'waiter', 'title' => 'Waiter', 'is_active' => true]);
+    $this->actingAs($staff, 'api')->get($base.'/payments/export'.$query)->assertForbidden();
+    $staff->businesses()->updateExistingPivot($this->business->id, ['business_role' => 'manager']);
+    $this->get($base.'/payments/export'.$query)->assertOk();
+});

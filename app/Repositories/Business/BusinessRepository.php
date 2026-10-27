@@ -68,11 +68,7 @@ class BusinessRepository extends BaseRepository
                 $query->join('vendors', 'vendors.id', '=', 'businesses.vendor_id')
                     ->join(auth()->user()->type === 'agent' ? 'agent_vendor_assignments as vendor_user' : 'vendor_user', 'vendor_user.vendor_id', '=', 'vendors.id')
                     ->where('vendor_user.user_id', auth()->id())
-                    ->where(function ($membershipQuery) {
-                        $membershipQuery
-                            ->where('vendor_user.is_primary', true)
-                            ->orWhere('vendor_user.is_active', true);
-                    })
+                    ->where('vendor_user.is_active', true)
                     ->where(function ($scopeQuery) {
                         $scopeQuery
                             ->where('vendor_user.is_primary', true)

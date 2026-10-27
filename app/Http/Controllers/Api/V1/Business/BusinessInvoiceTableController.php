@@ -15,6 +15,24 @@ use Illuminate\Validation\Rule;
 
 class BusinessInvoiceTableController extends BaseController
 {
+    private function displayStatus(BusinessInvoice $invoice): string
+    {
+        if ($invoice->outstanding() <= 0) {
+            return 'paid';
+        }
+        if (! $invoice->sent_at) {
+            return 'draft';
+        }
+        if ($invoice->due_at?->lte(now())) {
+            return 'overdue';
+        }
+        if ($invoice->due_at?->lte(now()->addHours(72))) {
+            return 'due_soon';
+        }
+
+        return 'payment_due';
+    }
+
     private function access(Business $business): void
     {
         abort_unless(app(BusinessBillingService::class)->installed(), 503, 'Billing migrations are required.');
@@ -88,7 +106,7 @@ class BusinessInvoiceTableController extends BaseController
         $rows = $this->invoiceQuery($business, $data)->paginate($data['per_page'] ?? 10)->through(fn ($invoice) => [
             'uuid' => $invoice->uuid, 'number' => $invoice->number, 'period_from' => $invoice->period_from, 'period_to' => $invoice->period_to,
             'created_at' => $invoice->created_at, 'due_at' => $invoice->due_at, 'currency' => $invoice->currency, 'total' => $invoice->total,
-            'outstanding' => $invoice->outstanding(), 'status' => $invoice->sent_at && $invoice->due_at?->lte(now()) && $invoice->outstanding() > 0 ? 'overdue' : $invoice->status,
+            'outstanding' => $invoice->outstanding(), 'status' => $this->displayStatus($invoice),
         ]);
 
         return $this->sendResponse(['invoices' => $rows], 'Invoices retrieved.');
@@ -101,7 +119,7 @@ class BusinessInvoiceTableController extends BaseController
         $rows = (function () use ($business, $data) {
             foreach ($this->invoiceQuery($business, $data)->lazy(500) as $invoice) {
                 $summary = $invoice->summary();
-                yield [$invoice->number, $invoice->period_from?->toIso8601String(), $invoice->period_to?->toIso8601String(), $invoice->created_at?->toIso8601String(), $invoice->due_at?->toIso8601String(), $invoice->sent_at && $invoice->due_at?->lte(now()) && $invoice->outstanding() > 0 ? 'overdue' : $invoice->status, $invoice->currency, $summary['order_count'], $summary['gross_sales'] === null ? null : (float) $summary['gross_sales'], (float) $invoice->total, (float) $invoice->paid_amount, (float) $invoice->credit_amount, $invoice->outstanding()];
+                yield [$invoice->number, $invoice->period_from?->toIso8601String(), $invoice->period_to?->toIso8601String(), $invoice->created_at?->toIso8601String(), $invoice->due_at?->toIso8601String(), $this->displayStatus($invoice), $invoice->currency, $summary['order_count'], $summary['gross_sales'] === null ? null : (float) $summary['gross_sales'], (float) $invoice->total, (float) $invoice->paid_amount, (float) $invoice->credit_amount, $invoice->outstanding()];
             }
         })();
 
