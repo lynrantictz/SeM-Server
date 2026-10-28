@@ -139,7 +139,7 @@ it('rejects an inactive or cross-business user as the assignee', function () {
     $this->patchJson('/v1/businesses/'.$business->uuid.'/orders/'.$order->uuid.'/assignee', ['waiter_user_id' => $waiterId])->assertNotFound();
 });
 
-it('limits waiter paid completed cancelled and active queues to orders they approved or currently own', function (string $tab, string $status, string $paymentStatus) {
+it('limits waiter awaiting-close completed cancelled and active queues to orders they approved or currently own', function (string $tab, string $status, string $paymentStatus) {
     [$waiter, $business, $otherWaiterId] = staffWaiterAssignmentFixture('waiter');
     $now = now();
     $statusId = DB::table('order_statuses')->where('name', $status)->value('id')
@@ -173,7 +173,7 @@ it('limits waiter paid completed cancelled and active queues to orders they appr
     ['preparing', 'Processing', 'Pending'],
     ['ready', 'Ready', 'Pending'],
     ['awaiting_payment', 'Served', 'Pending'],
-    ['paid', 'Served', 'Completed'],
+    ['awaiting_close', 'Served', 'Completed'],
     ['completed', 'Completed', 'Completed'],
     ['cancelled', 'Cancelled', 'Pending'],
 ]);

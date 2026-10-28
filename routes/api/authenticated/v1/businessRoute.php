@@ -53,8 +53,10 @@ Route::group(['prefix' => 'businesses'], function () {
     Route::get('{business}/orders/menu-items', [BusinessOrderController::class, 'menuItems']);
     Route::post('{business}/orders', [BusinessOrderController::class, 'store']);
     Route::put('{business}/orders/{order}', [BusinessOrderController::class, 'update']);
+    Route::patch('{business}/orders/{order}/schedule', [BusinessOrderController::class, 'reschedule']);
     Route::post('{business}/orders/{order}/notes', [BusinessOrderController::class, 'storeNote']);
     Route::patch('{business}/orders/{order}/assignee', [BusinessOrderController::class, 'assignWaiter']);
+    Route::patch('{business}/orders/{order}/service-point', [BusinessOrderController::class, 'assignServicePoint']);
     Route::post('{business}/orders/{order}/lock', [BusinessOrderController::class, 'acquireLock']);
     Route::delete('{business}/orders/{order}/lock', [BusinessOrderController::class, 'releaseLock']);
     Route::post('{business}/orders/{order}/actions', [BusinessOrderController::class, 'action']);

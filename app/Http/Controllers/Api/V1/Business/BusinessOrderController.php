@@ -40,7 +40,7 @@ class BusinessOrderController extends BaseController
     {
         $role = $this->authorizeBusiness($business);
         $validated = $request->validate([
-            'tab' => ['nullable', Rule::in(['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'completed', 'cancelled'])],
+            'tab' => ['nullable', Rule::in(['awaiting', 'scheduled', 'preparing', 'ready', 'awaiting_payment', 'awaiting_close', 'completed', 'cancelled'])],
             'search' => ['nullable', 'string', 'max:100'],
             'payment_method_id' => ['nullable', 'integer', Rule::exists('payment_methods', 'id')],
             'date_from' => ['nullable', 'date_format:Y-m-d'],
@@ -54,10 +54,10 @@ class BusinessOrderController extends BaseController
         $tab = $validated['tab'] ?? $this->defaultTab($role);
         abort_unless($this->canSeeTab($role, $tab), HTTP_FORBIDDEN, 'This order queue is not available for your role.');
         $baseQuery = $this->ordersForTab($business, $role, $tab);
-        if ($tab === 'paid' && !empty($validated['payment_method_id'])) {
+        if ($tab === 'awaiting_close' && !empty($validated['payment_method_id'])) {
             $baseQuery->where('payment_method_id', $validated['payment_method_id']);
         }
-        if (in_array($tab, ['paid', 'completed', 'cancelled'], true)) {
+        if (in_array($tab, ['awaiting_close', 'completed', 'cancelled'], true)) {
             if (!empty($validated['date_from'])) $baseQuery->whereDate('created_at', '>=', $validated['date_from']);
             if (!empty($validated['date_to'])) $baseQuery->whereDate('created_at', '<=', $validated['date_to']);
         }
@@ -107,7 +107,7 @@ class BusinessOrderController extends BaseController
             ->withQueryString();
 
         $counts = [];
-        foreach (['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'completed', 'cancelled'] as $countTab) {
+        foreach (['awaiting', 'scheduled', 'preparing', 'ready', 'awaiting_payment', 'awaiting_close', 'completed', 'cancelled'] as $countTab) {
             if ($this->canSeeTab($role, $countTab)) {
                 $counts[$countTab] = $this->ordersForTab($business, $role, $countTab)->count();
             }
@@ -548,6 +548,61 @@ class BusinessOrderController extends BaseController
         return $this->sendResponse(['order' => $this->orderData($updated, $role)], 'Order waiter assigned successfully.');
     }
 
+    public function assignServicePoint(Request $request, Business $business, string $order)
+    {
+        $role = $this->authorizeBusiness($business);
+        abort_unless(in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager', 'counter', 'counter-clerk', 'waiter'], true), HTTP_FORBIDDEN,
+            'Your role cannot assign an order service location.');
+        $validated = $request->validate([
+            'service_point_id' => ['required', 'integer', 'exists:service_points,id'],
+        ]);
+
+        $servicePoint = ServicePoint::query()
+            ->whereKey($validated['service_point_id'])
+            ->where('business_id', $business->id)
+            ->where('is_active', true)
+            ->whereNotNull('section_id')
+            ->whereHas('orderingChannels', fn (Builder $query) => $query->where('slug', 'dine_in'))
+            ->firstOrFail();
+
+        $updated = DB::transaction(function () use ($business, $order, $servicePoint) {
+            $record = Order::query()
+                ->where('business_id', $business->id)
+                ->where('uuid', $order)
+                ->lockForUpdate()
+                ->firstOrFail();
+            abort_unless($record->channel === 'online', HTTP_UNPROCESSABLE_ENTITY,
+                'A service location can only be assigned to an online order.');
+            $status = OrderStatus::query()->findOrFail($record->order_status_id)->name;
+            abort_unless(! in_array($status, ['Served', 'Completed', 'Cancelled', 'Refunded'], true), Response::HTTP_CONFLICT,
+                'The service location can only be changed before the order is served.');
+
+            OrderWorkLock::query()->where('expires_at', '<=', now())->delete();
+            $lock = OrderWorkLock::query()->where('order_id', $record->id)->lockForUpdate()->first();
+            abort_unless(! $lock || $lock->user_id === auth()->id(), Response::HTTP_CONFLICT,
+                ($lock?->user?->name ?? 'Another staff member') . ' is currently updating this order.');
+
+            $previousLabel = $record->service_point_label;
+            if ((int) $record->service_point_id !== (int) $servicePoint->id) {
+                $record->service_point_id = $servicePoint->id;
+                $record->service_point_label = $servicePoint->display_name;
+                $record->save();
+                OrderStatusHistory::query()->create([
+                    'order_id' => $record->id,
+                    'from_status_id' => $record->order_status_id,
+                    'to_status_id' => $record->order_status_id,
+                    'changed_by_user_id' => auth()->id(),
+                    'note' => ($previousLabel ? 'Service location changed from ' . $previousLabel : 'Service location assigned')
+                        . ' to ' . $servicePoint->display_name . '.',
+                ]);
+            }
+
+            return $this->loadOrder($record);
+        });
+
+        return $this->sendResponse(['order' => $this->orderData($updated, $role)], 'Order service location assigned successfully.');
+    }
+
     public function paymentQr(Business $business, string $order, GuestOrderSessionService $guestSessions)
     {
         $role = $this->authorizeBusiness($business);
@@ -668,7 +723,7 @@ class BusinessOrderController extends BaseController
         $updated = DB::transaction(function () use ($business, $order, $data, $role) {
             $record = Order::query()->where('business_id', $business->id)->where('uuid', $order)->lockForUpdate()->firstOrFail();
             $record->load('status', 'paymentStatus', 'payment');
-            $editable = $record->status?->name === 'Pending' || ($record->channel === 'online' && in_array($record->status?->name, ['Awaiting payment', 'Scheduled'], true));
+            $editable = $record->status?->name === 'Pending' || ($record->channel === 'online' && $record->status?->name === 'Awaiting payment');
             abort_unless($editable, Response::HTTP_CONFLICT, 'This order can no longer be edited.');
             abort_unless($data['channel'] === $record->channel, HTTP_UNPROCESSABLE_ENTITY, 'The ordering channel cannot be changed.');
             abort_unless(!empty($data['change_reason']), HTTP_UNPROCESSABLE_ENTITY, 'Enter a reason for the order change.');
@@ -718,6 +773,82 @@ class BusinessOrderController extends BaseController
         return $this->sendResponse(['order' => $this->orderData($this->loadOrder($updated), $role)], 'Order updated successfully.');
     }
 
+    public function reschedule(Request $request, Business $business, string $order)
+    {
+        $role = $this->authorizeBusiness($business);
+        abort_unless(in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager', 'counter', 'counter-clerk', 'waiter'], true), HTTP_FORBIDDEN,
+            'Your role cannot reschedule orders.');
+        $data = $request->validate([
+            'scheduled_for' => ['required', 'date'],
+            'change_reason' => ['required', 'string', 'max:500'],
+        ]);
+        $data['change_reason'] = trim($data['change_reason']);
+        abort_if($data['change_reason'] === '', HTTP_UNPROCESSABLE_ENTITY, 'Enter a reason for changing the schedule.');
+
+        $updated = DB::transaction(function () use ($business, $order, $data) {
+            $record = Order::query()
+                ->where('business_id', $business->id)
+                ->where('uuid', $order)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $record->load('status', 'paymentStatus');
+
+            abort_unless($record->channel === 'online', HTTP_UNPROCESSABLE_ENTITY,
+                'Only online orders can be rescheduled.');
+            abort_unless($record->status?->name === 'Scheduled', Response::HTTP_CONFLICT,
+                'This order can only be rescheduled before preparation starts.');
+            abort_unless($record->paymentStatus?->name === 'Completed', HTTP_UNPROCESSABLE_ENTITY,
+                'Only paid online orders can be rescheduled.');
+            abort_unless($record->preparation_starts_at?->isFuture(), Response::HTTP_CONFLICT,
+                'Preparation has already started. Contact the business manager to handle this order.');
+
+            OrderWorkLock::query()->where('expires_at', '<=', now())->delete();
+            $lock = OrderWorkLock::query()->where('order_id', $record->id)->lockForUpdate()->first();
+            abort_unless(! $lock || $lock->user_id === auth()->id(), Response::HTTP_CONFLICT,
+                ($lock?->user?->name ?? 'Another staff member') . ' is currently updating this order.');
+
+            $record->business->loadMissing('timezoneDefinition');
+            $timezone = $record->business->timezoneDefinition?->identifier
+                ?: ($record->business->timezone ?: config('app.timezone', 'UTC'));
+            $schedule = \Carbon\Carbon::parse($data['scheduled_for'])->utc();
+            abort_unless($schedule->isFuture() && $schedule->lte(now($timezone)->addDays(30)), HTTP_UNPROCESSABLE_ENTITY,
+                'Choose a future time within 30 days.');
+
+            $availability = app(MenuAvailabilityService::class)
+                ->businessStatus($record->business, $schedule->copy()->setTimezone($timezone));
+            abort_unless($availability['is_open_now'] ?? false, HTTP_UNPROCESSABLE_ENTITY,
+                'The business is closed at the selected time.');
+
+            $previousSchedule = $record->scheduled_for?->toIso8601String();
+            $preparationStartsAt = $schedule->copy()->subMinutes((int) config('orders.online_preparation_minutes', 30));
+            $fromStatusId = $record->order_status_id;
+            $statusNote = 'Schedule changed from ' . ($previousSchedule ?? 'unknown')
+                . ' to ' . $schedule->toIso8601String() . '. Reason: ' . trim($data['change_reason']) . '.';
+
+            $record->scheduled_for = $schedule;
+            $record->preparation_starts_at = $preparationStartsAt;
+            $record->schedule_timezone = $timezone;
+            if ($preparationStartsAt->lte(now())) {
+                $processing = OrderStatus::query()->where('name', 'Processing')->firstOrFail();
+                $record->order_status_id = $processing->id;
+                $statusNote .= ' Preparation window has started; order moved to Preparing.';
+            }
+            $record->save();
+
+            OrderStatusHistory::query()->create([
+                'order_id' => $record->id,
+                'from_status_id' => $fromStatusId,
+                'to_status_id' => $record->order_status_id,
+                'changed_by_user_id' => auth()->id(),
+                'note' => $statusNote,
+            ]);
+
+            return $this->loadOrder($record);
+        });
+
+        return $this->sendResponse(['order' => $this->orderData($updated, $role)], 'Order schedule updated successfully.');
+    }
+
     public function storeNote(Request $request, Business $business, string $order)
     {
         $role = $this->authorizeBusiness($business);
@@ -735,7 +866,7 @@ class BusinessOrderController extends BaseController
         $lock = DB::transaction(function () use ($business, $order) {
             $record = Order::query()->where('business_id', $business->id)->where('uuid', $order)->lockForUpdate()->firstOrFail();
             $record->load('status', 'paymentStatus');
-            $editable = $record->status?->name === 'Pending' || ($record->channel === 'online' && in_array($record->status?->name, ['Awaiting payment', 'Scheduled'], true));
+            $editable = $record->status?->name === 'Pending' || ($record->channel === 'online' && $record->status?->name === 'Awaiting payment');
             abort_unless($editable, Response::HTTP_CONFLICT, 'This order can no longer be edited.');
             OrderWorkLock::query()->where('expires_at', '<=', now())->delete();
             $lock = OrderWorkLock::query()->where('order_id', $record->id)->lockForUpdate()->first();
@@ -898,8 +1029,8 @@ class BusinessOrderController extends BaseController
     private function canSeeTab(string $role, string $tab): bool
     {
         if (in_array($role, ['kitchen', 'chef'], true)) return in_array($tab, ['preparing', 'ready', 'completed', 'cancelled'], true);
-        if ($role === 'waiter') return in_array($tab, ['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'completed', 'cancelled'], true);
-        return in_array($tab, ['awaiting', 'preparing', 'ready', 'awaiting_payment', 'paid', 'completed', 'cancelled'], true);
+        if ($role === 'waiter') return in_array($tab, ['awaiting', 'scheduled', 'preparing', 'ready', 'awaiting_payment', 'awaiting_close', 'completed', 'cancelled'], true);
+        return in_array($tab, ['awaiting', 'scheduled', 'preparing', 'ready', 'awaiting_payment', 'awaiting_close', 'completed', 'cancelled'], true);
     }
 
     private function canPerform(string $role, string $action, ?string $channel): bool
@@ -931,10 +1062,11 @@ class BusinessOrderController extends BaseController
     {
         return match ($tab) {
             'awaiting' => ['Pending'],
+            'scheduled' => ['Scheduled'],
             'preparing' => ['Processing'],
             'ready' => ['Ready'],
             'awaiting_payment' => ['Awaiting payment', 'Served'],
-            'paid' => ['Scheduled', 'Processing', 'Ready', 'Served'],
+            'awaiting_close' => ['Served'],
             'completed' => ['Completed'],
             'cancelled' => ['Cancelled', 'Refunded'],
             default => [],
@@ -947,7 +1079,7 @@ class BusinessOrderController extends BaseController
         if ($tab === 'awaiting_payment') {
             $query->whereHas('paymentStatus', fn (Builder $payment) => $payment->where('name', 'Pending'));
         }
-        if ($tab === 'paid') {
+        if ($tab === 'awaiting_close') {
             $query->whereHas('paymentStatus', fn (Builder $payment) => $payment->where('name', 'Completed'));
         }
         return $query;
@@ -1019,9 +1151,12 @@ class BusinessOrderController extends BaseController
                 'phone' => $this->businessCustomerPhone($order),
             ],
             'service_point' => $point ? [
+                'id' => $point->id,
                 'type' => $point->type,
                 'label' => $point->label,
                 'name' => $point->display_name,
+                'section_id' => $point->section_id,
+                'sub_section_id' => $point->sub_section_id,
                 'section' => $point->section?->name,
                 'subsection' => $point->subSection?->name,
                 'order_label' => $order->service_point_label,
@@ -1088,18 +1223,17 @@ class BusinessOrderController extends BaseController
             return null;
         }
 
-        $paymentCompleted = in_array(strtolower((string) $order->paymentStatus?->name), ['completed', 'paid', 'successful'], true);
-        $serviceCompleted = in_array(strtolower((string) $order->status?->name), ['served', 'completed'], true);
+        $closed = in_array(strtolower((string) $order->status?->name), ['completed', 'cancelled', 'canceled', 'refunded'], true);
 
-        return ($paymentCompleted || $serviceCompleted) ? $this->maskBusinessPhone($phone) : $phone;
+        return $closed ? $this->maskBusinessPhone($phone) : $phone;
     }
 
     private function maskBusinessPhone(string $phone): string
     {
         $digits = preg_replace('/\D+/', '', $phone) ?: '';
 
-        return strlen($digits) > 6
-            ? '+' . substr($digits, 0, 3) . ' ' . str_repeat('•', strlen($digits) - 6) . ' ' . substr($digits, -3)
+        return strlen($digits) > 7
+            ? '+' . substr($digits, 0, 4) . str_repeat('•', strlen($digits) - 7) . ' ' . substr($digits, -3)
             : '••••••';
     }
 }
