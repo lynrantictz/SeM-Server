@@ -5,8 +5,11 @@ namespace App\Http\Controllers\Api\V1\Inquiry;
 use App\Http\Controllers\Api\BaseController;
 use App\Http\Requests\Api\V1\Inquiry\StoreBusinessInquiryRequest;
 use App\Models\BusinessInquiry;
+use App\Notifications\BusinessInquiryReceived;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Notification;
+use Throwable;
 
 class BusinessInquiryController extends BaseController
 {
@@ -23,10 +26,20 @@ class BusinessInquiryController extends BaseController
                     'phone',
                     'message',
                 ]),
-                'source' => 'public_pricing',
+                'source' => $request->validated('source') ?? 'public_pricing',
                 'status' => 'new',
             ]);
         });
+
+        $recipient = config('services.paperstic.inquiry_email');
+        if (is_string($recipient) && $recipient !== '') {
+            try {
+                Notification::route('mail', $recipient)
+                    ->notify(new BusinessInquiryReceived($inquiry));
+            } catch (Throwable $exception) {
+                report($exception);
+            }
+        }
 
         return $this->sendResponse([
             'inquiry' => [

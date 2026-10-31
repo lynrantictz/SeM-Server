@@ -27,6 +27,7 @@ class StoreBusinessInquiryRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'source' => ['nullable', 'string', Rule::in(['public_pricing', 'public_about'])],
             'package_code' => ['nullable', 'string', Rule::in(['start', 'business', 'premium', 'custom', 'general'])],
             'package_name' => ['nullable', 'string', 'max:100'],
             'name' => ['required', 'string', 'max:120'],

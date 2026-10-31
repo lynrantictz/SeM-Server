@@ -2,6 +2,10 @@
 
 return [
 
+    'paperstic' => [
+        'inquiry_email' => env('PAPERSTIC_INQUIRY_EMAIL', 'paperstic@lynrantic.co.tz'),
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Third Party Services
