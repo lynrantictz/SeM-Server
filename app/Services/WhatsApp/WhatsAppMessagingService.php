@@ -9,6 +9,50 @@ use RuntimeException;
 
 class WhatsAppMessagingService
 {
+    public function sendOrderApproved(string $phone, string $orderNumber, string $businessName, string $total): WhatsAppMessageResult
+    {
+        $orderUrl = rtrim((string) config('paperstick.client_url'), '/') . '/orders/' . rawurlencode($orderNumber);
+
+        if (config('whatsapp.driver') === 'log') {
+            Log::info('Order approved WhatsApp template (local testing only)', [
+                'phone' => $phone,
+                'order_number' => $orderNumber,
+                'business_name' => $businessName,
+                'total' => $total,
+                'order_url' => $orderUrl,
+            ]);
+
+            return new WhatsAppMessageResult("local-approved-{$orderNumber}");
+        }
+
+        if (config('whatsapp.driver') !== 'meta') {
+            throw new RuntimeException('The configured WhatsApp delivery driver is not supported.');
+        }
+
+        $response = $this->metaClient()->post(sprintf('/%s/%s/messages', $this->graphVersion(), config('whatsapp.phone_number_id')), [
+            'messaging_product' => 'whatsapp',
+            'recipient_type' => 'individual',
+            'to' => $phone,
+            'type' => 'template',
+            'template' => [
+                'name' => config('whatsapp.order_approved_template'),
+                'language' => ['code' => config('whatsapp.template_language')],
+                'components' => [
+                    ['type' => 'body', 'parameters' => [
+                        ['type' => 'text', 'text' => $orderNumber],
+                        ['type' => 'text', 'text' => $businessName],
+                        ['type' => 'text', 'text' => $total],
+                    ]],
+                    ['type' => 'button', 'sub_type' => 'url', 'index' => '0', 'parameters' => [
+                        ['type' => 'text', 'text' => $orderNumber],
+                    ]],
+                ],
+            ],
+        ]);
+
+        return $this->result($response);
+    }
+
     public function sendOrderPaymentRequest(string $phone, string $businessName, string $orderNumber, string $currency, string $amount, string $paymentToken): WhatsAppMessageResult
     {
         if (config('whatsapp.driver') === 'log') {

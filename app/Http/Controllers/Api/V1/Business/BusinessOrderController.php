@@ -22,14 +22,13 @@ use App\Models\Section\ServicePoint;
 use App\Repositories\Order\OrderItemRepository;
 use App\Repositories\Order\OrderRepository;
 use App\Services\MenuAvailabilityService;
-use App\Services\Business\BusinessActivationService;
 use App\Services\PaymentGateway\PaymentSettlementService;
 use App\Services\Order\GuestOrderSessionService;
-use App\Services\Order\OrderPaymentLinkService;
-use App\Jobs\WhatsApp\SendOrderPaymentRequestWhatsApp;
+use App\Jobs\WhatsApp\SendOrderApprovedWhatsApp;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use Symfony\Component\HttpFoundation\Response;
@@ -321,7 +320,7 @@ class BusinessOrderController extends BaseController
         ], 'Business report retrieved successfully.');
     }
 
-    public function action(Request $request, Business $business, string $order, OrderPaymentLinkService $paymentLinks, PaymentSettlementService $settlement)
+    public function action(Request $request, Business $business, string $order, PaymentSettlementService $settlement)
     {
         $role = $this->authorizeBusiness($business);
         $validated = $request->validate([
@@ -487,12 +486,31 @@ class BusinessOrderController extends BaseController
             ]);
         });
 
-        // Public QR orders have no staff creator. Once a staff member accepts
-        // one, notify its verified customer. Staff-created orders deliberately
-        // stay manual so the counter can choose cash, link, or QR payment.
-        if ($validated['action'] === 'approve' && ! $updated->user_id && $updated->customer?->phone_e164 && app(BusinessActivationService::class)->status($business)['can_accept_mobile_money']) {
-            $issued = $paymentLinks->issue($updated, auth()->id(), $updated->customer->phone_e164, 'staff');
-            SendOrderPaymentRequestWhatsApp::dispatch($issued['link']->uuid, $issued['token'])->onQueue(config('whatsapp.queue'));
+        if ($validated['action'] === 'approve') {
+            $phone = $updated->customer?->phone_e164;
+            if (! $phone) {
+                Log::warning('WhatsApp order approval notification was not queued: customer has no E.164 phone.', [
+                    'order_uuid' => $updated->uuid,
+                    'order_number' => $updated->number,
+                ]);
+            } elseif (! config('whatsapp.enabled') && config('whatsapp.driver') !== 'log') {
+                Log::info('WhatsApp order approval notification was not queued: WhatsApp is disabled.', [
+                    'order_uuid' => $updated->uuid,
+                    'order_number' => $updated->number,
+                ]);
+            } else {
+                $queue = config('whatsapp.queue');
+                $orderUrl = rtrim((string) config('paperstick.client_url'), '/') . '/orders/' . rawurlencode($updated->number);
+
+                SendOrderApprovedWhatsApp::dispatch($updated->uuid)->onQueue($queue);
+
+                Log::info('WhatsApp order approval job queued.', [
+                    'order_uuid' => $updated->uuid,
+                    'order_number' => $updated->number,
+                    'queue' => $queue,
+                    'order_url' => $orderUrl,
+                ]);
+            }
         }
 
         return $this->sendResponse(['order' => $this->orderData($updated, $role)], 'Order updated successfully.');
@@ -624,28 +642,6 @@ class BusinessOrderController extends BaseController
             'url' => $url,
             'qr_data_uri' => 'data:image/svg+xml;base64,' . base64_encode($svg),
         ], 'Customer order QR code generated successfully.');
-    }
-
-    public function paymentLink(Business $business, string $order, OrderPaymentLinkService $paymentLinks)
-    {
-        $role = $this->authorizeBusiness($business);
-        abort_unless($this->canGeneratePaymentQr($role), HTTP_FORBIDDEN, 'Your role cannot request payment links.');
-        $record = Order::query()->where('business_id', $business->id)->where('uuid', $order)->with(['status', 'paymentStatus', 'customer'])->firstOrFail();
-        abort_unless(in_array($record->status?->name, ['Processing', 'Served'], true), HTTP_UNPROCESSABLE_ENTITY, 'Payment links are available once the order is accepted.');
-        abort_unless($record->paymentStatus?->name === 'Pending', HTTP_UNPROCESSABLE_ENTITY, 'Payment has already been recorded for this order.');
-        abort_unless(app(BusinessActivationService::class)->status($business)['can_accept_mobile_money'], HTTP_UNPROCESSABLE_ENTITY, 'Mobile-money checkout is not available for this business yet.');
-
-        $issued = $paymentLinks->issue($record, auth()->id(), $record->customer?->phone_e164, 'staff');
-        $url = $paymentLinks->url($issued['token']);
-        if ($record->customer?->phone_e164) {
-            DB::afterCommit(fn () => SendOrderPaymentRequestWhatsApp::dispatch($issued['link']->uuid, $issued['token'])->onQueue(config('whatsapp.queue')));
-        }
-
-        return $this->sendResponse([
-            'url' => $url,
-            'expires_at' => $issued['link']->expires_at,
-            'whatsapp_queued' => (bool) $record->customer?->phone_e164,
-        ], $record->customer?->phone_e164 ? 'Payment link created and WhatsApp delivery queued.' : 'Payment link created. Add a customer mobile number to send it through WhatsApp.');
     }
 
     public function context(Business $business)

@@ -41,7 +41,6 @@ Route::group(['prefix' => 'businesses'], function () {
     Route::get('{business}/payment-methods/payment-timing/history', [BusinessPaymentController::class, 'paymentTimingHistory']);
     Route::post('{business}/payment-methods/{methodUuid}/accounts/{accountUuid}/disable-request', [BusinessPaymentController::class, 'requestPaymentMethodAccountDisable']);
     Route::get('{business}/payment-methods/{methodUuid}/accounts/{accountUuid}/history', [BusinessPaymentController::class, 'paymentMethodAccountHistory']);
-    Route::post('{business}/orders/{order}/mno-checkout', [BusinessPaymentController::class, 'checkout'])->middleware(\App\Http\Middleware\EnsureGatewayPaymentsEnabled::class);
     Route::get('{business}/orders', [BusinessOrderController::class, 'index']);
     Route::get('{business}/dashboard', [BusinessOrderController::class, 'dashboard']);
     Route::get('{business}/reports/products/export', [BusinessOrderController::class, 'exportProductsReport']);
@@ -61,7 +60,6 @@ Route::group(['prefix' => 'businesses'], function () {
     Route::delete('{business}/orders/{order}/lock', [BusinessOrderController::class, 'releaseLock']);
     Route::post('{business}/orders/{order}/actions', [BusinessOrderController::class, 'action']);
     Route::post('{business}/orders/{order}/payment-qr', [BusinessOrderController::class, 'paymentQr']);
-    Route::post('{business}/orders/{order}/payment-link', [BusinessOrderController::class, 'paymentLink']);
     Route::get('{business}/menu-management', [MenuManagementController::class, 'index']);
     Route::post('{business}/menu-management/categories', [MenuManagementController::class, 'storeCategory']);
     Route::put('{business}/menu-management/categories/{category}', [MenuManagementController::class, 'updateCategory']);

@@ -759,18 +759,16 @@ class OrderController extends BaseController
         if (!$order) {
             return $this->sendError('Order not found', [], HTTP_NOT_FOUND);
         }
-        if (! $this->canAccessGuestOrder($request, $order, $request->query('access_token'))) {
-            return $this->sendError('Verify your phone to access this order.', [], HTTP_UNAUTHORIZED);
-        }
+        // An order URL can be opened from an approved-order message on a new
+        // device. Let that visitor see the order status, but grant actions only
+        // when their verified guest session (or payment-link token) matches.
+        $canManageOrder = $this->canAccessGuestOrder($request, $order, $request->query('access_token'));
         $relationship = [
-            'customer',
             'business',
-            'business.contacts',
             'business.district',
             'business.district.city',
             'business.district.city.country',
             'status',
-            'paymentMethod',
             'paymentStatus',
             'tax',
             'items.options',
@@ -779,12 +777,19 @@ class OrderController extends BaseController
             'servicePoint.section',
             'servicePoint.subSection',
             'orderingChannel',
-            'customerVerification',
-            'payment',
-            'feedback',
         ];
+        if ($canManageOrder) {
+            $relationship = array_merge($relationship, [
+                'customer',
+                'business.contacts',
+                'paymentMethod',
+                'customerVerification',
+                'payment',
+                'feedback',
+            ]);
+        }
         $data['order'] = $order->load($relationship);
-        if ($data['order']->customer) {
+        if ($canManageOrder && $data['order']->customer) {
             // The public customer order view never needs the customer's full
             // phone number. Keep the canonical value out of the response while
             // preserving the masked phone shape expected by the client.
@@ -793,6 +798,7 @@ class OrderController extends BaseController
                 $this->maskedPhone($data['order']->customer->phone_e164 ?? $data['order']->customer->phone),
             );
         }
+        $data['can_manage_order'] = $canManageOrder;
         return $this->sendResponse($data, 'Order Retrieved successfully', HTTP_OK);
     }
 
