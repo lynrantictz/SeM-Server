@@ -9,17 +9,25 @@ use Spatie\Permission\Models\Permission;
 it('seeds the configured operations super admin with all current api permissions on SQLite', function () {
     expect(config('database.default'))->toBe('sqlite');
 
-    $key = 'services.paperstic.operations_super_admin_password';
-    $previousPassword = config($key);
-    config([$key => 'Local-Test-Only-Strong-Password-2026!']);
+    $previousEmail = config('services.paperstic.operations_super_admin_email');
+    $previousName = config('services.paperstic.operations_super_admin_name');
+    $previousPassword = config('services.paperstic.operations_super_admin_password');
+    $previousType = config('services.paperstic.operations_super_admin_type');
+    config([
+        'services.paperstic.operations_super_admin_email' => 'h.hamis@lynrantic.co.tz',
+        'services.paperstic.operations_super_admin_name' => 'Hamis Hamis',
+        'services.paperstic.operations_super_admin_password' => 'Local-Test-Only-Strong-Password-2026!',
+        'services.paperstic.operations_super_admin_type' => 'paperstic',
+    ]);
 
     try {
         app(RolePermissionSeeder::class)->run();
         app(OperationsSuperAdminSeeder::class)->run();
 
-        $user = User::query()->where('email', 'h.hamis@lynrantic.co.tz')->firstOrFail();
+        $user = User::query()->where('email', config('services.paperstic.operations_super_admin_email'))->firstOrFail();
 
-        expect($user->type)->toBe('paperstic')
+        expect($user->name)->toBe('Hamis Hamis')
+            ->and($user->type)->toBe('paperstic')
             ->and((bool) $user->is_active)->toBeTrue()
             ->and(Hash::check('Local-Test-Only-Strong-Password-2026!', $user->password))->toBeTrue()
             ->and($user->hasRole('super-admin'))->toBeTrue()
@@ -28,8 +36,13 @@ it('seeds the configured operations super admin with all current api permissions
 
         app(OperationsSuperAdminSeeder::class)->run();
 
-        expect(User::query()->where('email', 'h.hamis@lynrantic.co.tz')->count())->toBe(1);
+        expect(User::query()->where('email', config('services.paperstic.operations_super_admin_email'))->count())->toBe(1);
     } finally {
-        config([$key => $previousPassword]);
+        config([
+            'services.paperstic.operations_super_admin_email' => $previousEmail,
+            'services.paperstic.operations_super_admin_name' => $previousName,
+            'services.paperstic.operations_super_admin_password' => $previousPassword,
+            'services.paperstic.operations_super_admin_type' => $previousType,
+        ]);
     }
 });
