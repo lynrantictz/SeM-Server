@@ -31,5 +31,6 @@ class DatabaseSeeder extends Seeder
         // $this->call(SectionAndSubsectionAndCodesSeerder::class);
         $this->call(RolePermissionSeeder::class);
         $this->call(OnboardingAgentRoleSeeder::class);
+        $this->call(OperationsSuperAdminSeeder::class);
     }
 }

@@ -4,6 +4,7 @@ return [
 
     'paperstic' => [
         'inquiry_email' => env('PAPERSTIC_INQUIRY_EMAIL', 'paperstic@lynrantic.co.tz'),
+        'operations_super_admin_password' => env('OPERATIONS_SUPER_ADMIN_PASSWORD'),
     ],
 
     /*
