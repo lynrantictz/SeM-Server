@@ -30,7 +30,7 @@ class ComplianceDocumentRequirements
             ->orderBy('name')
             ->get();
 
-        return $types->map(function (ComplianceDocumentType $type) use ($countryId, $businessTypeId) {
+        return $types->map(function (ComplianceDocumentType $type) use ($scope, $owner, $countryId, $businessTypeId) {
             $rule = $type->rules
                 ->filter(function ($rule) use ($countryId, $businessTypeId) {
                     return ($rule->country_id === null || $rule->country_id === $countryId)
