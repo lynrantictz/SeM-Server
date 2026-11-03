@@ -22,6 +22,7 @@ class VendorRepository extends BaseRepository
                 'vendors.country_id',
                 'vendors.name',
                 'vendors.tin',
+                'vendors.business_license_number',
                 'vendors.email',
                 'vendors.phone',
                 'vendors.address',
@@ -39,6 +40,7 @@ class VendorRepository extends BaseRepository
                         ->whereRaw('LOWER(vendors.name) LIKE ?', [$term])
                         ->orWhereRaw('LOWER(vendors.email) LIKE ?', [$term])
                         ->orWhereRaw('LOWER(vendors.tin) LIKE ?', [$term])
+                        ->orWhereRaw('LOWER(vendors.business_license_number) LIKE ?', [$term])
                         ->orWhereRaw('LOWER(vendors.phone) LIKE ?', [$term]);
                 });
             });

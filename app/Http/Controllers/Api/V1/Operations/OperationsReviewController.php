@@ -43,6 +43,8 @@ class OperationsReviewController extends BaseController
                 $search->whereRaw('LOWER('.$table.'.name) LIKE ?', [$term])->orWhereRaw('LOWER('.$table.'.tin) LIKE ?', [$term]);
                 if ($scope === 'business') {
                     $search->orWhereHas('vendor', fn ($v) => $v->whereRaw('LOWER(name) LIKE ?', [$term]));
+                } else {
+                    $search->orWhereRaw('LOWER(vendors.business_license_number) LIKE ?', [$term]);
                 }
             });
         });
@@ -115,6 +117,7 @@ class OperationsReviewController extends BaseController
             ->select('history.*', 'users.name as reviewer')->limit(100)->get();
 
         return $this->sendResponse(['entity' => ['uuid' => $entity->uuid, 'name' => $entity->name, 'tin' => $entity->tin,
+            'business_license_number' => $scope === 'vendor' ? $entity->business_license_number : null,
             'email' => $scope === 'vendor' ? $entity->email : $entity->vendor?->email, 'phone' => $scope === 'vendor' ? $entity->phone : $entity->vendor?->phone,
             'address' => $scope === 'vendor' ? $entity->address : $entity->location,
             'vendor' => $scope === 'business' ? $entity->vendor?->name : null,

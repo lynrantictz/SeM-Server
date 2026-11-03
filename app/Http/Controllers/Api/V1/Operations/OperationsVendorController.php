@@ -24,6 +24,7 @@ class OperationsVendorController extends BaseController
                 $query->where(fn ($builder) => $builder
                     ->where('name', 'ilike', $term)
                     ->orWhere('tin', 'ilike', $term)
+                    ->orWhere('business_license_number', 'ilike', $term)
                     ->orWhere('email', 'ilike', $term)
                     ->orWhere('phone', 'ilike', $term));
             })
@@ -108,6 +109,7 @@ class OperationsVendorController extends BaseController
             'uuid' => $vendor->uuid,
             'name' => $vendor->name,
             'tin' => $vendor->tin,
+            'business_license_number' => $vendor->business_license_number,
             'email' => $vendor->email,
             'phone' => $vendor->phone,
             'address' => $vendor->address,

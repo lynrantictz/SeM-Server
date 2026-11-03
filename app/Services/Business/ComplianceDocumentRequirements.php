@@ -49,10 +49,22 @@ class ComplianceDocumentRequirements
                 'name' => $type->name,
                 'requires_expiry_date' => $type->requires_expiry_date,
                 'reminder_days' => $type->reminder_days ?? [],
-                'required_for_payment_activation' => $rule->required_for_payment_activation,
+                'required_for_payment_activation' => $this->isRequiredForActivation($scope, $owner, $type->key, $rule->required_for_payment_activation),
             ];
         })
             ->filter()
             ->values();
+    }
+
+    private function isRequiredForActivation(string $scope, Business|Vendor $owner, string $key, bool $required): bool
+    {
+        if ($scope === 'vendor'
+            && $owner instanceof Vendor
+            && $key === 'tin_certificate'
+            && filled($owner->business_license_number)) {
+            return false;
+        }
+
+        return $required;
     }
 }
