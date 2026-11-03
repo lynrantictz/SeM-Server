@@ -17,6 +17,7 @@ class VendorInvitation extends Notification implements ShouldQueue
         protected string $acceptUrl,
         protected bool $requiresPasswordSetup,
         protected int $invitationId,
+        protected int $expiresInDays = 7,
     ) {
     }
 
@@ -59,6 +60,7 @@ class VendorInvitation extends Notification implements ShouldQueue
                 'vendor' => $this->vendor,
                 'acceptUrl' => $this->acceptUrl,
                 'requiresPasswordSetup' => $this->requiresPasswordSetup,
+                'expiresInDays' => $this->expiresInDays,
             ]);
     }
 }

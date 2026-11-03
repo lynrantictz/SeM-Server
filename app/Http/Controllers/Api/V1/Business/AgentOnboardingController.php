@@ -6,7 +6,7 @@ use App\Http\Controllers\Api\BaseController;
 use App\Models\Auth\User;
 use App\Models\Business\Vendor;
 use App\Models\Business\VendorInvitation;
-use App\Notifications\VendorInvitation as InvitationMail;
+use App\Notifications\VendorOwnerInvitation;
 use App\Services\OnboardingAgentService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -105,7 +105,7 @@ class AgentOnboardingController extends BaseController
                 'expires_at' => $invitation->expires_at->toIso8601String(),
             ]);
         }
-        $owner->notify(new InvitationMail($v, $acceptUrl, $invitation->requires_password_setup, $invitation->id));
+        $owner->notify(new VendorOwnerInvitation($v, $acceptUrl, $invitation->requires_password_setup, $invitation->id, $u->name, 2));
         $service->audit('owner.invited', $u->id, $v->id, ['owner_uuid' => $owner->uuid]);
 
         return $this->sendResponse([],'Owner invitation queued. Ownership activates only after acceptance.');

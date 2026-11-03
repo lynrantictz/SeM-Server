@@ -11,13 +11,16 @@ use App\Models\Business\BusinessType;
 use App\Models\Business\ComplianceDocument;
 use App\Models\Business\ComplianceDocumentType;
 use App\Models\Business\OnboardingPackage;
+use App\Models\Business\VendorInvitation;
 use App\Models\Location\City;
 use App\Models\Location\Country;
 use App\Models\Order\Order;
 use App\Models\Payment\MobileMoneyProvider;
+use App\Notifications\BusinessDiscoveryActivated;
 use App\Models\Section\Section;
 use App\Models\Section\ServicePoint;
 use App\Services\Business\BusinessActivationService;
+use App\Services\Discovery\DiscoverableBusinesses;
 use App\Services\PhoneNumberNormalizer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -970,6 +973,7 @@ class OperationsBusinessController extends BaseController
         abort_unless($request->user()->can($permission), 403, 'You do not have permission to change this business status.');
 
         $business = Business::query()->where('uuid', $uuid)->firstOrFail();
+        $wasActive = (bool) $business->is_active;
         if ($validated['is_active']) {
             $readiness = $this->activation->status($business);
             abort_if(
@@ -982,6 +986,30 @@ class OperationsBusinessController extends BaseController
             $business->update(['is_active' => $validated['is_active']]);
             if ($validated['is_active']) app(\App\Services\Business\BusinessBillingService::class)->startTrial($business);
         });
+
+        // The congratulatory email belongs to the activation event, not to
+        // onboarding stage updates or repeated saves of an already active business.
+        if ($validated['is_active'] && ! $wasActive && app(DiscoverableBusinesses::class)->query()->whereKey($business->id)->exists()) {
+            $vendor = $business->vendor;
+            $owner = $vendor?->users()
+                ->wherePivot('is_primary', true)
+                ->wherePivot('is_active', true)
+                ->first();
+
+            if (! $owner && $vendor) {
+                $pendingOwnerInvitation = VendorInvitation::query()
+                    ->with('user')
+                    ->where('vendor_id', $vendor->id)
+                    ->where('assign_owner', true)
+                    ->whereNull('accepted_at')
+                    ->where('expires_at', '>', now())
+                    ->latest('id')
+                    ->first();
+                $owner = $pendingOwnerInvitation?->user;
+            }
+
+            $owner?->notify(new BusinessDiscoveryActivated($business->fresh()));
+        }
 
         return $this->sendResponse([
             'business' => $this->businessData($business->fresh()->load(['vendor:id,name', 'type:id,name', 'district.city.country.taxes:id,country_id,percent,is_active,effective_from,effective_until', 'contacts:id,business_id,contact,is_active'])),
