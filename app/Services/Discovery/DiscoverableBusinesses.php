@@ -49,6 +49,12 @@ class DiscoverableBusinesses
             ' WHERE '.$rule.'.compliance_document_type_id = '.$type.'.id AND '.$rule.'.is_active = ?'.
             ' AND ('.$rule.'.country_id IS NULL OR '.$rule.'.country_id = '.$country.') AND '.$businessTypeMatch.
             ' ORDER BY (CASE WHEN '.$rule.'.country_id IS NULL THEN 0 ELSE 1 END + CASE WHEN '.$rule.'.business_type_id IS NULL THEN 0 ELSE 1 END) DESC, '.$rule.'.id ASC LIMIT 1) = ?';
+        if ($scope === 'vendor') {
+            $vendorTin = "(SELECT NULLIF(TRIM(tin), '') FROM vendors WHERE vendors.id = {$owner})";
+            $vendorLicence = "(SELECT NULLIF(TRIM(business_license_number), '') FROM vendors WHERE vendors.id = {$owner})";
+            $effectiveRule .= " AND NOT (({$type}.key = 'business_registration_certificate' AND {$vendorTin} IS NOT NULL AND {$vendorLicence} IS NULL)"
+                ." OR ({$type}.key = 'tin_certificate' AND {$vendorLicence} IS NOT NULL AND {$vendorTin} IS NULL))";
+        }
 
         $query->whereNotExists(function (QueryBuilder $types) use ($scope, $type, $effectiveRule, $document, $newer, $ownerColumn, $owner): void {
             $types->selectRaw('1')->from('compliance_document_types as '.$type)

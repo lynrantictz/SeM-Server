@@ -81,7 +81,7 @@ class ComplianceDocumentController extends BaseController
         $document = $this->storeDocument($request, 'vendor', $vendor);
 
         return $this->sendResponse([
-            'document' => $this->documentData($document),
+            'document' => $this->documentData($document, $vendor),
         ], 'Vendor document uploaded successfully.', HTTP_CREATED);
     }
 
@@ -203,7 +203,7 @@ class ComplianceDocumentController extends BaseController
         });
 
         return [
-            'documents' => $documents->map(fn (ComplianceDocument $document) => $this->documentData($document))->values(),
+            'documents' => $documents->map(fn (ComplianceDocument $document) => $this->documentData($document, $scope === 'vendor' ? $owner : null))->values(),
             'requirements' => $definitions->map(function (array $definition) use ($latestByType) {
                 $document = $latestByType->get($definition['key']);
 
@@ -228,12 +228,19 @@ class ComplianceDocumentController extends BaseController
         ];
     }
 
-    private function documentData(ComplianceDocument $document): array
+    private function documentData(ComplianceDocument $document, ?Vendor $vendor = null): array
     {
+        $label = $document->document_type_name ?? $document->documentType?->name ?? $document->document_type;
+        if ($document->document_type === 'business_registration_certificate') {
+            $label = $vendor && filled($vendor->business_license_number) && blank($vendor->tin)
+                ? 'Business licence certificate'
+                : 'Company registration certificate';
+        }
+
         return [
             'uuid' => $document->uuid,
             'type' => $document->document_type,
-            'label' => $document->document_type_name ?? $document->documentType?->name ?? $document->document_type,
+            'label' => $label,
             'original_filename' => $document->original_filename,
             'document_number' => $document->document_number,
             'mime_type' => $document->mime_type,
@@ -303,8 +310,10 @@ class ComplianceDocumentController extends BaseController
             Storage::disk($document->disk)->delete($oldPath);
         }
 
+        $fresh = $document->fresh()->load(['documentType', 'vendor']);
+
         return $this->sendResponse([
-            'document' => $this->documentData($document->fresh()->load('documentType')),
+            'document' => $this->documentData($fresh, $fresh->vendor),
         ], 'Document updated and returned for review.');
     }
 

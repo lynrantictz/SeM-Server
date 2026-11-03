@@ -97,9 +97,16 @@ class OperationsReviewController extends BaseController
         return hash('sha256', json_encode([$document->getAttributes(), DB::table('operations_review_history')->where('document_id', $document->id)->max('id')]));
     }
 
-    private function documentData(ComplianceDocument $document): array
+    private function documentData(ComplianceDocument $document, $vendor = null): array
     {
-        return ['uuid' => $document->uuid, 'label' => $document->document_type_name ?? $document->document_type, 'number' => $document->document_number,
+        $label = $document->document_type_name ?? $document->document_type;
+        if ($document->document_type === 'business_registration_certificate') {
+            $label = $vendor && filled($vendor->business_license_number) && blank($vendor->tin)
+                ? 'Business licence certificate'
+                : 'Company registration certificate';
+        }
+
+        return ['uuid' => $document->uuid, 'label' => $label, 'number' => $document->document_number,
             'filename' => $document->original_filename, 'status' => $this->documentStatus($document), 'issued_at' => $document->issued_at?->toDateString(),
             'expires_at' => $document->expires_at?->toDateString(), 'submitted_at' => $document->updated_at?->toIso8601String(),
             'reviewed_by' => $document->reviewer?->name, 'reviewed_at' => $document->reviewed_at?->toIso8601String(),
@@ -131,7 +138,7 @@ class OperationsReviewController extends BaseController
             'status' => $profile?->status ?? 'pending', 'reason' => $profile?->reason, 'reviewed_at' => $profile?->reviewed_at ? \Illuminate\Support\Carbon::parse($profile->reviewed_at)->toIso8601String() : null,
             'reviewer' => $profile?->reviewed_by ? DB::table('users')->where('id', $profile->reviewed_by)->value('name') : null,
             'revision' => $this->revision($scope, $entity)],
-            'documents' => $entity->complianceDocuments->sortByDesc('id')->map(fn ($d) => $this->documentData($d))->values(),
+            'documents' => $entity->complianceDocuments->sortByDesc('id')->map(fn ($d) => $this->documentData($d, $scope === 'vendor' ? $entity : null))->values(),
             'requirements' => $this->checklist($scope, $entity), 'history' => $history->map(function ($entry) {
                 $entry->created_at = \Illuminate\Support\Carbon::parse($entry->created_at)->toIso8601String();
 

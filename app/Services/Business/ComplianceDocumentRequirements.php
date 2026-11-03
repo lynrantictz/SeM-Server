@@ -46,7 +46,11 @@ class ComplianceDocumentRequirements
             return [
                 'id' => $type->id,
                 'key' => $type->key,
-                'name' => $type->name,
+                'name' => $type->key === 'business_registration_certificate'
+                    ? ($owner instanceof Vendor && filled($owner->business_license_number) && blank($owner->tin)
+                        ? 'Business licence certificate'
+                        : 'Company registration certificate')
+                    : $type->name,
                 'requires_expiry_date' => $type->requires_expiry_date,
                 'reminder_days' => $type->reminder_days ?? [],
                 'required_for_payment_activation' => $this->isRequiredForActivation($scope, $owner, $type->key, $rule->required_for_payment_activation),
@@ -58,10 +62,21 @@ class ComplianceDocumentRequirements
 
     private function isRequiredForActivation(string $scope, Business|Vendor $owner, string $key, bool $required): bool
     {
-        if ($scope === 'vendor'
-            && $owner instanceof Vendor
-            && $key === 'tin_certificate'
-            && filled($owner->business_license_number)) {
+        if ($scope !== 'vendor' || ! $owner instanceof Vendor) {
+            return $required;
+        }
+
+        $hasTin = filled($owner->tin);
+        $hasBusinessLicence = filled($owner->business_license_number);
+
+        // The vendor supplies one identifier. Require the corresponding proof
+        // and make the alternate proof optional. If legacy data has both or
+        // neither identifier, keep configured requirements as a safe fallback.
+        if ($hasTin && ! $hasBusinessLicence && $key === 'business_registration_certificate') {
+            return false;
+        }
+
+        if ($hasBusinessLicence && ! $hasTin && $key === 'tin_certificate') {
             return false;
         }
 
