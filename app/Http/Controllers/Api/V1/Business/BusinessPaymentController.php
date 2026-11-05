@@ -161,6 +161,17 @@ class BusinessPaymentController extends BaseController
             ->keyBy('id');
         abort_unless($catalog->count() === $methodIds->unique()->count(), HTTP_UNPROCESSABLE_ENTITY, 'One or more selected payment methods are not available for this country.');
 
+        $currencyCodes = collect($this->supportedCurrencies($business))->pluck('code')->all();
+        foreach ($validated['methods'] as $methodIndex => $methodInput) {
+            foreach ($methodInput['accounts'] ?? [] as $accountIndex => $account) {
+                if (! in_array(strtoupper($account['currency']), $currencyCodes, true)) {
+                    throw ValidationException::withMessages([
+                        "methods.{$methodIndex}.accounts.{$accountIndex}.currency" => 'Choose a currency available for this business country.',
+                    ]);
+                }
+            }
+        }
+
         foreach ($validated['methods'] as $methodInput) {
             $method = $catalog->get($methodInput['payment_method_id']);
             $accountBasedMethod = $method->code === 'bank_transfer' || in_array($method->code, self::ACCOUNT_BASED_CODES, true);
@@ -835,15 +846,27 @@ class BusinessPaymentController extends BaseController
 
     private function supportedCurrencies(Business $business): array
     {
-        $countryCode = strtoupper((string) ($business->district?->city?->country?->iso2 ?? ''));
-        $currencies = config("payments.supported_currencies.{$countryCode}", config('payments.supported_currencies.*', []));
+        $countryId = $business->district?->city?->country_id;
 
-        return collect($currencies)
-            ->map(fn (array $currency) => [
-                'code' => strtoupper($currency['code']),
-                'name' => $currency['name'],
+        if (! $countryId) {
+            return [];
+        }
+
+        return DB::table('country_currencies as cc')
+            ->join('currencies as c', 'c.id', '=', 'cc.currency_id')
+            ->where('cc.country_id', $countryId)
+            ->where('cc.is_active', true)
+            ->where('c.is_active', true)
+            ->orderByDesc('cc.is_default')
+            ->orderBy('c.sort_order')
+            ->orderBy('c.code')
+            ->get(['c.code', 'c.name', 'c.symbol', 'cc.is_default'])
+            ->map(fn (object $currency) => [
+                'code' => strtoupper($currency->code),
+                'name' => $currency->name,
+                'symbol' => $currency->symbol,
+                'is_default' => (bool) $currency->is_default,
             ])
-            ->values()
             ->all();
     }
 

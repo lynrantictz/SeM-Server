@@ -18,6 +18,19 @@ class OperationsSuperAdminSeeder extends Seeder
         $password = (string) config('services.paperstic.operations_super_admin_password', '');
         $type = trim((string) config('services.paperstic.operations_super_admin_type', ''));
 
+        $existingSuperAdmin = User::query()
+            ->where('type', 'paperstic')
+            ->whereHas('roles', fn ($query) => $query
+                ->where('name', 'super-admin')
+                ->where('guard_name', 'api'))
+            ->exists();
+
+        if ($existingSuperAdmin) {
+            $this->command?->info('Operations super admin already exists; leaving the existing account unchanged.');
+
+            return;
+        }
+
         if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
             throw new RuntimeException(
                 'Set OPERATIONS_SUPER_ADMIN_EMAIL to a valid email before seeding the Operations super admin.'

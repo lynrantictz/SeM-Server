@@ -6,6 +6,7 @@ use App\Models\Business\Vendor;
 use App\Models\Location\City;
 use App\Models\Location\District;
 use App\Models\Location\Tax;
+use App\Models\Payment\Currency;
 
 trait CountryRelationship
 {
@@ -27,5 +28,12 @@ trait CountryRelationship
     public function taxes()
     {
         return $this->hasMany(Tax::class);
+    }
+
+    public function currencies()
+    {
+        return $this->belongsToMany(Currency::class, 'country_currencies')
+            ->withPivot(['is_default', 'is_active'])
+            ->withTimestamps();
     }
 }
