@@ -28,6 +28,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use OwenIt\Auditing\Models\Audit;
+use Symfony\Component\HttpFoundation\Response;
 
 class OperationsBusinessController extends BaseController
 {
@@ -295,12 +296,12 @@ class OperationsBusinessController extends BaseController
         abort_unless($account, HTTP_NOT_FOUND, 'Payment account not found.');
 
         if ($validated['decision'] === 'approved') {
-            abort_unless($account->status === 'pending', HTTP_CONFLICT, 'Only a newly submitted payment account can be approved.');
+            abort_unless($account->status === 'pending', Response::HTTP_CONFLICT, 'Only a newly submitted payment account can be approved.');
             abort_unless($this->paymentAccountIsComplete($methodCode, $account), HTTP_UNPROCESSABLE_ENTITY, 'This payment account is incomplete and cannot be approved.');
         } elseif ($validated['decision'] === 'returned') {
-            abort_unless($account->status === 'pending', HTTP_CONFLICT, 'Only an account awaiting review can be returned for changes.');
+            abort_unless($account->status === 'pending', Response::HTTP_CONFLICT, 'Only an account awaiting review can be returned for changes.');
         } else {
-            abort_unless(in_array($account->status, ['pending', 'needs_update', 'active'], true), HTTP_CONFLICT, 'This payment account cannot be rejected in its current state.');
+            abort_unless(in_array($account->status, ['pending', 'needs_update', 'active'], true), Response::HTTP_CONFLICT, 'This payment account cannot be rejected in its current state.');
         }
 
         DB::transaction(function () use ($configuration, $account, $validated, $request): void {
@@ -314,7 +315,7 @@ class OperationsBusinessController extends BaseController
                 'approved', 'returned' => ['pending'],
                 'rejected' => ['pending', 'needs_update', 'active'],
             };
-            abort_unless(in_array($lockedAccount->status, $allowedStatuses, true), HTTP_CONFLICT, 'The payment account status changed. Refresh and review it again.');
+            abort_unless(in_array($lockedAccount->status, $allowedStatuses, true), Response::HTTP_CONFLICT, 'The payment account status changed. Refresh and review it again.');
 
             $wasDefault = $lockedAccount->is_default;
             $lockedAccount->update([

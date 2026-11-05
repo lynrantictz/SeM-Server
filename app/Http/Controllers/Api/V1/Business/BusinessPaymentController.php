@@ -22,6 +22,7 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use OwenIt\Auditing\Models\Audit;
+use Symfony\Component\HttpFoundation\Response;
 
 class BusinessPaymentController extends BaseController
 {
@@ -338,7 +339,7 @@ class BusinessPaymentController extends BaseController
                 ];
                 if (filled($validated['account_uuid'] ?? null)) {
                     $account = $configuration->accounts()->lockForUpdate()->where('uuid', $validated['account_uuid'])->firstOrFail();
-                    abort_unless($account->status === 'needs_update', HTTP_CONFLICT, 'Only an account returned for correction can be edited and resubmitted.');
+                    abort_unless($account->status === 'needs_update', Response::HTTP_CONFLICT, 'Only an account returned for correction can be edited and resubmitted.');
                     $account->update($accountValues);
                 } else {
                     $account = $configuration->accounts()->create($accountValues);
@@ -445,7 +446,7 @@ class BusinessPaymentController extends BaseController
         abort_unless($configuration->paymentMethod?->code === 'bank_transfer', HTTP_UNPROCESSABLE_ENTITY, 'Only bank accounts can be withdrawn here.');
         $account = $configuration->accounts->firstWhere('uuid', $accountUuid);
         abort_unless($account, HTTP_NOT_FOUND, 'Bank account not found.');
-        abort_unless(in_array($account->status, ['pending', 'needs_update'], true), HTTP_CONFLICT, 'Only a bank account awaiting review or returned for changes can be withdrawn.');
+        abort_unless(in_array($account->status, ['pending', 'needs_update'], true), Response::HTTP_CONFLICT, 'Only a bank account awaiting review or returned for changes can be withdrawn.');
 
         DB::transaction(function () use ($configuration, $account): void {
             $lockedConfiguration = BusinessPaymentMethod::query()
@@ -453,7 +454,7 @@ class BusinessPaymentController extends BaseController
                 ->lockForUpdate()
                 ->findOrFail($configuration->id);
             $lockedAccount = $lockedConfiguration->accounts()->lockForUpdate()->where('uuid', $account->uuid)->firstOrFail();
-            abort_unless(in_array($lockedAccount->status, ['pending', 'needs_update'], true), HTTP_CONFLICT, 'The bank account status changed. Refresh and try again.');
+            abort_unless(in_array($lockedAccount->status, ['pending', 'needs_update'], true), Response::HTTP_CONFLICT, 'The bank account status changed. Refresh and try again.');
             $wasDefault = $lockedAccount->is_default;
             $lockedAccount->update(['status' => 'withdrawn', 'is_enabled' => false, 'is_default' => false]);
             if ($wasDefault) {
@@ -844,7 +845,7 @@ class BusinessPaymentController extends BaseController
 
     private function ensureOnlineSettlementUnavailable(): void
     {
-        abort(HTTP_CONFLICT, 'Online settlement is not available yet. Configure direct payment methods while Paperstic completes the online payment integration.');
+        abort(Response::HTTP_CONFLICT, 'Online settlement is not available yet. Configure direct payment methods while Paperstic completes the online payment integration.');
     }
 
     private function payoutAccountData(BusinessPayoutAccount $account): array
