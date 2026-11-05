@@ -46,7 +46,7 @@ class OperationsBusinessController extends BaseController
 
         $businessQuery = Business::query()
             ->select(['id', 'uuid', 'name', 'vendor_id', 'business_type_id', 'tin', 'location', 'district_id', 'is_active', 'created_at'])
-            ->with(['vendor:id,name', 'type:id,name', 'district:id,name,city_id', 'district.city:id,name,country_id', 'district.city.country:id,name,iso2', 'district.city.country.taxes:id,country_id,percent,is_active,effective_from,effective_until'])
+            ->with(['vendor:id,name', 'type:id,name', 'district:id,name,city_id', 'district.city:id,name,country_id', 'district.city.country:id,name,iso2,flag', 'district.city.country.taxes:id,country_id,percent,is_active,effective_from,effective_until'])
             ->withCount('complianceDocuments')
             ->withCount(['complianceDocuments as pending_documents_count' => fn ($query) => $query->whereIn('status', ['pending', 'in_review', 'needs_review'])])
             ->when(! empty($filters['search']), function ($query) use ($filters): void {
@@ -96,7 +96,7 @@ class OperationsBusinessController extends BaseController
                 'type:id,name',
                 'district:id,name,city_id',
                 'district.city:id,name,country_id',
-                'district.city.country:id,name,iso2',
+                'district.city.country:id,name,iso2,flag',
                 'district.city.country.taxes:id,country_id,percent,is_active,effective_from,effective_until',
                 'timezoneDefinition:id,identifier,name',
                 'contacts:id,business_id,contact,is_active',
@@ -1099,6 +1099,7 @@ class OperationsBusinessController extends BaseController
             'city' => $business->district?->city?->name,
             'country' => $business->district?->city?->country?->name,
             'country_iso2' => $business->district?->city?->country?->iso2,
+            'country_flag' => $business->district?->city?->country?->flag,
             'country_phone_code' => $business->district?->city?->country?->phone_code,
             'is_active' => (bool) $business->is_active,
             'created_at' => $business->created_at?->toIso8601String(),

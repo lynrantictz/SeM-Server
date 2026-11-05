@@ -159,7 +159,7 @@ class DiscoveryController extends BaseController
                 'type:id,name',
                 'district:id,name,city_id',
                 'district.city:id,name,country_id',
-                'district.city.country:id,name,iso2',
+                'district.city.country:id,name,iso2,flag',
                 'categories:id,business_id,name,is_active',
                 'categories.items:id,category_id,name,final_price,is_active',
                 'servicePoints' => fn ($points) => $points
@@ -237,6 +237,7 @@ class DiscoveryController extends BaseController
                 'city' => $business->district?->city?->name,
                 'country' => $business->district?->city?->country?->name,
                 'country_iso2' => $business->district?->city?->country?->iso2,
+                'country_flag' => $business->district?->city?->country?->flag,
                 'image' => $business->image_url,
                 'logo' => $business->logo_url,
                 'online_ordering_enabled' => (bool) $business->online_ordering_enabled,
