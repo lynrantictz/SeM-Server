@@ -348,6 +348,10 @@ class OperationsBusinessController extends BaseController
 
             $lockedConfiguration->update([
                 'status' => $status,
+                // A rejected final account makes this payment method unavailable.
+                // Keep it visible for audit, but do not leave its parent config
+                // enabled and block business reactivation indefinitely.
+                'is_enabled' => $status !== 'disabled',
                 'verified_by_user_id' => $status === 'active' ? ($decision === 'approved' ? $request->user()->id : $lockedConfiguration->verified_by_user_id) : null,
                 'verified_at' => $status === 'active' ? ($decision === 'approved' ? now() : $lockedConfiguration->verified_at) : null,
                 'rejection_reason' => $status === 'needs_update' ? $reason : null,
@@ -1010,10 +1014,20 @@ class OperationsBusinessController extends BaseController
         $wasActive = (bool) $business->is_active;
         if ($validated['is_active']) {
             $readiness = $this->activation->status($business);
+            $paymentBlockers = collect($readiness['blocking_payment_methods'] ?? [])
+                ->pluck('name')
+                ->filter()
+                ->values();
+            $reason = $paymentBlockers->isNotEmpty()
+                ? ' Payment methods needing attention: '.$paymentBlockers->join(', ').'.'
+                : (! $readiness['payment_methods_approved'] ? ' At least one payment method must be enabled and approved.' : '');
+            if (! $readiness['documents_approved']) {
+                $reason .= ' Required compliance documents still need approval.';
+            }
             abort_if(
                 ! $readiness['activation_eligible'],
                 HTTP_UNPROCESSABLE_ENTITY,
-                'This business cannot be activated until all required documents are approved and every enabled payment method is approved and complete.'
+                'This business cannot be activated yet.'.$reason
             );
         }
         DB::transaction(function () use ($business, $validated): void {

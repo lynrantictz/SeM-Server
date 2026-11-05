@@ -114,3 +114,68 @@ it('requires activation permission even with approved payments', function () {
     $this->patchJson('/v1/operations/businesses/'.$this->business->uuid.'/status', ['is_active' => true])->assertForbidden();
     expect((bool) $this->business->fresh()->is_active)->toBeFalse();
 });
+
+it('does not let rejected final payment accounts block activation and keeps the method disabled', function () {
+    Permission::findOrCreate('operations.businesses.approve', 'api');
+    $this->operator->givePermissionTo('operations.businesses.approve');
+    approveActivationMethods($this->business);
+
+    $rejectedMethod = $this->business->paymentMethods()
+        ->whereHas('paymentMethod', fn ($query) => $query->where('code', 'pos_card'))
+        ->with('accounts')
+        ->firstOrFail();
+    $account = $rejectedMethod->accounts->firstOrFail();
+    $this->postJson('/v1/operations/businesses/'.$this->business->uuid.'/payment-methods/'.$rejectedMethod->uuid.'/accounts/'.$account->uuid.'/review', [
+        'decision' => 'rejected',
+        'reason' => 'Account details could not be verified.',
+    ])->assertOk();
+
+    $this->patchJson('/v1/operations/businesses/'.$this->business->uuid.'/status', ['is_active' => true])
+        ->assertOk()
+        ->assertJsonPath('data.activation.activation_eligible', true)
+        ->assertJsonPath('data.activation.payment_methods_approved', true);
+    expect((bool) $rejectedMethod->fresh()->is_enabled)->toBeFalse();
+});
+
+it('ignores legacy enabled methods when every linked account was already rejected', function () {
+    Permission::findOrCreate('operations.businesses.approve', 'api');
+    $this->operator->givePermissionTo('operations.businesses.approve');
+    approveActivationMethods($this->business);
+    $legacyMethod = $this->business->paymentMethods()
+        ->whereHas('paymentMethod', fn ($query) => $query->where('code', 'pos_card'))
+        ->with('accounts')
+        ->firstOrFail();
+    $legacyMethod->accounts()->update(['status' => 'rejected', 'is_enabled' => false]);
+    $legacyMethod->update(['status' => 'disabled', 'is_enabled' => true]);
+
+    $this->patchJson('/v1/operations/businesses/'.$this->business->uuid.'/status', ['is_active' => true])
+        ->assertOk()
+        ->assertJsonPath('data.activation.payment_methods_approved', true)
+        ->assertJsonPath('data.activation.activation_eligible', true);
+});
+
+it('disables a payment method when its last account is rejected', function () {
+    $method = \App\Models\Payment\PaymentMethod::create(['name' => 'POS Card', 'code' => 'pos_card', 'requires_identifier' => false, 'is_active' => true]);
+    $configuration = $this->business->paymentMethods()->create(['payment_method_id' => $method->id, 'is_enabled' => true, 'status' => 'pending']);
+    $account = $configuration->accounts()->create(['account_number' => '123456', 'account_holder_name' => 'Business', 'currency' => 'TZS', 'is_enabled' => true, 'status' => 'pending']);
+
+    $this->postJson('/v1/operations/businesses/'.$this->business->uuid.'/payment-methods/'.$configuration->uuid.'/accounts/'.$account->uuid.'/review', [
+        'decision' => 'rejected',
+        'reason' => 'Account details could not be verified.',
+    ])->assertOk();
+
+    expect($configuration->fresh()->status)->toBe('disabled');
+    expect((bool) $configuration->fresh()->is_enabled)->toBeFalse();
+    expect($configuration->accounts()->first()->status)->toBe('rejected');
+});
+
+it('reports enabled payment methods that still block activation', function () {
+    approveActivationMethods($this->business);
+    $method = $this->business->paymentMethods()->whereHas('paymentMethod', fn ($query) => $query->where('code', 'mobile_money'))->firstOrFail();
+    $method->update(['status' => 'needs_update']);
+
+    $status = app(\App\Services\Business\BusinessActivationService::class)->status($this->business->fresh());
+
+    expect($status['activation_eligible'])->toBeFalse();
+    expect($status['blocking_payment_methods'])->toContain(['code' => 'mobile_money', 'name' => 'mobile_money', 'status' => 'needs_update']);
+});

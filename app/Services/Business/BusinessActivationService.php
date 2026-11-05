@@ -42,16 +42,24 @@ class BusinessActivationService
             ->all();
 
         $documentsApproved = $pendingDocumentTypes === [];
-        $configuredMethods = $business->paymentMethods
-            ->filter(fn (BusinessPaymentMethod $configuration): bool =>
-                $configuration->is_enabled && $configuration->status === 'active'
-            );
-        $completeMethods = $business->paymentMethods
-            ->filter(fn (BusinessPaymentMethod $configuration): bool => $configuration->is_enabled)
+        $activationMethods = $business->paymentMethods
+            ->filter(fn (BusinessPaymentMethod $configuration): bool => $this->isAvailableForActivation($configuration));
+        $configuredMethods = $activationMethods
+            ->filter(fn (BusinessPaymentMethod $configuration): bool => $configuration->status === 'active');
+        $completeMethods = $activationMethods
             ->filter(
             fn (BusinessPaymentMethod $configuration): bool => $this->paymentMethodIsComplete($configuration)
         );
-        $enabledMethodCount = $business->paymentMethods->where('is_enabled', true)->count();
+        $enabledMethodCount = $activationMethods->count();
+        $blockingPaymentMethods = $activationMethods
+            ->reject(fn (BusinessPaymentMethod $configuration): bool => $this->paymentMethodIsComplete($configuration))
+            ->map(fn (BusinessPaymentMethod $configuration): array => [
+                'code' => $configuration->paymentMethod?->code,
+                'name' => $configuration->paymentMethod?->name ?? 'Payment method',
+                'status' => $configuration->status,
+            ])
+            ->values()
+            ->all();
         $paymentMethodsApproved = $enabledMethodCount > 0
             && $completeMethods->count() === $enabledMethodCount;
         // Eligibility is independent of the activation flag that Operations sets.
@@ -71,6 +79,7 @@ class BusinessActivationService
             'payment_methods_approved' => $paymentMethodsApproved,
             'configured_payment_method_count' => $configuredMethods->count(),
             'approved_payment_method_count' => $completeMethods->count(),
+            'blocking_payment_methods' => $blockingPaymentMethods,
             'manual_payment_ready' => $manualPaymentReady,
             'payment_checkout_enabled' => $checkoutEnabled,
             'online_checkout_ready' => $canAcceptMobileMoney,
@@ -102,6 +111,27 @@ class BusinessActivationService
 
         return $configuration->status === 'active'
             && (! $method->requires_identifier || filled($configuration->identifier));
+    }
+
+    /**
+     * A method with account records is operationally enabled only while it has
+     * at least one enabled account that has not been rejected or disabled.
+     * This also repairs activation behavior for older rows where the parent
+     * method remained enabled after its final account was rejected.
+     */
+    private function isAvailableForActivation(BusinessPaymentMethod $configuration): bool
+    {
+        if (! $configuration->is_enabled) {
+            return false;
+        }
+
+        if ($configuration->accounts->isEmpty()) {
+            return $configuration->status !== 'disabled';
+        }
+
+        return $configuration->accounts->contains(fn ($account): bool =>
+            $account->is_enabled && ! in_array($account->status, ['rejected', 'disabled'], true)
+        );
     }
 
     private function requiredDocumentTypes(Business $business)
