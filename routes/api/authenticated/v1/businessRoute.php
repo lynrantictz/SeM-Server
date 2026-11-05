@@ -39,6 +39,7 @@ Route::group(['prefix' => 'businesses'], function () {
     Route::post('{business}/payment-methods/submit', [BusinessPaymentController::class, 'submitPaymentMethod']);
     Route::patch('{business}/payment-methods/payment-timing', [BusinessPaymentController::class, 'updatePaymentTiming']);
     Route::get('{business}/payment-methods/payment-timing/history', [BusinessPaymentController::class, 'paymentTimingHistory']);
+    Route::delete('{business}/payment-methods/{methodUuid}/accounts/{accountUuid}', [BusinessPaymentController::class, 'withdrawPaymentMethodAccount']);
     Route::post('{business}/payment-methods/{methodUuid}/accounts/{accountUuid}/disable-request', [BusinessPaymentController::class, 'requestPaymentMethodAccountDisable']);
     Route::get('{business}/payment-methods/{methodUuid}/accounts/{accountUuid}/history', [BusinessPaymentController::class, 'paymentMethodAccountHistory']);
     Route::get('{business}/orders', [BusinessOrderController::class, 'index']);

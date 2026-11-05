@@ -279,8 +279,8 @@ class OperationsBusinessController extends BaseController
     public function reviewPaymentMethodAccount(Request $request, string $uuid, string $methodUuid, string $accountUuid): JsonResponse
     {
         $validated = $request->validate([
-            'decision' => ['required', 'in:approved,returned'],
-            'reason' => ['required_if:decision,returned', 'nullable', 'string', 'max:2000'],
+            'decision' => ['required', 'in:approved,returned,rejected'],
+            'reason' => ['required_if:decision,returned,rejected', 'nullable', 'string', 'min:5', 'max:2000'],
         ]);
 
         $business = Business::query()->where('uuid', $uuid)->firstOrFail();
@@ -295,7 +295,12 @@ class OperationsBusinessController extends BaseController
         abort_unless($account, HTTP_NOT_FOUND, 'Payment account not found.');
 
         if ($validated['decision'] === 'approved') {
+            abort_unless($account->status === 'pending', HTTP_CONFLICT, 'Only a newly submitted payment account can be approved.');
             abort_unless($this->paymentAccountIsComplete($methodCode, $account), HTTP_UNPROCESSABLE_ENTITY, 'This payment account is incomplete and cannot be approved.');
+        } elseif ($validated['decision'] === 'returned') {
+            abort_unless($account->status === 'pending', HTTP_CONFLICT, 'Only an account awaiting review can be returned for changes.');
+        } else {
+            abort_unless(in_array($account->status, ['pending', 'needs_update', 'active'], true), HTTP_CONFLICT, 'This payment account cannot be rejected in its current state.');
         }
 
         DB::transaction(function () use ($configuration, $account, $validated, $request): void {
@@ -303,32 +308,60 @@ class OperationsBusinessController extends BaseController
                 ->with(['paymentMethod', 'accounts'])
                 ->lockForUpdate()
                 ->findOrFail($configuration->id);
-            $lockedAccount = $lockedConfiguration->accounts->firstWhere('uuid', $account->uuid);
-            abort_unless($lockedAccount, HTTP_NOT_FOUND, 'Payment account not found.');
+            $lockedAccount = $lockedConfiguration->accounts()->lockForUpdate()->where('uuid', $account->uuid)->firstOrFail();
+            $decision = $validated['decision'];
+            $allowedStatuses = match ($decision) {
+                'approved', 'returned' => ['pending'],
+                'rejected' => ['pending', 'needs_update', 'active'],
+            };
+            abort_unless(in_array($lockedAccount->status, $allowedStatuses, true), HTTP_CONFLICT, 'The payment account status changed. Refresh and review it again.');
 
-            $approved = $validated['decision'] === 'approved';
+            $wasDefault = $lockedAccount->is_default;
             $lockedAccount->update([
-                'status' => $approved ? 'active' : 'needs_update',
+                'status' => match ($decision) {
+                    'approved' => 'active',
+                    'returned' => 'needs_update',
+                    'rejected' => 'rejected',
+                },
+                'is_enabled' => $decision !== 'rejected',
+                'is_default' => $decision !== 'approved' ? false : $lockedAccount->is_default,
+                'rejection_reason' => in_array($decision, ['returned', 'rejected'], true) ? trim((string) $validated['reason']) : null,
             ]);
+            if ($wasDefault && $decision !== 'approved') {
+                $fallback = $lockedConfiguration->accounts()
+                    ->whereKeyNot($lockedAccount->id)
+                    ->where('is_enabled', true)
+                    ->whereIn('status', ['active', 'pending', 'needs_update'])
+                    ->orderByRaw("CASE WHEN status = 'active' THEN 0 ELSE 1 END")
+                    ->orderBy('sort_order')
+                    ->first();
+                $fallback?->update(['is_default' => true]);
+            }
 
-            $accounts = $lockedConfiguration->accounts->map(fn (BusinessPaymentMethodAccount $item) => $item->id === $lockedAccount->id ? $lockedAccount->fresh() : $item);
+            $accounts = $lockedConfiguration->accounts()->get();
             $hasActiveAccount = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $this->paymentAccountIsComplete($lockedConfiguration->paymentMethod?->code, $item) && $item->is_enabled && $item->status === 'active');
             $hasPendingAccount = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $item->is_enabled && $item->status === 'pending');
-            $status = $hasActiveAccount ? 'active' : ($hasPendingAccount ? 'pending' : 'needs_update');
+            $hasReturnedAccount = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $item->is_enabled && $item->status === 'needs_update');
+            $status = $hasActiveAccount ? 'active' : ($hasPendingAccount ? 'pending' : ($hasReturnedAccount ? 'needs_update' : 'disabled'));
+            $reason = $accounts->first(fn (BusinessPaymentMethodAccount $item): bool => $item->is_enabled && $item->status === 'needs_update')?->rejection_reason;
 
             $lockedConfiguration->update([
                 'status' => $status,
-                'verified_by_user_id' => $status === 'active' ? $request->user()->id : null,
-                'verified_at' => $status === 'active' ? now() : null,
-                'rejection_reason' => $status === 'needs_update' ? trim((string) ($validated['reason'] ?? 'Bank account requires correction.')) : null,
+                'verified_by_user_id' => $status === 'active' ? ($decision === 'approved' ? $request->user()->id : $lockedConfiguration->verified_by_user_id) : null,
+                'verified_at' => $status === 'active' ? ($decision === 'approved' ? now() : $lockedConfiguration->verified_at) : null,
+                'rejection_reason' => $status === 'needs_update' ? $reason : null,
             ]);
         });
 
+        $message = match ($validated['decision']) {
+            'approved' => 'Payment account approved successfully.',
+            'returned' => 'Payment account returned to the business for correction.',
+            'rejected' => 'Payment account rejected and made unavailable for customer payments.',
+        };
+
         return $this->sendResponse([
             'payment_method' => $this->businessPaymentMethodData($configuration->fresh(['paymentMethod', 'verifiedBy:id,name', 'accounts'])),
-        ], $validated['decision'] === 'approved'
-            ? 'Payment account approved successfully.'
-            : 'Payment account returned to the business for correction.');
+        ], $message);
     }
 
     public function reviewPaymentMethodAccountDisable(Request $request, string $uuid, string $methodUuid, string $accountUuid): JsonResponse
@@ -1415,6 +1448,7 @@ class OperationsBusinessController extends BaseController
                 'account_holder_name' => $account->account_holder_name,
                 'currency' => $account->currency,
                 'status' => $account->status,
+                'rejection_reason' => $account->rejection_reason,
                 'is_default' => (bool) $account->is_default,
             ])->values(),
         ];

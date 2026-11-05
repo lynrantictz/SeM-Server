@@ -102,7 +102,9 @@ class BusinessCommissionService
             Business::whereKey($business->id)->lockForUpdate()->firstOrFail();
             $policy = BusinessCommissionPolicy::whereKey($policy->id)->lockForUpdate()->firstOrFail();
             abort_unless($policy->business_id === $business->id, 404);
-            abort_unless(($policy->state === 'draft' || ($policy->state === 'published' && $policy->starts_at->isFuture())) && ! $policy->fees()->exists(), 409, 'Only unused drafts or future policies can be cancelled.');
+            $canCancelDraft = $policy->state === 'draft' && ! $policy->fees()->exists();
+            $canCancelFutureAgreement = $policy->state === 'published' && $policy->starts_at->isFuture();
+            abort_unless($canCancelDraft || $canCancelFutureAgreement, 409, 'Only unused drafts or future agreements can be cancelled.');
             if ($policy->state === 'published') {
                 $previous = BusinessCommissionPolicy::where('business_id', $business->id)->where('state', 'published')->where('ends_at', $policy->starts_at)->orderByDesc('id')->first();
                 if ($previous) {

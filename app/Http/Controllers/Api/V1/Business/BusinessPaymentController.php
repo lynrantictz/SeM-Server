@@ -332,18 +332,33 @@ class BusinessPaymentController extends BaseController
                     'branch_name' => $method->code === 'bank_transfer' ? ($validated['branch_name'] ?? null) : null,
                     'currency' => strtoupper((string) $validated['currency']),
                     'status' => 'pending',
+                    'rejection_reason' => null,
                     'is_enabled' => true,
                     'is_default' => (bool) ($validated['is_default'] ?? false),
                 ];
-                $account = filled($validated['account_uuid'] ?? null)
-                    ? $configuration->accounts()->where('uuid', $validated['account_uuid'])->firstOrFail()
-                    : $configuration->accounts()->create($accountValues);
                 if (filled($validated['account_uuid'] ?? null)) {
+                    $account = $configuration->accounts()->lockForUpdate()->where('uuid', $validated['account_uuid'])->firstOrFail();
+                    abort_unless($account->status === 'needs_update', HTTP_CONFLICT, 'Only an account returned for correction can be edited and resubmitted.');
                     $account->update($accountValues);
+                } else {
+                    $account = $configuration->accounts()->create($accountValues);
                 }
                 if ($accountValues['is_default']) {
                     $configuration->accounts()->whereKeyNot($account->id)->update(['is_default' => false]);
                 }
+
+                $accounts = $configuration->accounts()->get();
+                $hasActiveAccount = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $item->is_enabled && $item->status === 'active');
+                $hasPendingAccount = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $item->is_enabled && $item->status === 'pending');
+                $hasReturnedAccount = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $item->is_enabled && $item->status === 'needs_update');
+                $status = $hasActiveAccount ? 'active' : ($hasPendingAccount ? 'pending' : ($hasReturnedAccount ? 'needs_update' : 'disabled'));
+                $reason = $accounts->first(fn (BusinessPaymentMethodAccount $item): bool => $item->is_enabled && $item->status === 'needs_update')?->rejection_reason;
+                $configuration->update([
+                    'status' => $status,
+                    'verified_by_user_id' => $status === 'active' ? $configuration->verified_by_user_id : null,
+                    'verified_at' => $status === 'active' ? $configuration->verified_at : null,
+                    'rejection_reason' => $status === 'needs_update' ? $reason : null,
+                ]);
             }
         });
 
@@ -416,6 +431,50 @@ class BusinessPaymentController extends BaseController
                 'created_at' => $audit->created_at?->toIso8601String(),
             ]),
         ], 'Payment timing history retrieved successfully.');
+    }
+
+    public function withdrawPaymentMethodAccount(Request $request, Business $business, string $methodUuid, string $accountUuid)
+    {
+        $this->authorizePaymentPermission($business, 'business.payment_methods.update');
+        $this->authorizePaymentPermission($business, 'business.payment_methods.submit');
+
+        $configuration = $business->paymentMethods()
+            ->with(['paymentMethod', 'accounts'])
+            ->where('uuid', $methodUuid)
+            ->firstOrFail();
+        abort_unless($configuration->paymentMethod?->code === 'bank_transfer', HTTP_UNPROCESSABLE_ENTITY, 'Only bank accounts can be withdrawn here.');
+        $account = $configuration->accounts->firstWhere('uuid', $accountUuid);
+        abort_unless($account, HTTP_NOT_FOUND, 'Bank account not found.');
+        abort_unless(in_array($account->status, ['pending', 'needs_update'], true), HTTP_CONFLICT, 'Only a bank account awaiting review or returned for changes can be withdrawn.');
+
+        DB::transaction(function () use ($configuration, $account): void {
+            $lockedConfiguration = BusinessPaymentMethod::query()
+                ->with('paymentMethod')
+                ->lockForUpdate()
+                ->findOrFail($configuration->id);
+            $lockedAccount = $lockedConfiguration->accounts()->lockForUpdate()->where('uuid', $account->uuid)->firstOrFail();
+            abort_unless(in_array($lockedAccount->status, ['pending', 'needs_update'], true), HTTP_CONFLICT, 'The bank account status changed. Refresh and try again.');
+            $wasDefault = $lockedAccount->is_default;
+            $lockedAccount->update(['status' => 'withdrawn', 'is_enabled' => false, 'is_default' => false]);
+            if ($wasDefault) {
+                $fallback = $lockedConfiguration->accounts()
+                    ->where('is_enabled', true)
+                    ->whereIn('status', ['active', 'pending', 'needs_update'])
+                    ->orderByRaw("CASE WHEN status = 'active' THEN 0 ELSE 1 END")
+                    ->orderBy('sort_order')
+                    ->first();
+                $fallback?->update(['is_default' => true]);
+            }
+
+            $accounts = $lockedConfiguration->accounts()->get();
+            $hasActive = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $item->is_enabled && $item->status === 'active');
+            $hasPending = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $item->is_enabled && $item->status === 'pending');
+            $hasReturned = $accounts->contains(fn (BusinessPaymentMethodAccount $item): bool => $item->is_enabled && $item->status === 'needs_update');
+            $status = $hasActive ? 'active' : ($hasPending ? 'pending' : ($hasReturned ? 'needs_update' : 'disabled'));
+            $lockedConfiguration->update(['status' => $status]);
+        });
+
+        return $this->paymentMethods($business->fresh());
     }
 
     public function requestPaymentMethodAccountDisable(Request $request, Business $business, string $methodUuid, string $accountUuid)
@@ -836,6 +895,7 @@ class BusinessPaymentController extends BaseController
                     'branch_name' => $account->branch_name,
                     'currency' => $account->currency,
                     'status' => $account->status,
+                    'rejection_reason' => $account->rejection_reason,
                     'is_default' => (bool) $account->is_default,
                     'is_enabled' => (bool) $account->is_enabled,
                     'sort_order' => $account->sort_order,

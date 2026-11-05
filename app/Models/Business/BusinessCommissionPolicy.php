@@ -13,7 +13,10 @@ class BusinessCommissionPolicy extends BaseModel
         static::updating(function (self $policy) {
             if ($policy->getOriginal('state') !== 'draft') {
                 if ($policy->isDirty('state')) {
-                    abort_unless($policy->state === 'cancelled' && $policy->starts_at->isFuture() && ! $policy->fees()->exists(), 409, 'Only unused future agreements can be cancelled.');
+                    $canCancelFutureAgreement = $policy->state === 'cancelled'
+                        && $policy->getOriginal('state') === 'published'
+                        && $policy->starts_at->isFuture();
+                    abort_unless($canCancelFutureAgreement, 409, 'Only future published agreements can be cancelled.');
                 }
                 $forbidden = array_diff(array_keys($policy->getDirty()), ['ends_at', 'state', 'cancellation_reason', 'updated_at']);
                 abort_if(count($forbidden) > 0, 409, 'Published commission agreements are immutable. Create a replacement.');
