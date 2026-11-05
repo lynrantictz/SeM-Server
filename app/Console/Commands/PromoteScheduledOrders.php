@@ -24,7 +24,7 @@ class PromoteScheduledOrders extends Command
             ->where('order_status_id', $scheduledId)
             ->where('payment_status_id', $completedPaymentId)
             ->whereNotNull('preparation_starts_at')
-            ->where('preparation_starts_at', '<=', now())
+            ->where('preparation_starts_at', '<=', now('UTC'))
             ->orderBy('id')
             ->chunkById(100, function ($orders) use ($processingId): void {
                 foreach ($orders as $order) {

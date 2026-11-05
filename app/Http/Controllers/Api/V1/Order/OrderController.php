@@ -28,6 +28,7 @@ use App\Services\PhoneNumberNormalizer;
 use App\Services\MenuAvailabilityService;
 use App\Services\Order\GuestOrderSessionService;
 use App\Services\Order\GuestCustomerSessionService;
+use App\Services\Order\BusinessLocalSchedule;
 use App\Services\Business\BusinessActivationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -142,7 +143,13 @@ class OrderController extends BaseController
             return $this->sendError($reason, [], HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $this->validateOnlineSchedule($code, $channel, $request->input('scheduled_for'));
+        $scheduledFor = $this->resolveOnlineSchedule(
+            $code,
+            $channel,
+            $request->input('scheduled_for_local'),
+            $request->input('scheduled_for'),
+        );
+        $scheduledForIso = $scheduledFor?->toIso8601String();
 
         $persistentSession = $this->guestCustomerSessions->resolveFromRequest($request);
         if ($persistentSession || $request->filled('guest_session')) {
@@ -161,7 +168,7 @@ class OrderController extends BaseController
             try {
                 $order = $this->orders->store(
                     $code,
-                    ['items' => $request->input('items'), 'scheduled_for' => $request->input('scheduled_for')],
+                    ['items' => $request->input('items'), 'scheduled_for' => $scheduledForIso],
                     $channel,
                     $customer,
                 );
@@ -241,13 +248,13 @@ class OrderController extends BaseController
         $otp = (string) random_int(1000, 9999);
 
         Log::info('Order checkout verification code (local testing only)', ['otp' => $otp]);
-        $checkout = DB::transaction(function () use ($code, $channel, $phone, $request, $otp) {
+        $checkout = DB::transaction(function () use ($code, $channel, $phone, $request, $otp, $scheduledForIso) {
             $record = OrderCheckoutVerification::query()->create([
                 'code_id' => $code->id,
                 'channel' => $channel,
                 'phone' => $phone,
                 'checkout_payload' => [
-                    'scheduled_for' => $request->input('scheduled_for'),
+                    'scheduled_for' => $scheduledForIso,
                     'items' => collect($request->input('items'))->map(fn(array $item) => [
                         'uuid' => $item['uuid'],
                         'quantity' => $item['quantity'],
@@ -358,7 +365,8 @@ class OrderController extends BaseController
                 }
 
                 $payload = $checkout->checkout_payload;
-                $this->validateOnlineSchedule($code, $checkout->channel, $payload['scheduled_for'] ?? null);
+                $scheduledFor = $this->resolveOnlineSchedule($code, $checkout->channel, null, $payload['scheduled_for'] ?? null);
+                $payload['scheduled_for'] = $scheduledFor?->toIso8601String();
                 $payload['phone'] = $checkout->phone;
                 $order = $this->orders->store($code, $payload, $checkout->channel);
                 $order->forceFill(['phone_verified_at' => now()])->save();
@@ -708,19 +716,26 @@ class OrderController extends BaseController
         return null;
     }
 
-    private function validateOnlineSchedule(Code $code, string $channel, mixed $scheduledFor): void
+    private function resolveOnlineSchedule(Code $code, string $channel, mixed $scheduledForLocal, mixed $legacyScheduledFor): ?Carbon
     {
         if ($channel !== 'online') {
-            return;
+            return null;
         }
 
-        abort_unless(is_string($scheduledFor) && trim($scheduledFor) !== '', HTTP_UNPROCESSABLE_ENTITY,
+        $scheduleInput = is_string($scheduledForLocal) ? trim($scheduledForLocal) : '';
+        $legacyInput = is_string($legacyScheduledFor) ? trim($legacyScheduledFor) : '';
+        abort_unless($scheduleInput !== '' || $legacyInput !== '', HTTP_UNPROCESSABLE_ENTITY,
             'Choose a future date and time for this online order.');
 
         $business = $code->codable?->business;
-        $timezone = $business?->timezoneDefinition?->identifier ?: ($business?->timezone ?: config('app.timezone', 'UTC'));
+        $business?->loadMissing('timezoneDefinition');
+        $timezone = $business?->timezoneDefinition?->identifier ?: ($business?->timezone ?: 'UTC');
         try {
-            $selected = Carbon::parse($scheduledFor)->setTimezone($timezone);
+            // New clients send datetime-local as a wall-clock value. Interpret it
+            // in the business timezone rather than the guest device timezone.
+            $selected = $scheduleInput !== ''
+                ? app(BusinessLocalSchedule::class)->toCarbon($scheduleInput, $timezone)
+                : Carbon::parse($legacyInput)->setTimezone($timezone);
         } catch (\Throwable) {
             abort(HTTP_UNPROCESSABLE_ENTITY, 'Choose a valid future date and time.');
         }
@@ -742,6 +757,8 @@ class OrderController extends BaseController
             abort_unless($open, HTTP_UNPROCESSABLE_ENTITY,
                 'Choose a time within the business opening hours.');
         }
+
+        return $selected->utc();
     }
 
     private function channelEnabled($business, string $channel): bool

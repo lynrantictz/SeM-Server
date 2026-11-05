@@ -33,7 +33,7 @@ class OrderRepository extends BaseRepository
         $country = $business->district?->city?->country?->iso2;
         $customer = $verifiedCustomer ?? (new CustomerRepository())->getCustomerByPhone($inputs['phone'], $country);
         $servicePoint = $code->codable instanceof ServicePoint ? $code->codable : null;
-        $scheduledFor = !empty($inputs['scheduled_for']) ? Carbon::parse($inputs['scheduled_for']) : null;
+        $scheduledFor = !empty($inputs['scheduled_for']) ? Carbon::parse($inputs['scheduled_for'])->utc() : null;
         $timezone = $business->timezoneDefinition?->identifier ?: ($business->timezone ?: config('app.timezone', 'UTC'));
         return [
             'business_id' => $business->id,

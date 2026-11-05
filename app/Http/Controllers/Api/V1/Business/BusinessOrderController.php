@@ -848,10 +848,13 @@ class BusinessOrderController extends BaseController
     public function storeNote(Request $request, Business $business, string $order)
     {
         $role = $this->authorizeBusiness($business);
-        abort_unless($this->canCreateOrEdit($role), HTTP_FORBIDDEN, 'Your role cannot add order notes.');
+        abort_unless($this->canAddOrderNote($role), HTTP_FORBIDDEN, 'Your role cannot add order notes.');
         $data = $request->validate(['body' => ['required', 'string', 'max:1000']]);
         $record = Order::query()->where('business_id', $business->id)->where('uuid', $order)->firstOrFail();
-        $note = $record->staffNotes()->create(['user_id' => auth()->id(), 'body' => trim($data['body'])]);
+        $note = DB::transaction(fn () => $record->staffNotes()->create([
+            'user_id' => auth()->id(),
+            'body' => trim($data['body']),
+        ]));
         return $this->sendResponse(['note' => ['uuid' => $note->uuid, 'body' => $note->body, 'author' => auth()->user()->name, 'created_at' => $note->created_at]], 'Team note added successfully.', HTTP_CREATED);
     }
 
@@ -909,6 +912,11 @@ class BusinessOrderController extends BaseController
     private function canCreateOrEdit(string $role): bool
     {
         return in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager', 'counter', 'counter-clerk', 'waiter'], true);
+    }
+
+    private function canAddOrderNote(string $role): bool
+    {
+        return $this->canCreateOrEdit($role) || in_array($role, ['kitchen', 'chef'], true);
     }
 
     private function canReassignWaiter(string $role): bool

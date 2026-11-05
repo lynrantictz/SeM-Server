@@ -39,6 +39,7 @@ class CategoryController extends BaseController
 
         $relationships = [
             'business',
+            'business.timezoneDefinition',
             'business.type',
             'business.vendor',
             'business.district',
@@ -64,6 +65,10 @@ class CategoryController extends BaseController
             return $this->sendError('This business is not currently accepting orders.', [], HTTP_NOT_FOUND);
         }
         $business = $code->codable->business;
+        $business->setAttribute(
+            'timezone',
+            $business->timezoneDefinition?->identifier ?: ($business->timezone ?: 'UTC'),
+        );
         $country = $business->district?->city?->country;
         $activation = app(BusinessActivationService::class)->status($business);
         if (! $activation['manual_payment_ready']) {
@@ -115,6 +120,7 @@ class CategoryController extends BaseController
         $data['menu'] = $menu;
         $data['menu_status'] = $businessStatus;
         $data['channel'] = $channel;
+        $data['server_time_utc'] = now('UTC')->toIso8601String();
         $vat = $business->tax_allowed && $business->tax_status === 'vat_registered'
             ? $country?->taxes()
                 ->where('is_active', true)
