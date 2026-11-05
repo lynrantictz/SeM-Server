@@ -131,7 +131,7 @@ class OperationsBusinessController extends BaseController
             'documents' => $documents,
             'document_requirements' => $documentRequirements,
             'onboarding_payment' => $this->onboardingPaymentData($business->onboardingPayment),
-            'onboarding_packages' => OnboardingPackage::query()->where('is_active', true)->orderBy('sort_order')->get(['id', 'name', 'price', 'currency']),
+            'onboarding_packages' => OnboardingPackage::query()->where('is_active', true)->orderBy('sort_order')->get(['id', 'name', 'version', 'price', 'currency']),
             'activation' => $activation,
         ], 'Operations business details retrieved successfully.');
     }
@@ -1331,6 +1331,7 @@ class OperationsBusinessController extends BaseController
             'uuid' => $payment->uuid,
             'package_id' => $payment->package_id,
             'package' => $payment->package,
+            'package_version' => $payment->onboardingPackage?->version,
             'package_price' => $payment->onboardingPackage?->price,
             'amount_due' => $payment->amount_due,
             'amount_paid' => $payment->amount_paid,

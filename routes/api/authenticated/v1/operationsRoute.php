@@ -3,9 +3,17 @@
 use App\Http\Controllers\Api\V1\Operations\OperationsBusinessController;
 use App\Http\Controllers\Api\V1\Operations\OperationsDashboardController;
 use App\Http\Controllers\Api\V1\Operations\OperationsVendorController;
+use App\Http\Controllers\Api\V1\Operations\OnboardingPackageController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('operations')->group(function (): void {
+    Route::get('onboarding-packages', [OnboardingPackageController::class, 'index'])
+        ->middleware('permission:operations.businesses.view');
+    Route::post('onboarding-packages', [OnboardingPackageController::class, 'store'])
+        ->middleware('permission:operations.businesses.manage');
+    Route::patch('onboarding-packages/{id}/active', [OnboardingPackageController::class, 'setActive'])
+        ->whereNumber('id')
+        ->middleware('permission:operations.businesses.manage');
     Route::get('billing/demo', [\App\Http\Controllers\Api\V1\Operations\LocalBillingDemoController::class, 'index']);
     Route::post('billing/demo/run', [\App\Http\Controllers\Api\V1\Operations\LocalBillingDemoController::class, 'run']);
     Route::get('billing/restrictions', [\App\Http\Controllers\Api\V1\Operations\OperationsBillingController::class, 'restrictions']);
