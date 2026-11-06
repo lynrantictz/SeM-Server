@@ -52,6 +52,7 @@ Route::group(['prefix' => 'businesses'], function () {
     Route::get('{business}/orders/context', [BusinessOrderController::class, 'context']);
     Route::get('{business}/orders/menu-items', [BusinessOrderController::class, 'menuItems']);
     Route::post('{business}/orders', [BusinessOrderController::class, 'store']);
+    Route::patch('{business}/orders/{order}/guest-details', [BusinessOrderController::class, 'updateGuestDetails']);
     Route::put('{business}/orders/{order}', [BusinessOrderController::class, 'update']);
     Route::patch('{business}/orders/{order}/schedule', [BusinessOrderController::class, 'reschedule']);
     Route::post('{business}/orders/{order}/notes', [BusinessOrderController::class, 'storeNote']);

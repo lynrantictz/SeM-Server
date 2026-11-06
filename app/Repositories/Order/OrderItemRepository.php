@@ -15,7 +15,7 @@ class OrderItemRepository extends BaseRepository
 {
     const MODEL = OrderItem::class;
 
-    public function inputManipulator($item, $business, string $channel = 'dine_in', ?Carbon $availableAt = null): array
+    public function inputManipulator($item, $business, string $channel = 'dine_in', ?Carbon $availableAt = null, array $preservedOptionUuids = []): array
     {
         $itemResults = (new ItemRepository())->query()
             ->where('uuid', $item['uuid'])
@@ -34,7 +34,7 @@ class OrderItemRepository extends BaseRepository
             throw ValidationException::withMessages(['items' => [$itemResults->name . ': ' . $categoryAvailability['reason']]]);
         }
         $pricing = app(MenuAvailabilityService::class)->itemPricing($itemResults, $business, $channel);
-        $selectedOptions = $this->resolveOptions($item, $itemResults);
+        $selectedOptions = $this->resolveOptions($item, $itemResults, $preservedOptionUuids);
         $optionAdjustment = collect($selectedOptions)->sum('price_adjustment');
         $discountPercentage = $pricing['discount_percentage'];
         $unitPrice = $pricing['original_price'];
@@ -54,12 +54,18 @@ class OrderItemRepository extends BaseRepository
         ];
     }
 
-    public function store(Order $order, $items, string $channel = 'dine_in', ?Carbon $availableAt = null)
+    public function store(Order $order, $items, string $channel = 'dine_in', ?Carbon $availableAt = null, array $preservedOptionUuidsByItem = [])
     {
-        return DB::transaction(function () use ($order, $items, $channel, $availableAt) {
+        return DB::transaction(function () use ($order, $items, $channel, $availableAt, $preservedOptionUuidsByItem) {
             $order->loadMissing('business.promotions', 'business.timezoneDefinition');
             foreach ($items as $item) {
-                $line = $this->inputManipulator($item, $order->business, $channel, $availableAt);
+                $line = $this->inputManipulator(
+                    $item,
+                    $order->business,
+                    $channel,
+                    $availableAt,
+                    $preservedOptionUuidsByItem[$item['uuid']] ?? [],
+                );
                 $selectedOptions = $line['_selected_options'] ?? [];
                 unset($line['_selected_options']);
                 $orderItem = $order->items()->create($line);
@@ -69,18 +75,34 @@ class OrderItemRepository extends BaseRepository
         });
     }
 
-    private function resolveOptions(array $item, $itemResults): array
+    private function resolveOptions(array $item, $itemResults, array $preservedOptionUuids = []): array
     {
-        $groups = $itemResults->optionGroups->where('is_active', true)->values();
+        $groups = $itemResults->optionGroups->values();
         $requested = collect($item['options'] ?? [])->pluck('uuid')->filter()->unique()->values();
-        $available = $groups->flatMap(fn ($group) => $group->options->where('is_active', true));
+        $activeOptions = $groups
+            ->filter(fn ($group) => (bool) $group->is_active)
+            ->flatMap(fn ($group) => $group->options->where('is_active', true));
+        $allOptions = $groups->flatMap(fn ($group) => $group->options);
+        $preservedOptions = $allOptions->whereIn('uuid', $preservedOptionUuids);
+        $available = $activeOptions->concat($preservedOptions)->unique('uuid')->values();
 
         if ($requested->diff($available->pluck('uuid'))->isNotEmpty()) {
             throw ValidationException::withMessages(['items' => [$itemResults->name . ': one or more selected options are unavailable.']]);
         }
 
         foreach ($groups as $group) {
-            $selected = $available->whereIn('uuid', $requested)->where('item_option_group_id', $group->id);
+            $groupOptions = $available->where('item_option_group_id', $group->id);
+            $selected = $groupOptions->whereIn('uuid', $requested);
+
+            if (! $group->is_active) {
+                $previouslySelected = $preservedOptions->where('item_option_group_id', $group->id)->pluck('uuid')->sort()->values();
+                $currentlySelected = $selected->pluck('uuid')->sort()->values();
+                if ($previouslySelected->all() !== $currentlySelected->all()) {
+                    throw ValidationException::withMessages(['items' => [$itemResults->name . ': the saved selection for ' . $group->name . ' is no longer available to change.']]);
+                }
+                continue;
+            }
+
             $count = $selected->count();
             $minimum = $group->is_required ? max(1, $group->min_selections) : $group->min_selections;
             if ($count < $minimum || ($group->max_selections !== null && $count > $group->max_selections) || ($group->selection_type === 'single' && $count > 1)) {

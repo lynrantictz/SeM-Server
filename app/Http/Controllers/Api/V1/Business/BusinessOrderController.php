@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Business;
 
 use App\Http\Controllers\Api\BaseController;
+use App\Exceptions\InvalidPhoneNumberException;
 use App\Models\Auth\User;
 use App\Models\Business\Business;
 use App\Models\Business\BusinessUser;
@@ -90,7 +91,7 @@ class BusinessOrderController extends BaseController
                 'servicePoint.subSection:id,name',
                 'items:id,order_id,item_id,quantity,unit_price,final_price,total_amount,comment',
                 'items.item:id,uuid,name',
-                'items.options:id,order_item_id,name,price_adjustment',
+                'items.options:id,order_item_id,item_option_id,name,price_adjustment',
                 'items.options.itemOption:id,uuid',
                 'statusHistories.fromStatus:id,name',
                 'statusHistories.toStatus:id,name',
@@ -475,7 +476,7 @@ class BusinessOrderController extends BaseController
                 'servicePoint:id,type,label,display_name,section_id,sub_section_id',
                 'servicePoint.section:id,name', 'servicePoint.subSection:id,name',
                 'items:id,order_id,item_id,quantity,unit_price,final_price,total_amount,comment',
-                'items.item:id,uuid,name', 'items.options:id,order_item_id,name,price_adjustment',
+                'items.item:id,uuid,name', 'items.options:id,order_item_id,item_option_id,name,price_adjustment',
                 'items.options.itemOption:id,uuid',
                 'statusHistories.fromStatus:id,name', 'statusHistories.toStatus:id,name',
                 'business:id', 'business.paymentSetting:business_id,currency',
@@ -693,8 +694,19 @@ class BusinessOrderController extends BaseController
             ->get();
 
         if (!empty($data['include'])) {
-            $pinnedItems = (clone $itemQuery)->whereIn('uuid', $data['include'])->get();
-            $items = $items->concat($pinnedItems)->unique('id')->values();
+            $pinnedItems = Item::query()
+                ->whereIn('uuid', $data['include'])
+                ->whereHas('category', fn (Builder $query) => $query->where('business_id', $business->id))
+                ->with([
+                    'category:id,uuid,name',
+                    'discountRules',
+                    'optionGroups' => fn ($query) => $query->orderBy('sort_order'),
+                    'optionGroups.options' => fn ($query) => $query->orderBy('sort_order'),
+                ])
+                ->get();
+            $itemsByUuid = $items->keyBy('uuid');
+            foreach ($pinnedItems as $pinnedItem) $itemsByUuid->put($pinnedItem->uuid, $pinnedItem);
+            $items = $itemsByUuid->values();
         }
 
         return $this->sendResponse([
@@ -711,10 +723,61 @@ class BusinessOrderController extends BaseController
         return $this->sendResponse(['order' => $this->orderData($this->loadOrder($order), $role)], 'Order created and sent to the kitchen.', HTTP_CREATED);
     }
 
+    public function updateGuestDetails(Request $request, Business $business, string $order)
+    {
+        $role = $this->authorizeBusiness($business);
+        abort_unless($this->canCreateOrEdit($role), HTTP_FORBIDDEN, 'Your role cannot update guest details.');
+        $data = $request->validate([
+            'phone' => ['required', 'string', 'max:24'],
+            'country_iso2' => ['required', 'string', 'size:2', 'exists:countries,iso2'],
+        ]);
+
+        try {
+            $updated = DB::transaction(function () use ($business, $order, $data) {
+                $record = Order::query()
+                    ->where('business_id', $business->id)
+                    ->where('uuid', $order)
+                    ->lockForUpdate()
+                    ->firstOrFail();
+
+                // Customer-created orders remain under the customer's control.
+                abort_unless($record->user_id !== null, Response::HTTP_FORBIDDEN,
+                    'Guest details can only be changed on orders created by staff.');
+
+                OrderWorkLock::query()->where('expires_at', '<=', now())->delete();
+                $lock = OrderWorkLock::query()->where('order_id', $record->id)->lockForUpdate()->first();
+                abort_unless(! $lock || $lock->user_id === auth()->id(), Response::HTTP_CONFLICT,
+                    ($lock?->user?->name ?? 'Another staff member') . ' is currently updating this order.');
+
+                $customer = (new \App\Repositories\Customer\CustomerRepository())
+                    ->getCustomerByPhone($data['phone'], $data['country_iso2']);
+                $previousCustomerId = $record->customer_id;
+                $record->forceFill(['customer_id' => $customer->id])->save();
+
+                if ((int) $previousCustomerId !== (int) $customer->id) {
+                    OrderStatusHistory::query()->create([
+                        'order_id' => $record->id,
+                        'from_status_id' => $record->order_status_id,
+                        'to_status_id' => $record->order_status_id,
+                        'changed_by_user_id' => auth()->id(),
+                        'note' => $previousCustomerId ? 'Guest phone number updated by staff.' : 'Guest phone number added by staff.',
+                    ]);
+                }
+
+                return $this->loadOrder($record);
+            });
+        } catch (InvalidPhoneNumberException $exception) {
+            return $this->sendError($exception->getMessage(), [], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return $this->sendResponse(['order' => $this->orderData($updated, $role)], 'Guest details updated successfully.');
+    }
+
     public function update(Request $request, Business $business, string $order)
     {
         $role = $this->authorizeBusiness($business);
         abort_unless($this->canCreateOrEdit($role), HTTP_FORBIDDEN, 'Your role cannot edit orders.');
+        $this->rejectGuestContactChanges($request);
         $data = $this->orderPayload($request, $business);
         $updated = DB::transaction(function () use ($business, $order, $data, $role) {
             $record = Order::query()->where('business_id', $business->id)->where('uuid', $order)->lockForUpdate()->firstOrFail();
@@ -723,7 +786,6 @@ class BusinessOrderController extends BaseController
             abort_unless($editable, Response::HTTP_CONFLICT, 'This order can no longer be edited.');
             abort_unless($data['channel'] === $record->channel, HTTP_UNPROCESSABLE_ENTITY, 'The ordering channel cannot be changed.');
             abort_unless(!empty($data['change_reason']), HTTP_UNPROCESSABLE_ENTITY, 'Enter a reason for the order change.');
-            $before = ['scheduled_for' => $record->scheduled_for?->toIso8601String(), 'total' => $record->total_amount, 'items' => $record->items()->with('options')->get()->toArray()];
             $oldTotal = (float) $record->total_amount;
             $billingRestricted = app(\App\Services\Business\BusinessBillingService::class)->restricted($business);
             if ($billingRestricted) {
@@ -751,10 +813,23 @@ class BusinessOrderController extends BaseController
             $this->assertLockOwner($record);
             $servicePoint = !empty($data['service_point_id']) ? ServicePoint::query()->whereKey($data['service_point_id'])->where('business_id', $business->id)->where('is_active', true)->firstOrFail() : null;
             if ($servicePoint) abort_unless($servicePoint->orderingChannels()->where('slug', $data['channel'])->exists(), HTTP_UNPROCESSABLE_ENTITY, 'This service point is not available for the selected ordering channel.');
+            $preservedOptionUuidsByItem = $record->items()
+                ->with(['item:id,uuid', 'options.itemOption:id,uuid,item_option_group_id'])
+                ->get()
+                ->reduce(function (array $selectedByItem, $orderItem): array {
+                    $itemUuid = $orderItem->item?->uuid;
+                    if (! $itemUuid) return $selectedByItem;
+                    $selectedByItem[$itemUuid] = array_values(array_unique(array_merge(
+                        $selectedByItem[$itemUuid] ?? [],
+                        $orderItem->options->map(fn ($option) => $option->itemOption?->uuid)->filter()->all(),
+                    )));
+                    return $selectedByItem;
+                }, []);
+
             $record->items()->each(fn ($item) => $item->options()->delete());
             $record->items()->delete();
             $record->update(['channel' => $data['channel'], 'service_point_id' => $servicePoint?->id, 'service_point_label' => $servicePoint?->display_name, 'comment' => $data['comment'] ?? null]);
-            (new OrderItemRepository())->store($record, $data['items'], $data['channel'], $record->scheduled_for);
+            (new OrderItemRepository())->store($record, $data['items'], $data['channel'], $record->scheduled_for, $preservedOptionUuidsByItem);
             $business->load('promotions');
             $totals = app(OrderRepository::class)->totalsFor($business, $record->items()->sum('total_amount'));
             if ($record->paymentStatus?->name === 'Completed') {
@@ -763,7 +838,18 @@ class BusinessOrderController extends BaseController
             if ($billingRestricted) abort_if((float) $totals['total_amount'] > $oldTotal + 0.005, 423, 'The order amount cannot increase while new ordering is paused.');
             $record->update($totals);
             abort_if($record->paymentStatus?->name === 'Completed' && abs((float) $record->total_amount - $oldTotal) > 0.01, HTTP_UNPROCESSABLE_ENTITY, 'Paid orders cannot change total until a payment adjustment or refund is arranged.');
-            OrderStatusHistory::query()->create(['order_id' => $record->id, 'from_status_id' => $record->order_status_id, 'to_status_id' => $record->order_status_id, 'changed_by_user_id' => auth()->id(), 'note' => 'Order changed: '.$data['change_reason'].' | Before: '.json_encode($before).' | After: '.json_encode(['scheduled_for' => $record->scheduled_for?->toIso8601String(), 'total' => $record->total_amount, 'items' => $data['items']])]);
+            OrderStatusHistory::query()->create([
+                'order_id' => $record->id,
+                'from_status_id' => $record->order_status_id,
+                'to_status_id' => $record->order_status_id,
+                'changed_by_user_id' => auth()->id(),
+                'note' => $this->orderEditHistoryNote(
+                    $data['change_reason'],
+                    $oldTotal,
+                    (float) $record->total_amount,
+                    count($data['items']),
+                ),
+            ]);
             return $record;
         });
         return $this->sendResponse(['order' => $this->orderData($this->loadOrder($updated), $role)], 'Order updated successfully.');
@@ -909,6 +995,26 @@ class BusinessOrderController extends BaseController
         return $data;
     }
 
+    private function rejectGuestContactChanges(Request $request): void
+    {
+        abort_if($request->exists('phone') || $request->exists('country_iso2'), Response::HTTP_UNPROCESSABLE_ENTITY,
+            'Guest contact details cannot be changed while editing an order.');
+    }
+
+    private function orderEditHistoryNote(string $reason, float $oldTotal, float $newTotal, int $lineCount): string
+    {
+        $prefix = 'Order changed: ';
+        $suffix = sprintf(
+            ' | Total: %s to %s | Lines: %d',
+            number_format($oldTotal, 2, '.', ''),
+            number_format($newTotal, 2, '.', ''),
+            $lineCount,
+        );
+        $reasonLength = max(0, 500 - mb_strlen($prefix) - mb_strlen($suffix));
+
+        return $prefix . mb_substr(trim($reason), 0, $reasonLength) . $suffix;
+    }
+
     private function canCreateOrEdit(string $role): bool
     {
         return in_array($role, ['owner', 'vendor_manager', 'business_manager', 'manager', 'counter', 'counter-clerk', 'waiter'], true);
@@ -957,6 +1063,7 @@ class BusinessOrderController extends BaseController
             'option_groups' => $item->optionGroups->map(fn ($group) => [
                 'uuid' => $group->uuid,
                 'name' => $group->name,
+                'is_active' => (bool) $group->is_active,
                 'selection_type' => $group->selection_type,
                 'is_required' => (bool) $group->is_required,
                 'min_selections' => (int) $group->min_selections,
@@ -964,6 +1071,7 @@ class BusinessOrderController extends BaseController
                 'options' => $group->options->map(fn ($option) => [
                     'uuid' => $option->uuid,
                     'name' => $option->name,
+                    'is_active' => (bool) $option->is_active,
                     'price_adjustment' => (float) $option->price_adjustment,
                 ])->values(),
             ])->values(),
@@ -984,7 +1092,7 @@ class BusinessOrderController extends BaseController
             'status:id,name', 'customer:id,phone,phone_e164', 'approver:id,name', 'assignee:id,name', 'paymentStatus:id,name', 'paymentMethod:id,name',
                 'payment:payments.id,payments.order_id,payments.provider,payments.status,payments.expires_at,payments.confirmation_source,payments.confirmed_by_user_id,payments.confirmed_at,payments.metadata', 'payment.confirmedBy:id,name',
             'servicePoint:id,type,label,display_name,section_id,sub_section_id', 'servicePoint.section:id,name', 'servicePoint.subSection:id,name',
-            'items:id,order_id,item_id,quantity,unit_price,final_price,total_amount,comment', 'items.item:id,uuid,name', 'items.options:id,order_item_id,name,price_adjustment',
+            'items:id,order_id,item_id,quantity,unit_price,final_price,total_amount,comment', 'items.item:id,uuid,name', 'items.options:id,order_item_id,item_option_id,name,price_adjustment',
             'items.options.itemOption:id,uuid',
             'statusHistories.fromStatus:id,name', 'statusHistories.toStatus:id,name', 'statusHistories.changedBy:id,name',
             'assignmentHistories.previousWaiter:id,name', 'assignmentHistories.waiter:id,name', 'assignmentHistories.changedBy:id,name',
@@ -1132,6 +1240,7 @@ class BusinessOrderController extends BaseController
         return [
             'uuid' => $order->uuid,
             'number' => $order->number,
+            'created_by_staff' => $order->user_id !== null,
             'channel' => $order->channel,
             'status' => $order->status?->name,
             'payment_status' => $order->paymentStatus?->name,
