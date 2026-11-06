@@ -11,8 +11,8 @@
                     </a>
                 </td>
                 <td align="right" valign="middle" style="padding-left:16px;">
-                    <p style="margin:0;color:#0b4385;font-size:11px;font-weight:bold;letter-spacing:1.4px;">PAPERSTIC</p>
-                    <p style="margin:5px 0 0;color:#64748b;font-size:11px;line-height:1.4;">Hospitality operations</p>
+                    <p style="margin:0;color:#0b4385;font-size:11px;font-weight:bold;letter-spacing:1.4px;"></p>
+                    <p style="margin:5px 0 0;color:#64748b;font-size:11px;line-height:1.4;"></p>
                 </td>
             </tr>
         </table>
